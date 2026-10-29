@@ -1,5 +1,5 @@
 # Unprivileged variant: nginx runs as uid 101 and listens on 8080, never as root.
-FROM nginxinc/nginx-unprivileged:1.28-alpine
+FROM nginxinc/nginx-unprivileged:1.31-alpine
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --chown=101:101 web/ /usr/share/nginx/html/
 EXPOSE 8080
