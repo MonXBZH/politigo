@@ -31,7 +31,8 @@ services:
   api:
     image: ${POLITIGO_IMAGES:-ghcr.io/OWNER/politigo}-api:${POLITIGO_TAG:-latest}
     environment:
-      POLITIGO_INVITE: ${POLITIGO_INVITE:?set POLITIGO_INVITE in the stack variables}
+      # Unset: the server generates a code once and prints it in its logs ("off" closes registrations).
+      POLITIGO_INVITE: ${POLITIGO_INVITE:-}
       POLITIGO_SPEED: ${POLITIGO_SPEED:-1}
       COOKIE_SECURE: ${COOKIE_SECURE:-1}
       PROXY_HOPS: ${PROXY_HOPS:-2}

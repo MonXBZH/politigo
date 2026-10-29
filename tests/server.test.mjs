@@ -3,7 +3,7 @@
 import {test,before,after} from "node:test";
 import assert from "node:assert/strict";
 import {spawn} from "node:child_process";
-import {mkdtempSync} from "node:fs";
+import {mkdtempSync,readFileSync} from "node:fs";
 import {DatabaseSync} from "node:sqlite";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
@@ -17,8 +17,10 @@ function boot(port,extra={}){
   PROXY_HOPS:"1",SWEEP_MS:"200",POLITIGO_SPEED:"1",POLITIGO_TZ:DAY_TZ,...extra};
  for(const k of Object.keys(env))if(env[k]===undefined)delete env[k];
  const p=spawn("node",[process.env.SERVER||"/app/server.mjs"],{env,stdio:["ignore","pipe","pipe"]});
- return new Promise((ok,ko)=>{p.stdout.on("data",d=>{if(/PolitiGo API/.test(d))ok(p);});p.on("exit",code=>ko(code));});
+ p.out="";
+ return new Promise((ok,ko)=>{p.stdout.on("data",d=>{p.out+=d;if(/PolitiGo API/.test(p.out))ok(p);});p.on("exit",code=>ko(code));});
 }
+const stop=p=>new Promise(r=>{p.on("exit",r);p.kill();});
 before(async()=>{DIR=mkdtempSync(join(tmpdir(),"pg-"));proc=await boot(PORT,{DB_PATH:join(DIR,"t.db")});});
 after(()=>proc.kill("SIGTERM"));
 
@@ -219,4 +221,22 @@ test("cookies are Secure and __Host- by default, and a weak invite code stops th
   const set=r.headers.get("set-cookie");assert.match(set,/^__Host-pg_session=/);assert.match(set,/; Secure/);
  }finally{p.kill();}
  for(const weak of ["court","change-moi-en-un-code-long"])await assert.rejects(boot(3996,{POLITIGO_INVITE:weak}),code=>code===1,weak);
+});
+
+test("without POLITIGO_INVITE a code is generated once, logged on every start and kept; off closes registrations",async()=>{
+ const dir=mkdtempSync(join(tmpdir(),"pg-inv-")),db=join(dir,"i.db"),logged=p=>p.out.match(/Invite code: (\S+)/)?.[1];
+ const register=(invite,name)=>fetch("http://127.0.0.1:3995/api/register",{method:"POST",headers:{"Content-Type":"application/json","X-Forwarded-For":"10.0.4.1"},
+  body:JSON.stringify({name,password:"motdepasse1",invite,camp:"left"})}).then(r=>r.status);
+ let p=await boot(3995,{POLITIGO_INVITE:undefined,DB_PATH:db});
+ const code=logged(p);await stop(p);
+ assert.match(code,/^politigo-[\w-]{16}$/);
+ assert.equal(readFileSync(join(dir,"invite.txt"),"utf8").trim(),code);
+ p=await boot(3995,{POLITIGO_INVITE:"",DB_PATH:db});
+ try{
+  assert.equal(logged(p),code);
+  assert.equal(await register("politigo-pas-le-bon-code","Hugo"),403);
+  assert.equal(await register(code,"Hugo"),201);
+ }finally{await stop(p);}
+ p=await boot(3995,{POLITIGO_INVITE:"off",DB_PATH:db});
+ try{assert.equal(logged(p),undefined);assert.equal(await register(code,"Ines"),403);}finally{await stop(p);}
 });

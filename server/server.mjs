@@ -4,15 +4,27 @@ import http from "node:http";
 import crypto from "node:crypto";
 import {promisify} from "node:util";
 import {DatabaseSync} from "node:sqlite";
+import {readFileSync,writeFileSync} from "node:fs";
+import {dirname,join} from "node:path";
 import * as R from "./rules.mjs";
 
 const env=process.env;
 const PORT=Number(env.PORT||3000);
 const DB_PATH=env.DB_PATH||"/data/politigo.db";
-const INVITE=env.POLITIGO_INVITE||"";                       // empty = registrations closed
-// A short or example invite code would open the game to anyone who reads the repository: refuse to start.
-if(INVITE&&(INVITE.length<16||INVITE==="change-moi-en-un-code-long")){
- console.error("POLITIGO_INVITE is too weak: use at least 16 random characters (and not the example value).");process.exit(1);
+// Invite code: POLITIGO_INVITE, "off" to close registrations, or unset for a code generated once and kept next to
+// the database (same code across restarts and image updates; delete the file and restart for a new one).
+const INVITE_FILE=join(dirname(DB_PATH),"invite.txt");
+let INVITE=(env.POLITIGO_INVITE||"").trim(),INVITE_GENERATED=false;
+if(INVITE.toLowerCase()==="off")INVITE="";
+else if(INVITE){
+ // A short or example invite code would open the game to anyone who reads the repository: refuse to start.
+ if(INVITE.length<16||INVITE==="change-moi-en-un-code-long"){
+  console.error("POLITIGO_INVITE is too weak: use at least 16 random characters (and not the example value).");process.exit(1);
+ }
+}else{
+ try{INVITE=readFileSync(INVITE_FILE,"utf8").trim();}catch{}
+ if(INVITE.length<16){INVITE="politigo-"+crypto.randomBytes(12).toString("base64url");writeFileSync(INVITE_FILE,INVITE+"\n",{mode:0o600});}
+ INVITE_GENERATED=true;
 }
 const SPEED=Math.max(1,Math.min(3600,Number(env.POLITIGO_SPEED)||1));   // >1 only on a test server
 const COOKIE_SECURE=env.COOKIE_SECURE!=="0";
@@ -287,5 +299,7 @@ const server=http.createServer((req,res)=>{
  });
 });
 server.headersTimeout=15000;server.requestTimeout=15000;
+// Logged on every start, so log rotation never loses it.
+if(INVITE_GENERATED)console.log(`Invite code: ${INVITE} (generated, kept in ${INVITE_FILE}; delete that file and restart for a new one)`);
 server.listen(PORT,()=>console.log(`PolitiGo API on :${PORT} (speed x${SPEED}, ${players.size} players, registrations ${INVITE?"open with invite":"closed"})`));
 for(const sig of ["SIGTERM","SIGINT"])process.on(sig,()=>{for(const c of [...clients])closeStream(c);server.close(()=>{db.close();process.exit(0);});setTimeout(()=>process.exit(0),3000).unref();});

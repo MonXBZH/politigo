@@ -21,7 +21,7 @@ docker compose up -d --build
 
 | Variable | Valeur en production |
 |---|---|
-| `POLITIGO_INVITE` | un code d'au moins 16 caractères, à donner aux amis ; le changer ferme les inscriptions (le serveur refuse de démarrer avec un code court ou celui de l'exemple) |
+| `POLITIGO_INVITE` | facultatif. **Vide** : le serveur génère un code au premier démarrage, le garde dans le volume (`/data/invite.txt`) et l'affiche dans ses logs à chaque démarrage (`docker compose logs api`, ou les logs du conteneur `api` dans Portainer). **Renseigné** : ce code, d'au moins 16 caractères (le serveur refuse de démarrer avec un code court ou celui de l'exemple). **`off`** : inscriptions fermées |
 | `MAX_PLAYERS` | `50` : nombre maximum de comptes |
 | `POLITIGO_BIND` | l'IP interne du serveur Docker (le reverse proxy est sur une autre machine) |
 | `POLITIGO_PORT` | `8080` |
@@ -121,7 +121,9 @@ Si l'un de ses `location` utilise `add_header`, recopier la ligne HSTS dedans : 
   `docker run --rm -v politigo_politigo-data:/d -v "$PWD":/b alpine tar czf /b/politigo-$(date +%F).tgz -C /d .`
 - **Mise à jour** : `docker compose build --pull && docker compose up -d` (récupère aussi les correctifs de sécurité de nginx et Node). Les parties sont conservées ; pendant un arrêt, l'horloge est gelée (personne ne meurt parce que le serveur était éteint).
 - **Logs** : `docker compose logs -f api`.
-- **Fermer les inscriptions** : changer `POLITIGO_INVITE` puis `docker compose up -d`.
+- **Fermer les inscriptions** : `POLITIGO_INVITE=off` puis `docker compose up -d`. Les comptes existants continuent de jouer.
+- **Nouveau code généré** (après une fuite) : `docker compose exec api rm /data/invite.txt && docker compose restart api`
+  (dans Portainer : conteneur `api` → Console → `rm /data/invite.txt`, puis Restart), et lire le nouveau code dans les logs.
 
 ## 4. Sécurité en bref
 
