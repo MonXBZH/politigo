@@ -3,7 +3,8 @@
 import * as R from "./rules.mjs";
 const {people,personalItems,stresses,shop,pongLines,fxNames,XP,xpCost,xpFloor,stage}=R;
 const $=s=>document.querySelector(s);
-const reduced=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const motionQuery=matchMedia("(prefers-reduced-motion: reduce)");
+let reduced=motionQuery.matches;motionQuery.addEventListener?.("change",e=>{reduced=e.matches;});
 
 // ===================================================================== STATE (a copy of the server's)
 let S=null,me=null,SPEED=1,syncReal=0,syncV=0,busy=false;
@@ -22,11 +23,13 @@ const allPeople=[...people.left,...people.right];
 // ===================================================================== SERVER
 async function api(method,path,body){
  let r;
- try{r=await fetch(path,{method,credentials:"same-origin",headers:body===undefined?{}:{"Content-Type":"application/json"},body:body===undefined?undefined:JSON.stringify(body)});}
- catch{return {ok:false,status:0,error:"Serveur injoignable : vérifie ta connexion."};}
+ // A request that hangs (a dead connection) gives up after 15 s instead of blocking every later action.
+ try{r=await fetch(path,{method,credentials:"same-origin",signal:AbortSignal.timeout(15000),headers:body===undefined?{}:{"Content-Type":"application/json"},body:body===undefined?undefined:JSON.stringify(body)});}
+ catch(e){return {ok:false,status:0,error:e?.name==="TimeoutError"?"Le serveur ne répond pas : réessaie dans un instant.":"Serveur injoignable : vérifie ta connexion."};}
  let json={};try{const v=await r.json();if(v&&typeof v==="object")json=v;}catch{}
  if(r.status===401&&!["/api/login","/api/account"].includes(path)&&S)showAuth("Ta session a expiré : reconnecte-toi.");
- return {...json,status:r.status,ok:r.ok&&json.ok!==false,error:json.error||(r.ok?"":"Erreur du serveur.")};
+ const fallback=r.ok?"":r.status>=502?"Serveur en cours de redémarrage : réessaie dans un instant.":"Erreur du serveur.";
+ return {...json,status:r.status,ok:r.ok&&json.ok!==false,error:json.error||fallback};
 }
 function applyMe(m,{replay=false}={}){
  if(!m||!m.state)return;
@@ -81,7 +84,9 @@ function playJournal(onlyMajor){
 }
 async function send(action){
  if(busy){toast("Une action est déjà en cours…");return null;}busy=true;
- const r=await api("POST","/api/action",action);busy=false;
+ const who=me;let r;
+ try{r=await api("POST","/api/action",action);}finally{busy=false;}
+ if(!S||me!==who)return null;          // signed out meanwhile: a late answer must not bring the game back
  if(r.me)applyMe(r.me);
  if(!r.ok&&r.error)toast(r.error);
  return r;
@@ -96,7 +101,7 @@ function toggleLight(){closeSheet();send({type:"light"});}
 async function equip(i){await send({type:"equip",i});liveSheet();}
 async function pet(){
  if(!S||pong||scene)return;
- if(isAsleep()){toast(isNight()?"Zzz… il dort. Revenez après 6 h.":"Zzz… il fait la sieste. Rallume la lumière dans Soins.");return;}
+ if(isAsleep()){toast(isNight()?"Zzz… il dort. Reviens après 6 h.":"Zzz… il fait la sieste. Rallume la lumière dans Soins.");return;}
  playAnim("win",1200);
  const r=await send({type:"pet"});if(r?.ok&&r.petted)toast("Une petite tape sur l'épaule : moral +2");
 }
@@ -406,13 +411,14 @@ function pongServe(){Object.assign(pong,{bx:233,by:PONG.top+10,vx:(Math.random()
 // The server charges the activity at the start and checks the score at the end (rate and duration).
 async function startPong(){
  closeSheet();
- const r=await send({type:"pongStart"});if(!r?.ok)return;
+ const r=await send({type:"pongStart"});if(!r?.ok||!S)return;
  pong={t0:performance.now(),last:performance.now(),score:0,missed:0,px:233,hitT:0,flashT:0,endT:0};pongServe();
  toast("Renvoie les piques : glisse le doigt ou la souris sur l'écran.");
 }
 async function endPong(){
- const score=pong.score;pong=null;
- while(busy)await new Promise(ok=>setTimeout(ok,100));      // the score must not be lost behind another request
+ const score=pong.score;pong=null;pongEnded=performance.now();
+ // The score must not be lost behind another request (which itself gives up after 15 s).
+ for(const end=Date.now()+20000;busy&&Date.now()<end;)await new Promise(ok=>setTimeout(ok,100));
  const r=await send({type:"pongEnd",score});
  if(r?.ok){toast(`${score} renvoi${score>1?"s":""} · +${r.bonus} XP d'éloquence`);if(r.bonus>=10)playAnim("win",3000);}
 }
@@ -457,7 +463,11 @@ function skipScene(){
  if(!scene||performance.now()-scene.t0<600)return;
  if(scene.kind==="death")startScene(scene.side,scene.side,scene.name);else scene=null;
 }
-cv.addEventListener("pointerdown",e=>{if(scene)skipScene();else if(pong)pongAim(e);else pet();});
+// A pet is a click, not a pointerdown: a swipe that scrolls the page past the screen is not a pat on the shoulder.
+cv.addEventListener("pointerdown",e=>{if(pong&&!scene)pongAim(e);});
+// A finger still on the screen when the Pong ends lifts as a click: that is not a pat on the shoulder.
+let pongEnded=0;
+cv.addEventListener("click",()=>{if(scene)skipScene();else if(!pong&&performance.now()-pongEnded>500)pet();});
 cv.addEventListener("keydown",e=>{if(!pong&&(e.key==="Enter"||e.key===" ")){e.preventDefault();if(scene)skipScene();else pet();}});
 document.addEventListener("keydown",e=>{
  if(!$("#sheet").hidden){
@@ -514,6 +524,12 @@ function refresh(){
   $("#journal").replaceChildren(...S.journal.filter(j=>j.k!=="level").map(j=>{const li=document.createElement("li"),tm=document.createElement("time");
    tm.textContent=when(j.t);li.append(tm,j.text);return li;}));
  }
+ // A red dot on "Jouer" while the quitte-ou-double is on offer: a toast alone is easily missed.
+ const rm=!rematchBlock(),playBtn=$(".pad-btn[data-sheet=play]");
+ if(playBtn.classList.contains("alert")!==rm){
+  playBtn.classList.toggle("alert",rm);
+  if(rm)playBtn.setAttribute("aria-label","Jouer (quitte ou double disponible)");else playBtn.removeAttribute("aria-label");
+ }
  const label=`${p.name}, niveau ${S.lvl}. Satiété ${Math.round(S.sat)}, moral ${Math.round(S.moral)}, énergie ${Math.round(S.energy)}, hygiène ${Math.round(S.hyg)}. Entrée pour lui taper sur l'épaule.`;
  if(cv.getAttribute("aria-label")!==label)cv.setAttribute("aria-label",label);
 }
@@ -529,10 +545,10 @@ const ordinal=n=>n===1?"1er":`${n}e`;
 function renderBoard(){
  const tabs=$("#board-tabs");
  if(!tabs.childElementCount)for(const [k,t] of Object.entries(TABS)){
-  const b=document.createElement("button");b.type="button";b.role="tab";b.dataset.tab=k;b.textContent=t.label;
+  const b=document.createElement("button");b.type="button";b.dataset.tab=k;b.textContent=t.label;
   b.addEventListener("click",()=>{boardTab=k;renderBoard();});tabs.append(b);
  }
- for(const b of tabs.children)b.setAttribute("aria-selected",String(b.dataset.tab===boardTab));
+ for(const b of tabs.children)b.setAttribute("aria-pressed",String(b.dataset.tab===boardTab));
  const rows=[...board].sort(TABS[boardTab].sort);
  $("#board").replaceChildren(...rows.map((r,i)=>{
   const li=document.createElement("li");li.className=`row ${r.camp}${r.name===me?" me":""}`;
@@ -545,7 +561,7 @@ function renderBoard(){
   li.append(rank,who,v);return li;
  }));
  const mine=[...board].sort(TABS.score.sort).findIndex(r=>r.name===me);
- $("#chip-rank").textContent=mine>=0?`${ordinal(mine+1)} / ${board.length}`:"Classement";
+ $("#chip-rank").textContent=mine>=0?`Classement ${ordinal(mine+1)}/${board.length}`:"Classement";
  $("#board-empty").hidden=board.length>1;
 }
 function renderFeed(){
@@ -557,15 +573,25 @@ function renderFeed(){
 
 // ---------- live connection ----------
 let es=null;
+let lastLive=0;
+function setNet(up){$("#net").hidden=up;}
 function connectLive(){
- es?.close();es=new EventSource("/events");
- es.addEventListener("me",e=>applyMe(JSON.parse(e.data)));
- es.addEventListener("board",e=>{board=JSON.parse(e.data);renderBoard();});
- es.addEventListener("feedInit",e=>{feed=JSON.parse(e.data);renderFeed();});
- es.addEventListener("feed",e=>{for(const f of JSON.parse(e.data))feed.unshift(f);feed.length=Math.min(feed.length,60);renderFeed();});
+ es?.close();es=new EventSource("/events");lastLive=Date.now();
+ // Every message, pings included, proves the stream alive; a malformed one is skipped, not fatal.
+ const on=(ev,fn)=>es.addEventListener(ev,e=>{lastLive=Date.now();setNet(true);let v;try{v=JSON.parse(e.data);}catch{return;}fn(v);});
+ on("me",m=>applyMe(m));
+ on("board",v=>{if(Array.isArray(v)){board=v;renderBoard();}});
+ on("feedInit",v=>{if(Array.isArray(v)){feed=v;renderFeed();}});
+ on("feed",v=>{if(!Array.isArray(v))return;for(const f of v)feed.unshift(f);feed.length=Math.min(feed.length,60);renderFeed();});
+ on("ping",()=>{});
+ // Pushed out by a newer tab or device of the same player: this one stays quiet until it is looked at again.
+ on("bye",()=>{es?.close();es=null;});
+ es.onopen=()=>{lastLive=Date.now();setNet(true);};
  // A closed stream is either an expired session (the check below shows the login) or a server restart.
- es.onerror=()=>{if(es.readyState===EventSource.CLOSED){es=null;retryLive();}};
+ es.onerror=()=>{if(!es)return;setNet(false);if(es.readyState===EventSource.CLOSED){es=null;retryLive();}};
 }
+// A stream gone silent (half-open connection after a network change) is restarted: the server pings every 25 s.
+setInterval(()=>{if(S&&es&&Date.now()-lastLive>70000){es.close();es=null;setNet(false);retryLive(1000);}},10000);
 // Retries with a growing pause (5 s up to 1 min) until the server answers again; a 401 shows the login instead.
 function retryLive(delay=5000){
  setTimeout(async()=>{
@@ -585,12 +611,13 @@ $("#chip-rank").addEventListener("click",()=>$("#board-card").scrollIntoView({be
 
 // ---------- bottom sheets ----------
 let sheetKind=null,sheetOpener=null;
+// An unavailable row is aria-disabled rather than disabled: it stays focusable, so its reason can be read.
 function itemButton(title,sub,side,disabled,onClick,on=false){
- const b=document.createElement("button");b.type="button";b.className=`item${on?" on":""}`;b.disabled=disabled;
+ const b=document.createElement("button");b.type="button";b.className=`item${on?" on":""}`;if(disabled)b.setAttribute("aria-disabled","true");
  const main=document.createElement("span"),bt=document.createElement("b"),sm=document.createElement("small");
  bt.textContent=title;sm.textContent=sub;main.append(bt,sm);
  const pr=document.createElement("span");pr.className="price";pr.textContent=side;
- b.append(main,pr);if(!disabled)b.addEventListener("click",onClick);return b;
+ b.append(main,pr);b.addEventListener("click",()=>{if(!disabled)onClick();});return b;
 }
 function blockTitle(t){const h=document.createElement("h3");h.className="block-title";h.textContent=t;return h;}
 function list(...els){const d=document.createElement("div");d.className="items";d.append(...els);return d;}
@@ -604,8 +631,9 @@ const fxText=R.fxText;
 // Two taps instead of confirm(): native dialogs are blocked by some in-app browsers.
 function armedButton(label,armedLabel,cls,onConfirm){
  const b=document.createElement("button");b.type="button";b.className=`btn ${cls}`;b.textContent=label;let armed=0;
+ b.setAttribute("aria-live","polite");        // the new label ("tap again") is read out
  b.addEventListener("click",()=>{
-  if(!armed){armed=setTimeout(()=>{armed=0;b.classList.remove("armed");b.textContent=label;},4000);b.classList.add("armed");b.textContent=armedLabel;return;}
+  if(!armed){armed=setTimeout(()=>{armed=0;b.classList.remove("armed");b.textContent=label;},8000);b.classList.add("armed");b.textContent=armedLabel;return;}
   clearTimeout(armed);armed=0;onConfirm();
  });
  return b;
@@ -614,8 +642,16 @@ function armedButton(label,armedLabel,cls,onConfirm){
 const sheetSig=()=>[S.fm,curIdx(),R.actsToday(S),R.actsThisVisit(S),S.energy<20,S.coffees,S.breadIdx,S.lvl,S.best,S.equipped[person().name]||0,isAsleep(),S.camp,!rematchBlock()].join("|");
 let shownSig="";
 function setBackgroundInert(on){for(const el of document.querySelectorAll(".topbar,.app,footer"))el.inert=on;}
+// An open sheet takes a history entry, so the phone's Back button closes it instead of leaving the game.
+// history.back() is asynchronous: the popstate it causes is ours, and must not close a sheet reopened meanwhile.
+let sheetInHistory=false,pendingBack=false;
+addEventListener("popstate",()=>{
+ if(pendingBack){pendingBack=false;return;}
+ if(sheetInHistory){sheetInHistory=false;closeSheet(true);}
+});
 function openSheet(kind,opener){
  renderSheet(kind,opener);
+ if(!sheetInHistory&&!pendingBack){try{history.pushState({sheet:true},"");sheetInHistory=true;}catch{}}
  $("#sheet").hidden=false;setBackgroundInert(true);
  $(".sheet-card").scrollTop=0;$(".sheet-card").focus();
 }
@@ -632,7 +668,7 @@ function renderSheet(kind,opener){
  sheetKind=kind;if(opener)sheetOpener=opener;shownSig=sheetSig();
  const body=$("#sheet-body"),p=person();body.replaceChildren();
  const set=(t,s)=>{$("#sheet-title").textContent=t;$("#sheet-sub").textContent=s;};
- if(kind==="food"){set("La Buvette",`${S.fm} FM en caisse · 2 FM gagnés par heure de vie`);body.append(shopList("food"));}
+ if(kind==="food"){set("La Buvette",`${S.fm} FM (frais de mandat) en caisse · 2 FM gagnés par heure de vie`);body.append(shopList("food"));}
  if(kind==="care"){
   set("Soins",`Hygiène, repos et moral · ${S.fm} FM en caisse`);
   const light=isNight()
@@ -648,10 +684,9 @@ function renderSheet(kind,opener){
   // The rematch only shows while it is on offer: right after a debate, for one hour of game time.
   const rm=rematchBlock()?[]:[itemButton("Quitte ou double !",`Revanche immédiate, 1 chance sur 2 : moral +${R.DOUBLE.moral} et énergie +${R.DOUBLE.energy}… ou un stress ×${R.DOUBLE.stressFactor} (moral −${R.STRESS_HIT*R.DOUBLE.stressFactor}).`,"50/50",false,rematch)];
   body.append(list(...rm,
-   itemButton("Pong des arguments",err||"Renvoie les piques de l'adversaire pendant 20 s. +2 XP par renvoi.",`+${XP.activity} XP`,!!err,startPong),
+   itemButton("Pong des arguments",err||"Renvoie les piques de l'adversaire pendant 20 s (doigt, souris ou flèches). +2 XP par renvoi.",`+${XP.activity} XP`,!!err,startPong),
    itemButton("Débattre",err||"Une colère, un caprice, et l'éloquence progresse. Énergie −8, moral +10.",`+${XP.activity} XP`,!!err,debate)
   ));
-  const n=document.createElement("p");n.className="fine";n.textContent="Bientôt : distribution de tracts / collage d'affiches, la prise de parole et le tour de parole de la coalition.";body.append(n);
  }
  if(kind==="more"){
   set(p.name,`Niveau ${S.lvl}/100 · ${p.detail}`);
@@ -680,7 +715,7 @@ function renderSheet(kind,opener){
   const warn=document.createElement("p");warn.className="fine";
   warn.textContent="Démissionner relance une partie au niveau 1. C'est compté comme une mort politique au classement (−150 points).";
   const row=document.createElement("div");row.className="btn-row";
-  for(const camp of R.CAMPS)row.append(armedButton(`Repartir à ${camp==="left"?"gauche":"droite"}`,"Toucher encore pour démissionner","danger",()=>{closeSheet();send({type:"restart",camp});}));
+  for(const camp of R.CAMPS)row.append(armedButton(`Repartir à ${camp==="left"?"gauche":"droite"}`,"Confirmer : démissionner (−150 pts)","danger",()=>{closeSheet();send({type:"restart",camp});}));
   body.append(warn,row);
   body.append(blockTitle("Compte"));
   const who=document.createElement("p");who.className="fine";
@@ -693,9 +728,15 @@ function renderSheet(kind,opener){
    const f=acc.querySelector("form"),pw=Object.assign(document.createElement("input"),{type:"password",autocomplete:"current-password",placeholder:"Mot de passe",required:true});
    pw.setAttribute("aria-label","Mot de passe, pour confirmer la suppression");
    const go=Object.assign(document.createElement("button"),{type:"submit",className:"btn danger",textContent:"Supprimer définitivement"});
-   f.append(pw,go);pw.focus();
-   f.addEventListener("submit",async e=>{e.preventDefault();const r=await api("DELETE","/api/account",{password:pw.value});
-    if(r.ok){closeSheet();endSession("Compte supprimé. Merci d'avoir joué !");}else toast(r.error);});
+   const warnDel=Object.assign(document.createElement("p"),{className:"fine",textContent:"Irréversible : ton compte et ta partie seront effacés."});
+   const err=Object.assign(document.createElement("p"),{className:"form-error inline",id:"delete-error"});err.setAttribute("role","alert");
+   pw.setAttribute("aria-describedby","delete-error");
+   f.append(warnDel,pw,go,err);pw.focus();
+   f.addEventListener("submit",async e=>{
+    e.preventDefault();go.disabled=true;err.textContent="";
+    const r=await api("DELETE","/api/account",{password:pw.value});go.disabled=false;
+    if(r.ok){closeSheet();endSession("Compte supprimé. Merci d'avoir joué !");}else{err.textContent=r.error;pw.focus();}
+   });
   });
   acc.append(out,del);body.append(who,acc);
   const about=document.createElement("p");about.className="fine";
@@ -703,8 +744,9 @@ function renderSheet(kind,opener){
   body.append(about);
  }
 }
-function closeSheet(){
+function closeSheet(fromBack=false){
  if($("#sheet").hidden)return;
+ if(!fromBack&&sheetInHistory){sheetInHistory=false;pendingBack=true;history.back();}
  $("#sheet").hidden=true;sheetKind=null;setBackgroundInert(false);
  if(sheetOpener&&authEl.hidden)sheetOpener.focus();
 }
@@ -713,14 +755,14 @@ document.querySelectorAll("[data-sheet]").forEach(b=>b.addEventListener("click",
  if(pong){toast("Termine d'abord le débat (Échap pour abandonner).");return;}
  skipScene();openSheet(b.dataset.sheet,b);
 }));
-$("#sheet-close").addEventListener("click",closeSheet);
+$("#sheet-close").addEventListener("click",()=>closeSheet());
 $("#sheet").addEventListener("click",e=>{if(e.target.id==="sheet")closeSheet();});
 
 // ---------- sign-in / sign-up ----------
 const authEl=$("#auth");
 let regCamp="left";
 function showAuth(message=""){
- closeSheet();es?.close();es=null;S=null;anim=pong=scene=null;
+ closeSheet();es?.close();es=null;S=null;anim=pong=scene=null;setNet(true);$("#tips").hidden=true;
  authEl.hidden=false;setBackgroundInert(true);
  $("#auth-error").textContent=message;
  document.querySelectorAll(".camp").forEach(b=>{
@@ -732,7 +774,7 @@ function showAuth(message=""){
 function hideAuth(){authEl.hidden=true;setBackgroundInert(false);$("#auth-error").textContent="";}
 function switchTab(which){
  for(const t of ["login","register"]){
-  $(`#tab-${t}`).setAttribute("aria-selected",String(t===which));$(`#form-${t}`).hidden=t!==which;
+  $(`#tab-${t}`).setAttribute("aria-pressed",String(t===which));$(`#form-${t}`).hidden=t!==which;
  }
  $("#auth-error").textContent="";authEl.querySelector(`#form-${which} input`).focus();
 }
@@ -745,15 +787,20 @@ document.querySelectorAll(".camp").forEach(b=>b.addEventListener("click",()=>{
 async function submitAuth(e,path,extra){
  e.preventDefault();
  const form=e.currentTarget,data=Object.fromEntries(new FormData(form)),btn=form.querySelector("button[type=submit]");
- btn.disabled=true;$("#auth-error").textContent="";
+ const label=btn.textContent;
+ btn.disabled=true;btn.textContent=path==="/api/login"?"Connexion…":"Création du compte…";$("#auth-error").textContent="";
  const r=await api("POST",path,{...data,...extra});
- btn.disabled=false;
- if(!r.ok){$("#auth-error").textContent=r.error;return;}
+ btn.disabled=false;btn.textContent=label;
+ if(!r.ok){$("#auth-error").textContent=r.error;form.querySelector("input")?.focus();return;}
  form.reset();hideAuth();
- applyMe(r,{replay:path==="/api/login"});connectLive();
+ applyMe(r,{replay:path==="/api/login"});connectLive();showTips();
+ cv.focus();                          // the focused button just disappeared with the sign-in screen
  if(path==="/api/register"){startScene(S.camp,S.camp,"");toast("Bienvenue ! Touche l'écran pour passer l'animation.");}
  else toast(`Bon retour, ${me} !`);
 }
+// The first steps card shows until it is dismissed once on this device.
+function showTips(){let seen=false;try{seen=!!localStorage.getItem("politigo.tips");}catch{}$("#tips").hidden=seen;}
+$("#tips-close").addEventListener("click",()=>{try{localStorage.setItem("politigo.tips","1");}catch{}$("#tips").hidden=true;});
 $("#form-login").addEventListener("submit",e=>submitAuth(e,"/api/login",{}));
 $("#form-register").addEventListener("submit",e=>submitAuth(e,"/api/register",{camp:regCamp}));
 function endSession(message){me=null;board=[];feed=[];renderFeed();showAuth(message);}
@@ -761,13 +808,14 @@ async function logout(){closeSheet();await api("POST","/api/logout",{});endSessi
 
 // ===================================================================== LOOP
 let lastHud=0,lastDraw=0,lastFrame=0;
-let drawFailed=false;
+let drawFailed=false,playing=false;
 function frame(now){
  requestAnimationFrame(frame);           // first, so that a drawing error can never stop the loop for good
  try{tickFrame(now);}catch(err){if(!drawFailed){drawFailed=true;console.error(err);}scene=null;anim=null;}
 }
 function tickFrame(now){
  const fdt=lastFrame?now-lastFrame:0;lastFrame=now;
+ if(playing!==!!pong){playing=!!pong;document.body.classList.toggle("playing",playing);}
  if(S&&authEl.hidden){
   S.vclock=vnow();       // the displayed clock moves on; hour ticks themselves always come from the server
   // A scene (an evolution earned mid-game) freezes the Pong clock instead of eating its 20 seconds.
@@ -779,9 +827,16 @@ function tickFrame(now){
 }
 
 fitCanvas();
-(async()=>{
+// Start: resume the session, or show the sign-in. A server that is down or restarting is retried on its own,
+// so a player with a valid session is not left believing they were signed out.
+async function boot(delay=5000){
  const r=await api("GET","/api/me");
- if(r.ok&&r.state){hideAuth();applyMe(r,{replay:true});connectLive();}
- else showAuth(r.status===401?"":r.error);
- requestAnimationFrame(frame);
-})();
+ if(S)return;                                   // signed in through the form meanwhile
+ if(r.ok&&r.state){hideAuth();applyMe(r,{replay:true});connectLive();showTips();return;}
+ if(r.status===401){if(authEl.hidden)showAuth();else $("#auth-error").textContent="";return;}
+ const msg=`${r.error} Nouvel essai automatique…`;
+ if(authEl.hidden)showAuth(msg);else $("#auth-error").textContent=msg;
+ setTimeout(()=>boot(Math.min(delay*2,60000)),delay);
+}
+boot();
+requestAnimationFrame(frame);

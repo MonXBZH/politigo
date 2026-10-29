@@ -21,7 +21,7 @@
 
 <main class="app">
  <section class="device-wrap" aria-label="Le compagnon">
-  <div class="device"><div class="bezel"><canvas id="screen" width="466" height="466" role="img" tabindex="0" aria-label="Écran du compagnon. Entrée pour lui taper sur l'épaule."></canvas></div></div>
+  <div class="device"><div class="bezel"><canvas id="screen" width="466" height="466" role="button" tabindex="0" aria-label="Écran du compagnon. Entrée pour lui taper sur l'épaule."></canvas></div></div>
   <noscript><p class="toast show">PolitiGo a besoin de JavaScript pour fonctionner.</p></noscript>
   <nav class="pad" aria-label="Actions">
    <button class="pad-btn" type="button" data-sheet="food"><span class="knob"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3v8M5 3v5a2 2 0 0 0 4 0V3M7 11v10M17 21V3c-2 1-3 4-3 8h3"/></svg></span>Manger</button>
@@ -29,10 +29,18 @@
    <button class="pad-btn" type="button" data-sheet="play"><span class="knob"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="7" width="20" height="11" rx="5"/><path d="M7 11v4M5 13h4M15.5 12h.01M18 14h.01"/></svg></span>Jouer</button>
    <button class="pad-btn" type="button" data-sheet="more"><span class="knob"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h6l2 2h8v12H4z"/><path d="M8 12h8M8 15h5"/></svg></span>Dossier</button>
   </nav>
-  <p class="toast" id="toast" role="status" aria-live="polite"></p>
  </section>
 
  <aside class="panel">
+  <section class="card tips" id="tips" hidden aria-labelledby="tips-title">
+   <h3 class="section-title" id="tips-title">Premiers pas</h3>
+   <ul class="howto">
+    <li><b>Manger</b> et <b>Soins</b> : dépense tes frais de mandat (FM), gagnés à chaque heure où il reste en vie.</li>
+    <li><b>Jouer</b> : débats et Pong des arguments rapportent de l'XP. Touche l'écran pour lui taper sur l'épaule.</li>
+    <li><b>Passe le voir</b> plusieurs fois par jour : une jauge à zéro pendant 12 h, et c'est la mort politique.</li>
+   </ul>
+   <button class="btn" type="button" id="tips-close">Compris !</button>
+  </section>
   <section class="card" aria-labelledby="pname">
    <div class="stat-head"><h2 id="pname">…</h2><span class="lvl" id="plvl"></span></div>
    <p class="detail" id="pdetail"></p>
@@ -43,13 +51,13 @@
   </section>
   <section class="card" id="board-card" aria-labelledby="btitle">
    <h3 class="section-title" id="btitle">Classement en direct</h3>
-   <div class="tabs small" id="board-tabs" role="tablist" aria-label="Type de classement"></div>
+   <div class="tabs small" id="board-tabs" role="group" aria-label="Type de classement"></div>
    <ol class="board" id="board"></ol>
    <p class="fine" id="board-empty">Invite tes amis : le classement se remplit à chaque nouvelle inscription.</p>
   </section>
   <section class="card" aria-labelledby="ftitle">
    <h3 class="section-title" id="ftitle">Fil de la République</h3>
-   <ul class="journal feed" id="feed" aria-live="polite"></ul>
+   <ul class="journal feed" id="feed"></ul>
   </section>
   <section class="card" aria-labelledby="jtitle">
    <h3 class="section-title" id="jtitle">Journal de mandat</h3>
@@ -57,6 +65,10 @@
   </section>
  </aside>
 </main>
+
+<!-- Outside the containers made inert under a sheet, so that messages stay visible and announced everywhere. -->
+<p class="toast" id="toast" role="status" aria-live="polite"></p>
+<p class="net" id="net" role="status" hidden>Connexion perdue : reconnexion en cours…</p>
 
 <footer><p class="fine">Satire non affiliée aux personnes, partis ou institutions évoqués. Dessins originaux ; répliques inventées. Les faits rappelés dans les dossiers sont publics et la présomption d'innocence s'applique.</p></footer>
 
@@ -73,20 +85,21 @@
   <span class="kicker">Tamagotchi satirique entre amis</span>
   <h1>PolitiGo</h1>
   <p class="lead">La République dans la poche. Élève ton petit élu jusqu'au niveau 100, grimpe au classement… sans provoquer sa mort politique.</p>
-  <div class="tabs" role="tablist" aria-label="Connexion ou inscription">
-   <button type="button" role="tab" id="tab-login" aria-selected="true" aria-controls="form-login">Se connecter</button>
-   <button type="button" role="tab" id="tab-register" aria-selected="false" aria-controls="form-register">Créer un compte</button>
+  <div class="tabs" role="group" aria-label="Connexion ou inscription">
+   <button type="button" id="tab-login" aria-pressed="true" aria-controls="form-login">Se connecter</button>
+   <button type="button" id="tab-register" aria-pressed="false" aria-controls="form-register">Créer un compte</button>
   </div>
   <form class="auth-form" id="form-login" novalidate>
-   <label>Pseudo<input name="name" autocomplete="username" required maxlength="20" autocapitalize="off" spellcheck="false"></label>
-   <label>Mot de passe<input name="password" type="password" autocomplete="current-password" required maxlength="200"></label>
+   <label>Pseudo<input name="name" autocomplete="username" required maxlength="20" autocapitalize="off" spellcheck="false" aria-describedby="auth-error"></label>
+   <label>Mot de passe<input name="password" type="password" autocomplete="current-password" required maxlength="200" aria-describedby="auth-error"></label>
    <button class="cta" type="submit">Entrer dans l'hémicycle</button>
   </form>
   <form class="auth-form" id="form-register" hidden novalidate>
-   <label>Pseudo <small>(3 à 20 caractères, visible au classement)</small><input name="name" autocomplete="username" required minlength="3" maxlength="20" autocapitalize="off" spellcheck="false"></label>
-   <label>Mot de passe <small>(8 caractères minimum)</small><input name="password" type="password" autocomplete="new-password" required minlength="8" maxlength="200"></label>
-   <label>Code d'invitation <small>(donné par l'organisateur)</small><input name="invite" autocomplete="off" required maxlength="100" spellcheck="false"></label>
-   <div class="camps">
+   <label>Pseudo <small>(3 à 20 caractères, visible au classement)</small><input name="name" autocomplete="username" required minlength="3" maxlength="20" autocapitalize="off" spellcheck="false" aria-describedby="auth-error"></label>
+   <label>Mot de passe <small>(8 caractères minimum)</small><input name="password" type="password" autocomplete="new-password" required minlength="8" maxlength="200" aria-describedby="auth-error"></label>
+   <label>Code d'invitation <small>(donné par l'organisateur)</small><input name="invite" autocomplete="off" required maxlength="100" spellcheck="false" aria-describedby="auth-error"></label>
+   <p class="lead camp-label" id="camp-l">Choisis ton camp</p>
+   <div class="camps" role="group" aria-labelledby="camp-l">
     <button class="camp" type="button" data-camp="left" aria-pressed="true"><canvas width="64" height="64" aria-hidden="true"></canvas><b>Collection gauche</b><small>D'Olivier Faure à Jean-Luc Mélenchon</small></button>
     <button class="camp" type="button" data-camp="right" aria-pressed="false"><canvas width="64" height="64" aria-hidden="true"></canvas><b>Collection droite</b><small>De Valérie Pécresse à Marine Le Pen</small></button>
    </div>

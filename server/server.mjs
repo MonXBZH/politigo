@@ -22,8 +22,13 @@ else if(INVITE){
   console.error("POLITIGO_INVITE is too weak: use at least 16 random characters (and not the example value).");process.exit(1);
  }
 }else{
- try{INVITE=readFileSync(INVITE_FILE,"utf8").trim();}catch{}
- if(INVITE.length<16){INVITE="politigo-"+crypto.randomBytes(12).toString("base64url");writeFileSync(INVITE_FILE,INVITE+"\n",{mode:0o600});}
+ try{INVITE=readFileSync(INVITE_FILE,"utf8").trim();}catch(e){if(e.code!=="ENOENT")console.error(`${INVITE_FILE}: ${e.message}`);}
+ if(INVITE.length<16){
+  INVITE="politigo-"+crypto.randomBytes(12).toString("base64url");
+  // An unwritable volume must not take the game down: the code then just changes at every start (and says so).
+  try{writeFileSync(INVITE_FILE,INVITE+"\n",{mode:0o600});}
+  catch(e){console.error(`Invite code NOT saved (${e.message}): it will change at the next start. Set POLITIGO_INVITE to keep one.`);}
+ }
  INVITE_GENERATED=true;
 }
 const SPEED=Math.max(1,Math.min(3600,Number(env.POLITIGO_SPEED)||1));   // >1 only on a test server
@@ -68,19 +73,48 @@ const players=new Map();
 {
  const now=Date.now();
  for(const row of q.allPlayers.all()){
-  let state=null;try{state=R.sanitize(JSON.parse(row.state),now);}catch{}
-  if(!state){console.error(`player ${row.id}: unreadable state, restarting their game`);state=R.newGame("left",now);}
+  let state=null,why="",camp="left";
+  try{const raw=JSON.parse(row.state);if(R.CAMPS.includes(raw?.camp))camp=raw.camp;state=R.sanitize(raw,now);}catch(e){why=e.message;}
+  if(!state){
+   // The unreadable row is kept aside before the fresh game overwrites it, so a bug never silently erases a game.
+   const backup=join(dirname(DB_PATH),`state-${row.id}-${now}.bad.json`);
+   try{writeFileSync(backup,row.state,{mode:0o600});}catch{}
+   console.error(`player ${row.id}: unreadable state (${why||"rejected"}), saved to ${backup}, restarting their game`);
+   state=R.newGame(camp,now);
+  }
   state.lastReal=now;
   players.set(row.id,{id:row.id,name:row.name,state});
  }
 }
-function persist(p){q.savePlayer.run(JSON.stringify(p.state),R.score(p.state),Date.now(),p.id);}
+function persist(p){q.savePlayer.run(JSON.stringify(p.state),R.score(p.state),Date.now(),p.id);p.saved=Date.now();}
+// A change runs on a copy and only replaces the live state once it is written: a failed write (full disk)
+// leaves memory and database in step, and the player simply sees an error. The clock merely moving on
+// (no new hour, nothing logged) stays in memory, and is written at least every few minutes.
+const SAVE_EVERY=5*60*1000;
+function update(p,fn){
+ const before=p.state,jn=before.jn;p.state=structuredClone(before);
+ let out;
+ try{
+  out=fn(p.state);
+  if(out===false&&p.state.jn===jn){if(Date.now()-(p.saved||0)>SAVE_EVERY)persist(p);return out;}
+  persist(p);
+ }catch(e){p.state=before;throw e;}
+ try{const feed=newFeedEntries(p,jn);if(feed.length)broadcast("feed",feed);pushMe(p);publishBoard();}
+ catch(e){console.error(`player ${p.id}: announce failed`,e);}
+ return out;
+}
 
 // ===================================================================== SECURITY HELPERS
 const sha256=s=>crypto.createHash("sha256").update(s).digest("hex");
 const SCRYPT={N:1<<15,r:8,p:1,maxmem:64*1024*1024};
 // Asynchronous scrypt: a login (~100 ms of hashing) never freezes the game clock or the live streams.
-const scrypt=promisify(crypto.scrypt);
+const scryptRaw=promisify(crypto.scrypt);
+// Each hash takes 32 MB: a burst of logins from many addresses is turned away instead of exhausting memory.
+let hashing=0;
+async function scrypt(...args){
+ if(hashing>=16)throw new HttpError(503,"Serveur occupé, réessaie dans un instant.");
+ hashing++;try{return await scryptRaw(...args);}finally{hashing--;}
+}
 async function hashPassword(pw){
  const salt=crypto.randomBytes(16);
  return `scrypt$${salt.toString("base64")}$${(await scrypt(pw,salt,64,SCRYPT)).toString("base64")}`;
@@ -100,7 +134,7 @@ const cleanName=n=>typeof n==="string"?n.normalize("NFC").trim().replace(/\s+/g,
 // The uniqueness key ignores case and accents: "Chloé" and "chloe" are the same player.
 const nameKey=n=>n.normalize("NFKD").replace(/\p{M}/gu,"").toLocaleLowerCase("fr");
 // Keys written by an older version are brought up to date (a clash keeps the older key).
-for(const p of players.values()){try{q.setKey.run(nameKey(p.name),p.id);}catch{console.error(`player ${p.id}: name key clash, left as is`);}}
+for(const p of players.values()){try{q.setKey.run(nameKey(p.name),p.id);}catch(e){console.error(`player ${p.id}: name key not updated (${e.message})`);}}
 
 // The client address is the entry the site's reverse proxy appended (spoofed entries sit before it).
 // A shorter chain than expected means a proxy was skipped: fall back to the socket, never to a client-written entry.
@@ -188,28 +222,30 @@ function publishBoard(force=false){
  const rows=boardRows(),json=JSON.stringify(rows);
  if(force||json!==lastBoard){lastBoard=json;broadcast("board",rows);}
 }
-// After any change to a player: write it, announce what the group should hear about, refresh the board.
-function changed(p,jnBefore){
- persist(p);
- const feed=newFeedEntries(p,jnBefore);
- if(feed.length)broadcast("feed",feed);
- pushMe(p);publishBoard();
-}
 function mePayload(p){return {name:p.name,state:p.state,speed:SPEED,tz:R.timeZone(),serverNow:Date.now()};}
 // The clock runs for everyone, connected or not: needs drain and deaths happen while the page is closed.
 setInterval(()=>{
  const now=Date.now();
  for(const p of players.values()){
   // One broken player (or a full disk) is logged and skipped; it must not stop everyone else's clock.
-  try{const jn=p.state.jn;if(R.advance(p.state,now,SPEED,Math.random)||p.state.jn!==jn)changed(p,jn);}
+  try{update(p,S=>R.advance(S,now,SPEED,Math.random));}
   catch(e){console.error(`sweep, player ${p.id}:`,e);}
  }
+ lastSweep=now;
 },SWEEP_MS).unref();
+let lastSweep=Date.now();
 
 // ===================================================================== ROUTES
 async function route(req,res){
- const url=new URL(req.url,"http://x"),path=url.pathname,method=req.method;
- if(path==="/api/health"&&method==="GET")return send(res,200,{ok:true});
+ // Only the path matters, and an odd request target ("//", "//host") is just not found, never a 500.
+ let path="";try{path=new URL(req.url,"http://x").pathname;}catch{}
+ const method=req.method;
+ // Healthy means the database answers and the game clock still ticks, not merely that the process is up.
+ if(path==="/api/health"&&method==="GET"){
+  db.prepare("SELECT 1").get();
+  if(Date.now()-lastSweep>Math.max(SWEEP_MS*4,60000))throw new HttpError(503,"Horloge du jeu arrêtée.");
+  return send(res,200,{ok:true});
+ }
 
  if(path==="/api/register"&&method==="POST"){
   const ip=clientIp(req);if(limited("reg:"+ip,5,3600e3))throw new HttpError(429,"Trop d'inscriptions depuis cette adresse, réessaie plus tard.");
@@ -223,17 +259,19 @@ async function route(req,res){
   if(q.countPlayers.get().n>=MAX_PLAYERS)throw new HttpError(403,"La partie est complète.");
   if(q.playerByKey.get(nameKey(name)))throw new HttpError(409,"Ce pseudo est déjà pris.");
   const pass=await hashPassword(b.password);
-  // Checked again after the hashing pause: of two sign-ups racing for one name, the second gets the 409.
+  // Checked again after the hashing pause: of two sign-ups racing for one name (or the last seat), the second loses.
   if(q.playerByKey.get(nameKey(name)))throw new HttpError(409,"Ce pseudo est déjà pris.");
+  if(q.countPlayers.get().n>=MAX_PLAYERS)throw new HttpError(403,"La partie est complète.");
   const now=Date.now(),state=R.newGame(b.camp,now);
   const {lastInsertRowid}=q.insertPlayer.run(name,nameKey(name),pass,now,JSON.stringify(state),R.score(state),now);
   const p={id:Number(lastInsertRowid),name,state};players.set(p.id,p);
-  changed(p,0);
+  // The account exists from here on: a failed announcement must not turn the sign-up into an error.
+  try{const feed=newFeedEntries(p,0);if(feed.length)broadcast("feed",feed);publishBoard();}catch(e){console.error("register: announce failed",e);}
   return send(res,201,mePayload(p),{"Set-Cookie":startSession(p.id)});
  }
  if(path==="/api/login"&&method==="POST"){
   const ip=clientIp(req);const b=await readJson(req);
-  const name=cleanName(b.name),key=nameKey(name);
+  const name=cleanName(b.name).slice(0,40),key=nameKey(name);   // bounded: the name is part of rate-limit keys
   // Per address, per address+name, and a looser per-name cap against guessing from many addresses:
   // a stranger can no longer lock a friend out with ten wrong passwords.
   if(limited("login:"+ip,10,900e3)||limited("login-ipname:"+ip+"|"+key,5,900e3)||limited("login-name:"+key,50,900e3))
@@ -249,23 +287,24 @@ async function route(req,res){
   return send(res,200,{ok:true},{"Set-Cookie":sessionCookie("",0)});
  }
  if(path==="/api/me"&&method==="GET"){
-  const p=auth(req),jn=p.state.jn;
-  if(R.advance(p.state,Date.now(),SPEED,Math.random)||p.state.jn!==jn)changed(p,jn);
+  const p=auth(req);
+  update(p,S=>R.advance(S,Date.now(),SPEED,Math.random));
   return send(res,200,mePayload(p));
  }
  if(path==="/api/action"&&method==="POST"){
   const p=auth(req);if(limited("act:"+p.id,40,10e3))throw new HttpError(429,"Doucement : trop d'actions d'un coup.");
-  const b=await readJson(req),jn=p.state.jn;
+  const b=await readJson(req);
   if(!players.has(p.id))throw new HttpError(401,"Connexion requise.");   // deleted while the body was arriving
-  const r=R.act(p.state,b,{now:Date.now(),speed:SPEED,random:Math.random});
-  changed(p,jn);
+  const r=update(p,S=>R.act(S,b,{now:Date.now(),speed:SPEED,random:Math.random}));
   return send(res,r.ok?200:422,{...r,me:mePayload(p)});
  }
  if(path==="/api/board"&&method==="GET"){
   auth(req);return send(res,200,{board:boardRows(),feed:q.recentFeed.all(40)});
  }
  if(path==="/api/account"&&method==="DELETE"){
-  const p=auth(req);const b=await readJson(req);
+  const p=auth(req);
+  if(limited("del:"+p.id,5,900e3))throw new HttpError(429,"Trop de tentatives, réessaie dans un quart d'heure.");
+  const b=await readJson(req);
   const row=q.playerByKey.get(nameKey(p.name));
   if(!row||!await checkPassword(typeof b.password==="string"?b.password.slice(0,200):"",row.pass))throw new HttpError(401,"Mot de passe incorrect.");
   q.deletePlayer.run(p.id);players.delete(p.id);
@@ -276,9 +315,10 @@ async function route(req,res){
  if(path==="/events"&&method==="GET"){
   const p=auth(req);
   if(clients.size>=SSE_TOTAL)throw new HttpError(503,"Serveur plein, réessaie dans un instant.");
-  // A few tabs or devices per player; one more pushes out that player's oldest stream.
+  // A few tabs or devices per player; one more pushes out that player's oldest stream, which is told to stay
+  // closed (a plain end would make the browser reconnect and push out the next one, forever).
   const mine=[...clients].filter(c=>c.playerId===p.id);
-  if(mine.length>=SSE_PER_PLAYER)closeStream(mine[0]);
+  if(mine.length>=SSE_PER_PLAYER){sse(mine[0].res,"bye",0);closeStream(mine[0]);}
   res.writeHead(200,{"Content-Type":"text/event-stream; charset=utf-8","Cache-Control":"no-store","X-Accel-Buffering":"no"});
   res.on("error",()=>{});
   res.write("retry: 5000\n\n");
@@ -302,4 +342,14 @@ server.headersTimeout=15000;server.requestTimeout=15000;
 // Logged on every start, so log rotation never loses it.
 if(INVITE_GENERATED)console.log(`Invite code: ${INVITE} (generated, kept in ${INVITE_FILE}; delete that file and restart for a new one)`);
 server.listen(PORT,()=>console.log(`PolitiGo API on :${PORT} (speed x${SPEED}, ${players.size} players, registrations ${INVITE?"open with invite":"closed"})`));
-for(const sig of ["SIGTERM","SIGINT"])process.on(sig,()=>{for(const c of [...clients])closeStream(c);server.close(()=>{db.close();process.exit(0);});setTimeout(()=>process.exit(0),3000).unref();});
+// A bug that escapes every handler is logged with its stack, then the container restarts the process cleanly.
+// Every clock is written as it stands before leaving, so a restart never sets anyone's game time back.
+function saveAll(){for(const p of players.values()){try{persist(p);}catch(e){console.error(`saving player ${p.id}:`,e);}}}
+for(const ev of ["unhandledRejection","uncaughtException"])process.on(ev,e=>{console.error(`${ev}:`,e);saveAll();try{db.close();}catch{}process.exit(1);});
+function shutdown(code){try{db.close();}catch(e){console.error("closing the database:",e);}process.exit(code);}
+for(const sig of ["SIGTERM","SIGINT"])process.on(sig,()=>{
+ for(const c of [...clients])closeStream(c);
+ saveAll();
+ server.close(()=>shutdown(0));
+ setTimeout(()=>{console.error("shutdown: connections still open after 3 s, forcing exit");shutdown(0);},3000).unref();
+});

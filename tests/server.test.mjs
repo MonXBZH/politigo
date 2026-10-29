@@ -3,7 +3,7 @@
 import {test,before,after} from "node:test";
 import assert from "node:assert/strict";
 import {spawn} from "node:child_process";
-import {mkdtempSync,readFileSync} from "node:fs";
+import {mkdtempSync,readFileSync,readdirSync} from "node:fs";
 import {DatabaseSync} from "node:sqlite";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
@@ -239,4 +239,47 @@ test("without POLITIGO_INVITE a code is generated once, logged on every start an
  }finally{await stop(p);}
  p=await boot(3995,{POLITIGO_INVITE:"off",DB_PATH:db});
  try{assert.equal(logged(p),undefined);assert.equal(await register(code,"Ines"),403);}finally{await stop(p);}
+});
+
+test("a stream pushed out by a 4th one is told to stay closed (no endless reconnect ping-pong)",async()=>{
+ const c=client("10.0.1.40");await reg(c,"Basile");
+ const first=await fetch(BASE+"/events",{headers:{Cookie:c.cookie,"X-Forwarded-For":"10.0.1.40"}});
+ const text=(async()=>{const rd=first.body.getReader(),dec=new TextDecoder();let all="";for(;;){const {done,value}=await rd.read();if(done)return all;all+=dec.decode(value);}})();
+ const more=[];for(let i=0;i<3;i++)more.push(await stream(c,"10.0.1.40",300));
+ assert.match(await text,/event: bye/);
+ for(const x of more)await x.stop();
+});
+
+test("account deletion attempts are rate limited (each one costs a password hash)",async()=>{
+ const c=client("10.0.1.41");await reg(c,"Romane");
+ const codes=[];for(let i=0;i<6;i++)codes.push((await c.call("DELETE","/api/account",{password:"faux"})).status);
+ assert.deepEqual(codes,[401,401,401,401,401,429]);
+});
+
+test("health checks the database, and a shutdown writes every clock (a restart never sets game time back)",async()=>{
+ const dir=mkdtempSync(join(tmpdir(),"pg-stop-")),db=join(dir,"s.db"),url="http://127.0.0.1:3994";
+ let p=await boot(3994,{DB_PATH:db,POLITIGO_SPEED:"600"});
+ try{
+  assert.deepEqual(await (await fetch(url+"/api/health")).json(),{ok:true});
+  const r=await fetch(url+"/api/register",{method:"POST",headers:{"Content-Type":"application/json","X-Forwarded-For":"10.0.4.2"},
+   body:JSON.stringify({name:"Horloge",password:"motdepasse1",invite:INVITE,camp:"right"})});
+  assert.equal(r.status,201);
+  await new Promise(ok=>setTimeout(ok,1500));     // ~15 game minutes, kept in memory by the sweep
+ }finally{await stop(p);}
+ const row=new DatabaseSync(db).prepare("SELECT state FROM players").get(),S=JSON.parse(row.state);
+ assert.ok(S.vclock-S.born>=10*60e3,`saved clock only ${(S.vclock-S.born)/60e3} game minutes after sign-up`);
+});
+
+test("an unreadable saved game is set aside in a file before the player restarts",async()=>{
+ const dir=mkdtempSync(join(tmpdir(),"pg-bad-")),db=join(dir,"b.db"),url="http://127.0.0.1:3993";
+ let p=await boot(3993,{DB_PATH:db});
+ try{
+  const r=await fetch(url+"/api/register",{method:"POST",headers:{"Content-Type":"application/json","X-Forwarded-For":"10.0.4.3"},
+   body:JSON.stringify({name:"Cassé",password:"motdepasse1",invite:INVITE,camp:"left"})});
+  assert.equal(r.status,201);
+ }finally{await stop(p);}
+ const d=new DatabaseSync(db);d.prepare("UPDATE players SET state='{pas du json'").run();d.close();
+ p=await boot(3993,{DB_PATH:db});await stop(p);
+ const kept=readdirSync(dir).filter(f=>f.endsWith(".bad.json"));
+ assert.equal(kept.length,1);assert.equal(readFileSync(join(dir,kept[0]),"utf8"),"{pas du json");
 });

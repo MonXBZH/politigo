@@ -57,7 +57,7 @@ try {
   Wait 9000                                  # the rebirth intro plays first
   $buy = @"
 (async()=>{const fm0=document.getElementById('chip-fm').textContent;document.querySelector('[data-sheet=food]').click();
- const b=[...document.querySelectorAll('#sheet-body .item')].find(x=>/Soupe/.test(x.textContent)&&!x.disabled);if(!b)return 'no soup button ('+document.querySelector('#sheet-body').textContent.slice(0,80)+')';
+ const b=[...document.querySelectorAll('#sheet-body .item')].find(x=>/Soupe/.test(x.textContent)&&x.getAttribute('aria-disabled')!=='true');if(!b)return 'no soup button ('+document.querySelector('#sheet-body').textContent.slice(0,80)+')';
  b.click();for(let i=0;i<20&&document.getElementById('chip-fm').textContent===fm0;i++)await new Promise(r=>setTimeout(r,150));
  return fm0+' -> '+document.getElementById('chip-fm').textContent;})()
 "@

@@ -152,7 +152,7 @@ export function freshState(camp,now){
  return {v:2,camp,vclock:now,lastReal:now,hourIdx:Math.floor(now/H),born:now,
   fm:10,sat:80,moral:80,energy:80,hyg:80,xp:0,lvl:1,best:1,streak:0,bestStreak:0,neg:0,zero:0,form:"Excellente",mult:1.25,
   lastVisit:-99,visitDay:-1,visitsToday:0,actsToday:0,actsVisit:0,actWindow:-99,breadIdx:-1,coffeeDay:-1,coffees:0,petIdx:-1,
-  sleeping:false,equipped:{},deaths:0,jn:0,journal:[],pong:null,rematchT:-1};
+  sleeping:false,equipped:{},deaths:0,jn:0,journal:[],pong:null,rematchT:-1,diedAt:-1};
 }
 export function newGame(camp,now){
  const S=freshState(camp,now);
@@ -183,6 +183,8 @@ export function sanitize(s,now){
  o.jn=Math.max(o.jn,...o.journal.map(j=>j.n),0);
  if(s.pong&&Number.isFinite(s.pong.t))o.pong={t:s.pong.t};
  o.rematchT=num(s.rematchT,-1,o.vclock,-1);
+ // States saved before diedAt existed take it from their journal.
+ o.diedAt=num(s.diedAt??o.journal.find(j=>j.k==="death")?.t,-1,o.vclock,-1);
  return o;
 }
 function log(S,k,text,d){
@@ -272,7 +274,7 @@ function stressHit(S,random,factor=1){
 // A death (or a resignation) restarts at level 1 in place: the object identity is kept for the server cache.
 function die(S,reason,camp=S.camp){
  const name=person(S).name,keep={journal:S.journal,jn:S.jn,deaths:S.deaths+1,best:S.best,bestStreak:S.bestStreak,equipped:S.equipped};
- const fresh=Object.assign(freshState(camp,S.vclock),keep,{lastReal:S.lastReal});
+ const fresh=Object.assign(freshState(camp,S.vclock),keep,{lastReal:S.lastReal,diedAt:S.vclock});
  for(const k of Object.keys(S))delete S[k];
  Object.assign(S,fresh);
  log(S,"death",reason==="resign"
@@ -282,7 +284,8 @@ function die(S,reason,camp=S.camp){
 // Brings a state up to real time (speed > 1 only on a test server). Returns true when an hour ticked.
 export function advance(S,realNow,speed=1,random=Math.random){
  if(!Number.isFinite(realNow))return false;                    // a bad clock reading must never poison the state
- const dt=Math.max(0,realNow-S.lastReal);S.lastReal=realNow;S.vclock+=dt*speed;
+ // A clock stepping back (NTP, VM resume) pauses the game instead of replaying the same minutes twice.
+ if(realNow>S.lastReal){S.vclock+=(realNow-S.lastReal)*speed;S.lastReal=realNow;}
  const h0=S.hourIdx;
  while(Math.floor(S.vclock/H)>S.hourIdx){
   tickHour(S,S.hourIdx,random);S.hourIdx++;
@@ -359,9 +362,9 @@ export function act(S,a,{now,speed=1,random=Math.random}){
  case "restart":{
   // Resigning counts as a political death on the leaderboard, so rerolling a bad start never pays.
   if(!CAMPS.includes(a.camp))return fail("Camp inconnu.");
-  // One resignation an hour: the live feed cannot be flooded with deaths.
-  const lastDeath=S.journal.find(j=>j.k==="death");
-  if(lastDeath&&S.vclock-lastDeath.t<H)return fail("Une démission par heure, pas plus : laisse-lui le temps de faire campagne.");
+  // One resignation an hour: the live feed cannot be flooded with deaths. The date is kept in the state, not
+  // looked up in the journal, which forty quick actions would scroll past.
+  if(S.diedAt>=0&&S.vclock-S.diedAt<H)return fail("Une démission par heure, pas plus : laisse-lui le temps de faire campagne.");
   die(S,"resign",a.camp);return done();
  }
  default:return fail("Action inconnue.");

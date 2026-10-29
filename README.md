@@ -131,9 +131,18 @@ Si l'un de ses `location` utilise `add_header`, recopier la ligne HSTS dedans : 
   Pseudos en alphabet latin uniquement, et unicité sans tenir compte des majuscules ni des accents : personne ne peut se faire passer pour un autre avec un « о » cyrillique.
 - **Sessions** : cookie `__Host-` `HttpOnly` + `SameSite=Lax` + `Secure`, 10 appareils au plus par joueur, supprimées côté serveur à la déconnexion et à la suppression du compte.
 - **Requêtes** : écritures refusées hors JSON et hors origine du site ; limitation des tentatives par adresse, par adresse et pseudo,
-  et par pseudo, si bien qu'un inconnu ne peut pas bloquer le compte d'un ami ; 3 flux en direct par joueur ; une démission par heure.
+  et par pseudo, si bien qu'un inconnu ne peut pas bloquer le compte d'un ami ; 5 essais de suppression de compte par quart d'heure ;
+  3 flux en direct par joueur ; une démission par heure.
 - **Jeu** : le serveur fait foi ; score du mini-jeu vérifié (durée, cadence, pas de rejeu) ; états relus et bornés au démarrage.
-- **Robustesse** : un joueur ou une connexion en erreur est ignoré sans arrêter le serveur.
+- **Robustesse** :
+  - un joueur ou une connexion en erreur est ignoré sans arrêter le serveur ;
+  - une écriture ratée (disque plein) annule l'action au lieu de désynchroniser mémoire et base ;
+  - une partie illisible est mise de côté dans `/data/state-<id>-<date>.bad.json` avant d'être recommencée ;
+  - à l'arrêt, toutes les horloges sont enregistrées ;
+  - `/api/health` vérifie la base et l'horloge du jeu, et pas seulement que le processus répond ;
+  - au-delà de 16 vérifications de mot de passe simultanées, le serveur répond « occupé » au lieu de saturer sa mémoire.
+- **Client** : requêtes abandonnées après 15 s, bandeau « Connexion perdue » et reconnexion automatique, flux en direct relancé s'il se tait,
+  messages visibles même sous un panneau ouvert, bouton Retour du téléphone qui ferme le panneau.
 - **Infrastructure** : CSP stricte sans `unsafe-inline`, aucune ressource externe, conteneurs non-root en lecture seule, sans capacités, avec
   mémoire, processus et logs plafonnés ; délais courts contre les connexions lentes. Seuls le pseudo et la partie sont stockés ;
   chaque joueur peut supprimer son compte depuis Dossier → Compte.
@@ -143,7 +152,7 @@ Avant d'ouvrir au groupe, vérifier les deux statuts judiciaires cités dans les
 ## 5. Tests
 
 ```bash
-bash tests/run-server.sh                       # règles (dont l'équilibrage J15) + API, dans l'image Node de production
+bash tests/run-server.sh                       # 89 tests : règles (dont l'équilibrage J15) + API, dans l'image Node de production
 docker compose restart api                     # remet à zéro les limites d'inscription avant l'e2e
 powershell -File tests\e2e.ps1                 # parcours complet dans Chrome (crée deux joueurs de test)
 ```

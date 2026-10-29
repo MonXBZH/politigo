@@ -1,0 +1,11 @@
+# Weekly pull requests when an action used by the workflow, or a base image, gets a new version.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directories: ["/", "/server"]
+    schedule:
+      interval: weekly
