@@ -1,0 +1,738 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PolitiGo — Atelier des compagnons</title>
+<style>
+:root{color-scheme:dark;--bg:#10131b;--panel:#1b202c;--ink:#f4efe5;--muted:#aeb6c8;--accent:#f3be75}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,sans-serif}
+main{max-width:1220px;margin:auto;padding:40px 24px}header{max-width:830px}h1{font-size:clamp(36px,6vw,68px);letter-spacing:-3px;line-height:1;margin:18px 0}
+h2{font-size:26px;margin-top:40px}h3{margin:8px 0 2px;font-size:17px}p{color:var(--muted)}.eyebrow{color:var(--accent);font:700 12px monospace;letter-spacing:3px}
+.tag{display:inline-block;border:1px solid #485067;border-radius:20px;padding:4px 10px;font-size:12px;color:var(--muted)}
+.studio{display:grid;grid-template-columns:1fr 1fr;gap:40px;align-items:center;margin-top:30px;background:var(--panel);border-radius:24px;padding:30px}
+.device{width:min(100%,390px);aspect-ratio:1;border-radius:50%;background:#030408;padding:12px;margin:auto;box-shadow:0 0 0 2px #4c5262,0 20px 50px #0006}
+#screen{width:100%;height:100%;border-radius:50%;display:block}
+canvas{image-rendering:pixelated}.controls{display:grid;gap:16px}label{display:block;color:var(--muted);font-size:14px}select,button{font:inherit;color:var(--ink);background:#292f40;border:1px solid #536078;border-radius:10px;padding:10px 12px}
+button{cursor:pointer}button:hover,button[aria-pressed=true]{border-color:var(--accent);background:#3b3740}button:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
+.row{display:flex;flex-wrap:wrap;gap:8px}input[type=range]{width:100%;accent-color:var(--accent)}
+.readout{font:700 22px monospace;color:var(--accent)}.small{font-size:13px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(192px,1fr));gap:16px}
+.card{background:var(--panel);border:1px solid #30384a;border-radius:16px;padding:16px;cursor:pointer;text-align:left;display:block;width:100%}
+.card canvas{width:128px;height:128px;display:block;margin:4px auto 12px;background:radial-gradient(ellipse at bottom,#303749,transparent 70%);border-radius:12px}
+.card p{margin:4px 0;font-size:12px;min-height:36px}.level{font:12px monospace;color:var(--accent)}.side-left{border-top:3px solid #ef7c91}.side-right{border-top:3px solid #7fa8f8}
+table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;vertical-align:top;padding:12px;border-bottom:1px solid #353d50}th{color:var(--accent)}
+.table-wrap{overflow:auto}footer{margin-top:40px;border-top:1px solid #353d50;padding-top:20px;font-size:13px;color:var(--muted)}a{color:#a7c7ff}
+@media(max-width:700px){main{padding:24px 16px}.studio{grid-template-columns:1fr;padding:20px;gap:24px}.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.card{padding:10px}.card canvas{width:112px;height:112px}h1{letter-spacing:-2px}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+@media(min-width:701px){.studio{align-items:start}.device{position:sticky;top:20px}}
+.wallet{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:6px 0}
+.shop{display:grid;gap:6px}.shop button{display:flex;justify-content:space-between;gap:10px;text-align:left;font-size:14px;padding:8px 10px}
+.shop button:disabled{opacity:.45;cursor:not-allowed}.price{color:var(--accent);font-family:monospace;white-space:nowrap}
+</style>
+</head>
+<body>
+<main>
+<header>
+<span class="eyebrow">POLITIGO / CONCEPT 01</span>
+<h1>La République<br>dans la poche.</h1>
+<p>Deux collections, vingt compagnons, cent niveaux. Nourrir, distraire et faire évoluer une petite caricature politique, sans sondages ni prise de tête.</p>
+<span class="tag">Dessins originaux · maquette animée</span> <span class="tag">Écran cible : rond, 466 × 466</span>
+<p class="small">Uniquement des personnalités politiques contemporaines. Les paliers sont un ordre de collection ludique, pas une échelle de valeur ou de radicalité. Les transformations entre personnes sont une convention de jeu. Accessoires, repas et répliques sont fictifs : ils ne prétendent pas décrire leurs habitudes réelles.</p>
+</header>
+<section class="studio" aria-label="Simulateur visuel">
+<div class="device"><canvas id="screen" width="466" height="466" role="img" aria-label="Aperçu du compagnon sur un écran rond"></canvas></div>
+<div class="controls">
+<div><span class="eyebrow">ÉCRAN DE COMPAGNON</span><h2 id="current-name" style="margin:8px 0">Marine Tondelier</h2><p id="current-prop" class="small"></p></div>
+<label>Collection<select id="camp"><option value="left">Gauche · place des Lilas</option><option value="right">Droite · place des Ormes</option></select></label>
+<div><label for="level">Niveau <output id="level-value" for="level" class="readout">1</output></label><input id="level" type="range" min="1" max="100" value="1"></div>
+<label for="item">Objet personnel équipé</label><select id="item"></select>
+<p id="item-detail" class="small" aria-live="polite"></p>
+<p id="appearance-detail" class="small" aria-live="polite"></p>
+<p id="stress-detail" class="small" aria-live="polite"></p>
+<div><label>Animation commune à tous les personnages</label><div class="row" id="actions"></div></div>
+<div><span class="eyebrow">LA BUVETTE</span>
+<div class="wallet"><span class="readout" id="wallet">10 FM</span><button type="button" id="hour">+1 h</button><button type="button" id="night">Jusqu'au matin</button><button type="button" id="autoday" title="24 h jouées par le joueur assidu : 6 visites et 6 activités">Journée auto</button></div>
+<div class="row"><button type="button" id="act-debate">Débattre (+30 XP)</button><button type="button" id="act-game">Pong des arguments (+30 XP)</button></div>
+<div class="row"><button type="button" id="preview-death">Aperçu : mort politique</button><button type="button" id="preview-rebirth">Aperçu : nouveau départ</button></div>
+<p class="small" id="form-detail" aria-live="polite"></p>
+<p class="small" id="eco-log" aria-live="polite"></p>
+<div class="shop" id="shop"></div></div>
+<button id="pause" type="button" aria-pressed="false">Mettre en pause</button>
+<p class="small">Cliquer une carte sélectionne son palier. Le niveau 100 ajoute une couronne républicaine d'étoiles. Les jauges suivent la Buvette : chaque heure fait baisser les besoins, rapporte 2 FM et de l'XP selon la forme. Déplacer le curseur de niveau remet l'XP au début de ce niveau.</p>
+</div>
+</section>
+<h2>Collection gauche <span class="tag">10 formes</span></h2>
+<div class="grid" id="left-gallery"></div>
+<h2>Collection droite <span class="tag">10 formes</span></h2>
+<p class="small">Collection élargie : centre droit, droite républicaine et extrême droite. Ce regroupement de jeu ne signifie pas que ces courants sont équivalents.</p>
+<div class="grid" id="right-gallery"></div>
+<h2>Les objets personnels</h2>
+<p>Deux objets par personnage, à équiper dans le simulateur. Inspirations : symboles publics, thèmes politiques ou attaches locales ; les accessoires et leurs effets sont des inventions de jeu, pas des habitudes personnelles attestées. Ici, ils changent le dessin tenu en main, sans modifier les jauges.</p>
+<div class="table-wrap"><table><thead><tr><th>Personnage</th><th>Objet signature</th><th>Second objet</th></tr></thead><tbody id="personal-items"></tbody></table></div>
+<h2>Les petits stress de la République</h2>
+<p>Chaque compagnon a ses déclencheurs de stress, tirés de ses casseroles publiques : affaires d'argent, polémiques et coups d'éclat. Dans le simulateur, « Stresser » déclenche une crise ; un second clic passe au stress suivant.</p>
+<p class="small">Satire. Les répliques sont inventées, sauf mention « citation réelle ». La colonne « Clin d'œil à » donne le stade de chaque procédure : une enquête, une mise en examen ou une condamnation frappée d'appel n'est pas une condamnation définitive, et la présomption d'innocence s'applique.</p>
+<div class="table-wrap"><table><thead><tr><th>Personnage</th><th>Déclencheur</th><th>Réplique</th><th>Clin d'œil à</th></tr></thead><tbody id="stress-table"></tbody></table></div>
+<h2>Édouard Philippe : dix niveaux, cinq apparences</h2>
+<p>30–31 : cheveux et barbe bruns · 32–33 : barbe grise · 34–35 : cheveux et barbe gris · 36–37 : disparition de la barbe · 38–39 : disparition des cheveux · 40 : Laurent Wauquiez. Cette séquence stylisée est une convention visuelle de jeu, pas une chronologie médicale. Le curseur met à jour le portrait et sa carte dans la galerie.</p>
+<h2>Le sac à malices</h2>
+<p>Les deux collections ont les mêmes prix et les mêmes effets ; seul l'habillage change. Aucun régime alimentaire n'est imposé par une opinion politique. Les prix sont en frais de mandat (FM), la monnaie de la Buvette.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Prix / catégorie</th><th>Gauche</th><th>Droite</th><th>Effet</th></tr></thead>
+<tbody id="shop-table"></tbody>
+<tbody>
+<tr><td>Accessoire</td><td>Mégaphone, badge, vélo, rose</td><td>Pupitre, écharpe tricolore, porte-documents</td><td>Cosmétique, animations dédiées</td></tr>
+<tr><td>Jeu de réflexes</td><td>Distribue les tracts</td><td>Installe les affiches</td><td>Adresse +5, moral +10</td></tr>
+<tr><td>Jeu de mémoire</td><td>Les paires de la coalition</td><td>Les paires du conseil municipal</td><td>Mémoire +5, moral +10</td></tr>
+<tr><td>Puzzle</td><td>Organise la cantine collective</td><td>Organise la fête de village</td><td>Organisation +5</td></tr>
+<tr><td>Débat</td><td colspan="2">Pong des arguments : renvoyer les bulles, pas les personnes</td><td>Éloquence +5, sans contenu militant réel</td></tr>
+</tbody></table></div>
+<h2>La Buvette : l'économie interne</h2>
+<p>Chaque heure de vie rapporte <strong>2 frais de mandat (FM)</strong>, la nuit et appareil éteint compris, soit 48 FM par jour. On commence avec 10 FM et la caisse plafonne à 99 FM (environ deux jours), pour qu'une longue absence ne se transforme pas en trésor de guerre. Plus un produit coûte cher, plus il soigne ; seul le quignon est gratuit, limité à un par heure : il évite la famine sans couvrir plus de la moitié des besoins.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Besoin</th><th>Baisse par heure éveillé</th><th>La nuit (0 h – 6 h)</th></tr></thead>
+<tbody>
+<tr><td>Satiété</td><td>−13 (une jauge pleine dure environ 7 h)</td><td>−4</td></tr>
+<tr><td>Moral</td><td>−4, et −6 de plus par jauge sous 25 (satiété ou hygiène)</td><td>−2</td></tr>
+<tr><td>Énergie</td><td>−8</td><td>+15 (le sommeil recharge)</td></tr>
+<tr><td>Hygiène</td><td>−6</td><td>−2</td></tr>
+</tbody></table></div>
+<p><strong>Équilibrage vérifié par simulation sur 5 jours</strong>, avec un joueur qui passe toutes les 3 h entre 6 h et 21 h : il dépense environ 37 FM par jour (6 grands repas, 3 savons, 3 cafés, 1 hamac, 1 jardin) sur 48 gagnés. Aucune jauge ne descend sous 30, et la marge d'environ 10 FM par jour paie un banquet tous les un ou deux jours. On ne peut pas tout s'offrir, mais un joueur attentif ne manque de rien.</p>
+<h2>L'expérience : le niveau 100 en 15 jours</h2>
+<p>L'XP vient de trois sources. Le temps qui passe suffit à survivre ; ce sont les visites et les activités qui font vraiment progresser.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Source</th><th>Gain</th><th>Garde-fous contre l'abus</th></tr></thead>
+<tbody>
+<tr><td>Chaque heure de vie</td><td>5 XP, multipliés selon la forme (tableau suivant)</td><td>—</td></tr>
+<tr><td>Visite (un achat ou une activité)</td><td>+25 XP</td><td>Une visite compte au plus toutes les 2 h, 8 fois par jour, jamais la nuit</td></tr>
+<tr><td>Activité : débat ou mini-jeu</td><td>+30 XP, moral +10, énergie −8</td><td>2 par visite, 8 par jour, impossible sous 20 d'énergie</td></tr>
+</tbody></table></div>
+<p>Le multiplicateur horaire dépend de la <strong>plus basse</strong> des quatre jauges : une seule jauge oubliée suffit à freiner la progression.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Forme</th><th>Condition</th><th>XP par heure</th></tr></thead>
+<tbody>
+<tr><td>Excellente</td><td>Toutes les jauges à 50 ou plus</td><td>×1,25, plus une série : +1 % par heure consécutive, plafonnée à +25 % (après 25 h)</td></tr>
+<tr><td>Correcte</td><td>La plus basse entre 25 et 49</td><td>×1, la série retombe à zéro</td></tr>
+<tr><td>Négligée</td><td>Une jauge sous 25</td><td>×0,5, puis −0,05 par heure de négligence : plus d'XP du tout après 10 h</td></tr>
+<tr><td>Abandonnée</td><td>Une jauge à zéro</td><td>Perte de 2,5 XP par heure, sans jamais redescendre de niveau. Au bout de 12 h : mort politique</td></tr>
+</tbody></table></div>
+<p>Monter du niveau L au niveau L+1 coûte <strong>17 + 1,15 × L XP</strong>, soit environ 7 400 XP en tout : les premières formes défilent vite pour accrocher le joueur, les dernières se méritent.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Profil simulé sur 60 jours</th><th>Niveau 100</th><th>Jauge la plus basse atteinte</th><th>Mort ?</th></tr></thead>
+<tbody>
+<tr><td>Assidu : 6 visites et 6 activités par jour</td><td><strong>J15</strong></td><td>37</td><td>Non</td></tr>
+<tr><td>Assidu sans jeux : 6 visites</td><td>J24</td><td>37</td><td>Non</td></tr>
+<tr><td>Minimum : 3 visites et 3 activités</td><td>J26</td><td>9</td><td>Non</td></tr>
+<tr><td>Minimum sans jeux : 3 visites</td><td>J39</td><td>9</td><td>Non</td></tr>
+<tr><td>Absent : une visite par jour</td><td>jamais</td><td>0</td><td>Oui, vers J2</td></tr>
+</tbody></table></div>
+<p>Trois visites par jour suffisent donc à garder son compagnon en vie, mais pas à le faire briller. Le bouton « Journée auto » du simulateur rejoue le joueur assidu. Le départ automatique de TamaDigi après trois jours devra être retiré.</p>
+<h2>Mini-jeu jouable : le Pong des arguments</h2>
+<p>Reprise du jeu de balle de TamaDigi. L'adversaire lance ses piques depuis son pupitre ; le compagnon les renvoie avec ses propres répliques. 20 secondes, ou trois ratés : chaque raté devient une « petite phrase reprise par la presse ». La partie rapporte les 30 XP d'une activité, plus 2 XP par renvoi (20 au maximum). Les bulles accélèrent à chaque renvoi, et l'endroit où elles touchent le compagnon change leur angle. Commandes : souris, doigt ou flèches ; Échap pour abandonner.</p>
+<h2>Mort politique et nouveau départ</h2>
+<p>Douze heures d'affilée avec une jauge à zéro, et c'est la <strong>mort politique</strong> : le compagnon range son bureau et s'en va avec son carton sous le bras. On recommence au niveau 1 avec 10 FM, et chaque camp a son animation de renaissance :</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Camp</th><th>Animation</th><th>Déroulé</th></tr></thead>
+<tbody>
+<tr><td>Gauche</td><td>La primaire unitaire</td><td>Cinq petits candidats sautent dans une urne, qui tremble sous un « débat fraternel » plein de jurons, puis explose en confettis : « Accord historique ! Valable jusqu'à jeudi. » Le nouveau compagnon en sort.</td></tr>
+<tr><td>Droite</td><td>Le parti change de nom</td><td>Un rouleau de peintre repeint l'enseigne du parti : RPR, UMP, LR, FN, RN… puis les lettres s'emballent avant de s'arrêter sur « LES RENOMMÉS » : « Nouveau nom, mêmes têtes ! »</td></tr>
+</tbody></table></div>
+<h2>Une progression jusqu'à 100, sans course à la radicalité</h2>
+<p>Une forme aux niveaux 1, 10, 20, 30, 40, 50, 60, 70, 80 et 90. Entre deux formes : progression d'expérience, nouveaux accessoires et petites animations. Jean-Luc Mélenchon et Marine Le Pen sont les formes finales de leurs collections respectives, aux niveaux 90 à 100. Au niveau 100 : variante « légende de la collection », décor et célébration. Possibilité recommandée de garder sa forme préférée tout en gagnant des niveaux.</p>
+<p>La satiété, le moral, l'énergie et l'hygiène restent les besoins principaux. L'éloquence, l'organisation et le sang-froid servent aux mini-jeux. Une négligence provoque une bouderie puis un départ en vacances, jamais une transformation en adversaire politique.</p>
+<footer>
+<p>Maquette autonome, sans dépendance, police distante, photo ni sprite repris d'un autre jeu. Personnages stylisés sur grille logique 64 × 64 ; animations procédurales de prévisualisation, pas encore des planches TPK2. Les ressemblances restent indicatives et demanderaient une passe de pixel art manuel.</p>
+<p>Base technique examinée : <a href="https://github.com/joop0810/tamadigi">TamaDigi</a>, <a href="https://github.com/joop0810/tamadigi/blob/main/pet.h">niveau et cycle de vie</a>, <a href="https://github.com/joop0810/tamadigi/blob/main/sdmon.h">animations TPK2</a>, <a href="https://github.com/joop0810/tamadigi/blob/main/LICENSE">licence</a>. Concept non affilié aux personnes, partis ou institutions représentés.</p>
+</footer>
+</main>
+<script>
+"use strict";
+const people = {
+ left: [
+  {name:"Olivier Faure",hair:"#44382f",style:"short",coat:"#364a6c",prop:"rose",detail:"Lunettes, costume bleu et rose.",glasses:true},
+  {name:"Raphaël Glucksmann",hair:"#614637",style:"curly",coat:"#48546c",prop:"europe",detail:"Cheveux bruns, barbe et étoiles européennes.",beard:true},
+  {name:"Marine Tondelier",hair:"#724630",style:"bob",coat:"#63a774",prop:"leaf",detail:"Veste verte, lunettes et petite feuille.",glasses:true},
+  {name:"François Ruffin",hair:"#624438",style:"short",coat:"#c16f48",prop:"paper",detail:"Veste de terrain et journal plié.",beard:true},
+  {name:"Fabien Roussel",hair:"#777d82",style:"short",coat:"#445b7d",prop:"badge",detail:"Cheveux gris, veste bleue, badge rouge."},
+  {name:"Clémentine Autain",hair:"#693b2c",style:"long",coat:"#a13c68",prop:"book",detail:"Cheveux auburn et carnet de propositions."},
+  {name:"Sandrine Rousseau",hair:"#a67643",style:"bob",coat:"#478e72",prop:"bike",detail:"Lunettes, veste verte et vélo miniature.",glasses:true},
+  {name:"Manuel Bompard",hair:"#49382e",style:"short",coat:"#49556d",prop:"paper",detail:"Barbe brune, veste bleue et fiches de débat.",beard:true},
+  {name:"Mathilde Panot",hair:"#674331",style:"long",coat:"#a94964",prop:"scroll",detail:"Cheveux châtains, veste framboise et discours."},
+  {name:"Jean-Luc Mélenchon",hair:"#9b9b92",style:"receding",coat:"#303b54",prop:"mic",detail:"Forme finale : cravate rouge et geste de tribune.",tie:"#e15f66"}
+ ],
+ right: [
+  {name:"Valérie Pécresse",hair:"#bd935c",style:"bob",coat:"#e8e0ca",prop:"book",detail:"Carré blond et veste claire."},
+  {name:"Rachida Dati",hair:"#342a30",style:"bob",coat:"#bb4553",prop:"case",detail:"Carré brun, veste rouge et porte-documents."},
+  {name:"Xavier Bertrand",hair:"#7a726a",style:"receding",coat:"#465574",prop:"case",detail:"Cheveux grisonnants, costume bleu et porte-documents.",tie:"#8badd2"},
+  {name:"Édouard Philippe",hair:"#554137",style:"short",coat:"#3b485f",prop:"lighthouse",detail:"Lunettes, barbe et cheveux évolutifs aux niveaux 30 à 39.",glasses:true,beard:true},
+  {name:"Laurent Wauquiez",hair:"#b5b4ab",style:"short",coat:"#b24949",prop:"mountain",detail:"Cheveux argentés, veste rouge et montagne."},
+  {name:"Bruno Retailleau",hair:"#6b655e",style:"receding",coat:"#354660",prop:"case",detail:"Costume sombre et dossier municipal.",tie:"#6689b1"},
+  {name:"Éric Ciotti",hair:"#a19a91",style:"receding",coat:"#41495e",prop:"paper",detail:"Lunettes, cheveux très courts et dossier.",glasses:true},
+  {name:"Marion Maréchal",hair:"#c5a16b",style:"long",coat:"#d9d4c7",prop:"scroll",detail:"Cheveux blonds, veste claire et discours."},
+  {name:"Jordan Bardella",hair:"#292731",style:"quiff",coat:"#33456b",prop:"paper",detail:"Mèche brune et costume bleu.",tie:"#708bbd"},
+  {name:"Marine Le Pen",hair:"#d9bd76",style:"long",coat:"#3f577e",prop:"flag",detail:"Forme finale : cheveux blonds, veste bleue et petit drapeau."}
+ ]
+};
+const personalItems = {
+ "Olivier Faure":[{name:"Rose de la permanence",prop:"rose",text:"Signature socialiste : la rose s'invite au pupitre."},{name:"Puzzle de coalition",prop:"puzzle",text:"Mini-jeu proposé : assembler les pièces sans en perdre une."}],
+ "Raphaël Glucksmann":[{name:"Carnet européen",prop:"europe",text:"Un carnet aux étoiles européennes pour préparer les débats."},{name:"Essai de poche",prop:"book",text:"Clin d'œil à son activité d'essayiste : pause lecture."}],
+ "Marine Tondelier":[{name:"Arrosoir des écologistes",prop:"watering",text:"Un accessoire de jardinage pour la petite feuille du compagnon."},{name:"Veste verte de secours",prop:"jacket",text:"Clin d'œil visuel à sa veste verte : prête pour un débat."}],
+ "François Ruffin":[{name:"Journal de terrain",prop:"paper",text:"Clin d'œil à son travail de journaliste : collecte de petites nouvelles."},{name:"Caméra documentaire",prop:"camera",text:"Un accessoire inspiré de ses documentaires : tourner une scène miniature."}],
+ "Fabien Roussel":[{name:"Badge de la fête",prop:"badge",text:"Un badge rouge pour une fête populaire miniature."},{name:"Marmite du banquet",prop:"pot",text:"Un repas collectif fictif, à partager avec toute la collection."}],
+ "Clémentine Autain":[{name:"Carnet féministe",prop:"book",text:"Un carnet de propositions inspiré de ses engagements publics."},{name:"Micro de réunion",prop:"mic",text:"Mini-jeu proposé : donner à chaque bulle son tour de parole."}],
+ "Sandrine Rousseau":[{name:"Vélo miniature",prop:"bike",text:"Un accessoire écologiste : slalomer entre les plots."},{name:"Plant du jardin partagé",prop:"leaf",text:"Une petite pousse à entretenir pendant les pauses."}],
+ "Manuel Bompard":[{name:"Calculatrice de campagne",prop:"calculator",text:"Clin d'œil à sa formation scientifique : puzzle de chiffres."},{name:"Fiches de coordination",prop:"paper",text:"Un accessoire d'organisation pour préparer le prochain débat."}],
+ "Mathilde Panot":[{name:"Carafe d'eau commune",prop:"water",text:"Clin d'œil à ses prises de position sur l'eau : une carafe miniature."},{name:"Micro de l'hémicycle",prop:"mic",text:"Un micro fictif pour les discours du compagnon."}],
+ "Jean-Luc Mélenchon":[{name:"Hologramme de poche",prop:"hologram",text:"Clin d'œil aux meetings en hologramme : une tribune lumineuse miniature."},{name:"Livret de la VIe République",prop:"scroll",text:"Un livret de jeu inspiré de ce thème de son programme."}],
+ "Valérie Pécresse":[{name:"Carte de transport miniature",prop:"ticket",text:"Clin d'œil à la région Île-de-France : organiser un trajet."},{name:"Maquette de train",prop:"train",text:"Puzzle fictif : faire circuler les wagons à l'heure."}],
+ "Rachida Dati":[{name:"Dossier de plaidoirie",prop:"case",text:"Clin d'œil à son parcours juridique : mettre les pièces dans l'ordre."},{name:"Palette culturelle",prop:"palette",text:"Un accessoire inspiré de son passage à la Culture."}],
+ "Xavier Bertrand":[{name:"Beffroi miniature",prop:"tower",text:"Un clin d'œil aux Hauts-de-France, à poser dans le décor."},{name:"Dossier régional",prop:"case",text:"Puzzle fictif : ranger les dossiers de la permanence."}],
+ "Édouard Philippe":[{name:"Phare du Havre",prop:"lighthouse",text:"Clin d'œil à son attache havraise : une lumière pour les pauses."},{name:"Gants de boxe miniatures",prop:"gloves",text:"Clin d'œil à sa pratique publique de la boxe : exercice de réflexes sans adversaire."}],
+ "Laurent Wauquiez":[{name:"Sommet miniature",prop:"mountain",text:"Un clin d'œil à son ancrage régional : gravir une montagne de dossiers."},{name:"Veste rouge de randonnée",prop:"jacket",text:"Un accessoire visuel inspiré de son image publique."}],
+ "Bruno Retailleau":[{name:"Boussole vendéenne",prop:"compass",text:"Clin d'œil à son ancrage vendéen : retrouver le chemin de la permanence."},{name:"Dossier du Sénat",prop:"paper",text:"Un accessoire inspiré de son parcours parlementaire."}],
+ "Éric Ciotti":[{name:"Galet de la promenade",prop:"stone",text:"Un clin d'œil niçois : souvenir de promenade, sans lancer de galets."},{name:"Dossier azuréen",prop:"case",text:"Un porte-documents fictif aux couleurs du littoral."}],
+ "Marion Maréchal":[{name:"Carnet de conférence",prop:"book",text:"Un accessoire de prise de notes pour les discours miniatures."},{name:"Petit drapeau",prop:"flag",text:"Un symbole public transformé en accessoire de jeu."}],
+ "Jordan Bardella":[{name:"Fiches de plateau",prop:"paper",text:"Un accessoire de débat télévisé : remettre les fiches dans l'ordre."},{name:"Micro de meeting",prop:"mic",text:"Un microphone miniature pour les animations de tribune."}],
+ "Marine Le Pen":[{name:"Chat de compagnie miniature",prop:"cat",text:"Clin d'œil à son intérêt public pour les chats : petit compagnon du compagnon."},{name:"Drapeau de meeting",prop:"flag",text:"Un accessoire de tribune pour la forme finale."}]
+};
+const philippePhases = [
+ {hair:"#554137",beardColor:"#554137",beard:true,style:"short",text:"30–31 : cheveux et barbe bruns."},
+ {hair:"#554137",beardColor:"#c3c4c6",beard:true,style:"short",text:"32–33 : la barbe devient grise."},
+ {hair:"#c3c4c6",beardColor:"#c3c4c6",beard:true,style:"short",text:"34–35 : les cheveux deviennent gris à leur tour."},
+ {hair:"#c3c4c6",beard:false,style:"short",text:"36–37 : la barbe disparaît, les cheveux restent gris."},
+ {beard:false,style:"bald",text:"38–39 : les cheveux disparaissent. Au niveau 40, place à Laurent Wauquiez."}
+];
+const stresses = {
+ "Olivier Faure":[{trigger:"Recomptage au congrès",line:"On recompte ? On recompte. Et on recompte encore.",ref:"Congrès du PS de Marseille (2023) : résultats contestés et recomptés face à Nicolas Mayer-Rossignol."},{trigger:"Souvenir de 2022",line:"1,75 % ? Ce n'était pas moi, c'était Anne !",ref:"Score de la candidate socialiste à la présidentielle 2022."}],
+ "Raphaël Glucksmann":[{trigger:"Sortie du périphérique",line:"Il existe une France après Saint-Germain-des-Prés ?",ref:"Étiquette « bobo parisien » que lui collent ses adversaires."},{trigger:"Carte du PS envoyée par erreur",line:"Je mène la liste du PS, mais je ne suis pas au PS. Suivez.",ref:"Tête de liste PS–Place publique aux européennes 2024 sans être membre du PS."}],
+ "Marine Tondelier":[{trigger:"Veste verte au pressing",line:"Sans ma veste, plus personne ne me reconnaît !",ref:"La veste verte devenue signature télévisée en 2024."},{trigger:"Réunion d'union de la gauche",line:"Cinq partis, six candidats, zéro accord. Tout va bien.",ref:"La candidature commune de la gauche pour 2027, toujours introuvable."}],
+ "François Ruffin":[{trigger:"Appel de Jean-Luc",line:"Ne pas décrocher. Surtout, ne pas décrocher.",ref:"Rupture avec LFI en 2024 et critiques publiques contre Jean-Luc Mélenchon."},{trigger:"Caméra en panne",line:"Pas de caméra ? Alors il ne s'est rien passé.",ref:"Le député-documentariste de « Merci patron ! »."}],
+ "Fabien Roussel":[{trigger:"Courrier du parquet",line:"Assistant parlementaire, moi ? J'assistais. Beaucoup.",ref:"Enquête préliminaire du PNF ouverte en 2022, après des révélations de Mediapart, sur un ancien emploi de collaborateur parlementaire ; il conteste toute irrégularité."},{trigger:"Menu végétarien à la cantine",line:"Sans steak, ce n'est plus la gauche, c'est un régime.",ref:"Son « bon vin, bonne viande, bon fromage » de la campagne 2022."}],
+ "Clémentine Autain":[{trigger:"Liste des investitures",line:"Frondeuse, moi ? Je préfère dire « l'Après ».",ref:"Départ de LFI en 2024 après les « purges » des investitures, puis fondation de L'Après."},{trigger:"Notification de Jean-Luc",line:"Bloquée. Débloquée. Re-bloquée. C'est ça, le dialogue ?",ref:"Relations publiques orageuses avec la direction de LFI."}],
+ "Sandrine Rousseau":[{trigger:"Barbecue entre voisins",line:"Une côte de bœuf ?! Vite, un homme déconstruit !",ref:"Sa déclaration de 2022 associant le barbecue à la virilité."},{trigger:"Piste cyclable fermée",line:"Mon vélo est triste. Et quand mon vélo est triste…",ref:"Ses combats pro-vélo."}],
+ "Manuel Bompard":[{trigger:"Liste des candidats",line:"Désinvestir, c'est aussi investir… dans l'unité.",ref:"Coordinateur de LFI lors des non-réinvestitures de 2024."},{trigger:"Tableur planté",line:"Sans tableur, plus de ligne politique.",ref:"Clin d'œil à sa calculatrice de campagne."}],
+ "Mathilde Panot":[{trigger:"Micro coupé",line:"Rappel au règlement ! Sur le rappel au règlement !",ref:"Rappels au règlement à répétition dans l'hémicycle."},{trigger:"Coupure d'eau",line:"L'eau est un bien commun. Ma douche aussi !",ref:"Ses combats pour l'eau bien commun."}],
+ "Jean-Luc Mélenchon":[{trigger:"Perquisition au siège",line:"La République, c'est moi ! Ma personne est sacrée !",ref:"Perquisition de 2018 au siège de LFI ; condamné en 2019 à trois mois avec sursis pour rébellion et provocation. Citation réelle."},{trigger:"Dossier des assistants européens",line:"Des assistants ? Non : des militants. Ah… c'est pareil ?",ref:"Enquête ouverte en 2018 sur les assistants parlementaires européens de LFI ; aucune condamnation connue à la rédaction."}],
+ "Valérie Pécresse":[{trigger:"Appel aux dons",line:"Aidez-moi à rembourser, un ticket de métro à la fois.",ref:"4,78 % à la présidentielle 2022, sous le seuil de remboursement : appel aux dons pour une dette personnelle d'environ 5 M€."},{trigger:"Meeting au Zénith",line:"Je lis mon discours avec l'énergie d'un RER B en panne.",ref:"Le meeting du Zénith de février 2022, jugé raté."}],
+ "Rachida Dati":[{trigger:"Convocation au tribunal",line:"Des honoraires, c'est du conseil. Pas de la corruption !",ref:"Mise en examen en 2019 pour corruption et trafic d'influence passifs (honoraires versés par une filiale de Renault-Nissan) ; renvoyée devant le tribunal correctionnel, elle conteste et reste présumée innocente."},{trigger:"Question d'un journaliste",line:"Vous êtes là pour m'informer ou pour m'attaquer ?",ref:"Échanges tendus avec des journalistes en interview."}],
+ "Xavier Bertrand":[{trigger:"Annonce de primaire",line:"Je suis candidat. Ah non. Ah si. Enfin, peut-être.",ref:"Ses candidatures et renoncements répétés pour l'Élysée."},{trigger:"Carte d'adhérent LR",line:"Parti en 2017, revenu en 2021. Le GPS recalcule.",ref:"Départ des Républicains en 2017, retour en 2021."}],
+ "Édouard Philippe":[{trigger:"Gants raccrochés",line:"Pas de boxe aujourd'hui ? Je vais cogner un sondage.",ref:"Sa pratique publique de la boxe."},{trigger:"Calendrier 2027",line:"Je suis candidat. Depuis 2024. Pour 2027. Patience.",ref:"Candidature à la présidentielle annoncée en septembre 2024."}],
+ "Laurent Wauquiez":[{trigger:"Facture des dîners des sommets",line:"Le grand cru était régional : c'est de l'aménagement du territoire.",ref:"« Dîners des sommets » financés par la Région Auvergne-Rhône-Alpes, révélés par Mediapart en 2023 ; il en défend l'usage."},{trigger:"Micro qui enregistre",line:"Je dis enfin ce que je pense… Attendez, ça enregistre ?",ref:"Propos devant des étudiants de l'EM Lyon, enregistrés à son insu et diffusés en 2018."}],
+ "Bruno Retailleau":[{trigger:"Composition du gouvernement",line:"Un tweet, et pouf : plus de gouvernement.",ref:"Octobre 2025 : son message après la composition du gouvernement Lecornu précède la démission du Premier ministre."},{trigger:"Retour au Sénat",line:"Au Sénat, au moins, personne ne tombe en quatorze heures.",ref:"Clin d'œil à son long parcours de sénateur."}],
+ "Éric Ciotti":[{trigger:"Serrure du siège",line:"J'ai fermé le siège à clé. Et le parti avec.",ref:"Juin 2024 : alliance avec le RN annoncée sans son parti, siège de LR fermé."},{trigger:"Repas de famille LR",line:"Exclu, réintégré par le juge, puis parti. Qui dit mieux ?",ref:"Exclusion suspendue par la justice en 2024, puis création de l'UDR."}],
+ "Marion Maréchal":[{trigger:"Message d'Éric",line:"Ce n'est pas toi, c'est… ah si, c'est toi.",ref:"Rupture avec Éric Zemmour et Reconquête en 2024."},{trigger:"Repas de famille",line:"Tata Marine est à table ? Je mange dans la cuisine.",ref:"Relations publiques fluctuantes avec sa tante."}],
+ "Jordan Bardella":[{trigger:"Coupure de TikTok",line:"Pas de réseau ? Je n'ai plus de programme !",ref:"Sa communication très active sur TikTok."},{trigger:"Question sur le chiffrage",line:"Le chiffrage ? Il sera prêt… après l'élection.",ref:"Programme révisé en pleine campagne des législatives 2024 (retraites, TVA sur l'énergie)."}],
+ "Marine Le Pen":[{trigger:"Dossier des assistants européens",line:"Mes assistants travaillaient. Pour le parti. Donc pour l'Europe, non ?",ref:"Affaire des assistants parlementaires européens du FN : condamnée en première instance en mars 2025 pour détournement de fonds publics, inéligibilité avec exécution provisoire ; appel."},{trigger:"Exécution provisoire",line:"Inéligible ? Parfait, je deviens éleveuse de chats à plein temps.",ref:"Son élevage de chats, longtemps mis en avant, et l'inéligibilité prononcée en 2025."}]
+};
+let stressIndex=0;
+// La Buvette: same prices and effects in both camps, only the names change.
+const shop=[
+ {key:"bread",kind:"food",price:0,left:"Quignon de la cantine",right:"Quignon du marché",fx:{sat:8,moral:-2},note:"Gratuit, un par heure"},
+ {key:"soup",kind:"food",price:1,left:"Soupe de la cantine solidaire",right:"Soupe du marché communal",fx:{sat:15}},
+ {key:"snack",kind:"food",price:2,left:"Biscuit de la coopérative",right:"Tarte de l'artisan",fx:{sat:15,moral:15}},
+ {key:"coffee",kind:"food",price:2,left:"Café du local associatif",right:"Café de la permanence",fx:{energy:20},note:"Trois par jour maximum"},
+ {key:"soap",kind:"care",anim:"idle",price:2,left:"Savon de la coopérative",right:"Savon de l'artisan",fx:{hyg:40}},
+ {key:"meal",kind:"food",price:3,left:"Couscous de la fête de quartier",right:"Gratin du banquet communal",fx:{sat:50,moral:5}},
+ {key:"rest",kind:"care",anim:"sleep",price:3,left:"Hamac des congés payés",right:"Fauteuil du dimanche",fx:{energy:35}},
+ {key:"garden",kind:"care",anim:"win",price:4,left:"Jardin partagé",right:"Promenade au jardin municipal",fx:{moral:30}},
+ {key:"banquet",kind:"food",price:8,left:"Banquet de la Fête de l'Huma",right:"Dîner des sommets",fx:{sat:100,moral:30}}
+];
+const ECO={income:2,cap:99,nightEnd:6,awake:{sat:13,moral:4,energy:8,hyg:6},night:{sat:4,moral:2,energy:-15,hyg:2}};
+// XP: tuned so 6 visits + 6 activities a day reach level 100 on day 15, and 3 bare visits a day on day ~39.
+const XP={base:5,visit:25,visitGap:2,visitsPerDay:8,activity:30,actsPerVisit:2,actsPerDay:8,deathHours:12,
+ excellent:50,correct:25,a:17,b:1.15,streakStep:0.01,streakCap:0.25};
+function xpCost(L){return XP.a+XP.b*L;}                                   // XP from level L to L+1
+function xpFloor(L){return XP.a*(L-1)+XP.b*(L-1)*L/2;}                    // total XP needed to reach level L
+const eco={fm:10,sat:80,moral:80,energy:80,hyg:80,hours:8,breadHour:-1,coffeeDay:-1,coffees:0,
+ xp:0,lvl:1,streak:0,neg:0,zero:0,form:"Excellente",mult:1.25,lastVisit:-99,visitDay:-1,visitsToday:0,actsToday:0,actsVisit:0,
+ log:"Début de mandat : 10 FM en caisse."};
+const fxNames={sat:"satiété",moral:"moral",energy:"énergie",hyg:"hygiène"};
+let foodKey="soup";
+function clamp(v){return Math.max(0,Math.min(100,v));}
+function fxText(fx){return Object.entries(fx).map(([k,v])=>`${fxNames[k]} ${v>0?"+":"−"}${Math.abs(v)}`).join(", ");}
+function blocked(it){
+ const day=Math.floor(eco.hours/24);
+ return eco.fm<it.price||(it.key==="bread"&&eco.breadHour===eco.hours)||(it.key==="coffee"&&eco.coffeeDay===day&&eco.coffees>=3);
+}
+function applyItem(it){
+ if(blocked(it))return false;
+ const day=Math.floor(eco.hours/24);
+ eco.fm-=it.price;
+ for(const [k,v] of Object.entries(it.fx))eco[k]=clamp(eco[k]+v);
+ if(it.key==="bread")eco.breadHour=eco.hours;
+ if(it.key==="coffee"){if(eco.coffeeDay!==day){eco.coffeeDay=day;eco.coffees=0;}eco.coffees++;}
+ return true;
+}
+function addXp(v){
+ eco.xp=Math.max(xpFloor(eco.lvl),eco.xp+v);   // XP can fall, but never below the current level
+ while(eco.lvl<100&&eco.xp>=xpFloor(eco.lvl+1))eco.lvl++;
+}
+function ensureDay(){const day=Math.floor(eco.hours/24);if(day!==eco.visitDay){eco.visitDay=day;eco.visitsToday=0;eco.actsToday=0;}}
+// A visit pays once per 2 h, 8 times a day, never at night: opening the lid again does not farm XP.
+function registerVisit(){
+ ensureDay();
+ if(eco.hours%24<ECO.nightEnd||eco.hours-eco.lastVisit<XP.visitGap||eco.visitsToday>=XP.visitsPerDay)return false;
+ eco.visitsToday++;eco.lastVisit=eco.hours;eco.actsVisit=0;addXp(XP.visit);return true;
+}
+function tryActivity(){
+ ensureDay();
+ if(eco.energy<20)return "trop fatigué pour ça";
+ if(eco.actsVisit>=XP.actsPerVisit)return "deux activités par visite maximum";
+ if(eco.actsToday>=XP.actsPerDay)return "huit activités par jour maximum";
+ eco.energy=clamp(eco.energy-8);eco.moral=clamp(eco.moral+10);eco.actsVisit++;eco.actsToday++;addXp(XP.activity);return "";
+}
+function activity(kind){
+ const visit=registerVisit(),err=tryActivity();
+ if(!err){action=kind;syncActions();}
+ eco.log=err?`Refusé : ${err}.`:`${kind==="debate"?"Débat":"Mini-jeu"} : +${XP.activity} XP, énergie −8, moral +10${visit?`, visite +${XP.visit} XP`:""}.`;
+ level.value=String(eco.lvl);update();
+}
+function buy(it){
+ if(!applyItem(it))return;
+ const visit=registerVisit();
+ if(it.kind==="food"){foodKey=it.key;action="eat";}else action=it.anim;
+ eco.log=`${it[camp.value]} : ${it.price?"−"+it.price+" FM":"gratuit"}, ${fxText(it.fx)}${visit?`, visite +${XP.visit} XP`:""}.`;
+ level.value=String(eco.lvl);syncActions();update();
+}
+function die(){
+ const name=people[camp.value][stage(eco.lvl)].name;
+ Object.assign(eco,{fm:10,sat:80,moral:80,energy:80,hyg:80,xp:0,lvl:1,streak:0,neg:0,zero:0,form:"Excellente",mult:1.25,lastVisit:-99,actsVisit:0});
+ level.value="1";action="idle";syncActions();
+ eco.log=`Mort politique de ${name} : ${XP.deathHours} h avec une jauge à zéro. Tout recommence au niveau 1, avec 10 FM.`;
+ startScene("death",camp.value,name);
+}
+// One hour of life: needs drain, 2 FM come in, and XP is earned according to the WORST gauge.
+function tickHour(){
+ const night=eco.hours%24<ECO.nightEnd,d=night?ECO.night:ECO.awake;
+ let dm=d.moral;if(!night){if(eco.sat<25)dm+=6;if(eco.hyg<25)dm+=6;}
+ eco.sat=clamp(eco.sat-d.sat);eco.moral=clamp(eco.moral-dm);eco.energy=clamp(eco.energy-d.energy);eco.hyg=clamp(eco.hyg-d.hyg);
+ eco.fm=Math.min(ECO.cap,eco.fm+ECO.income);
+ const m=Math.min(eco.sat,eco.moral,eco.energy,eco.hyg);
+ if(m>=XP.excellent){eco.form="Excellente";eco.mult=1.25;eco.streak++;eco.neg=0;}
+ else if(m>=XP.correct){eco.form="Correcte";eco.mult=1;eco.streak=0;eco.neg=0;}
+ else if(m>0){eco.form="Négligée";eco.streak=0;eco.neg++;eco.mult=Math.max(0,0.5-0.05*(eco.neg-1));}
+ else{eco.form="Abandonnée";eco.streak=0;eco.neg++;eco.mult=-0.5;}
+ eco.zero=m===0?eco.zero+1:0;
+ addXp(XP.base*eco.mult*(1+Math.min(XP.streakCap,XP.streakStep*eco.streak)));
+ eco.hours++;
+}
+// The "assiduous player" of the balance simulation: visits at 6, 9, 12, 15, 18 and 21 h, one activity each.
+function autoCare(){
+ const hod=eco.hours%24;if(![6,9,12,15,18,21].includes(hod))return;
+ registerVisit();tryActivity();
+ const t=hod===21?95:75,get=k=>shop.find(i=>i.key===k);
+ while(eco.sat<t&&eco.fm>=1)applyItem(get(eco.fm>=3?"meal":"soup"));
+ while(eco.hyg<t&&applyItem(get("soap")));
+ while(eco.moral<t&&eco.fm>=2)applyItem(get(eco.fm>=4?"garden":"snack"));
+ while(eco.energy<t&&(applyItem(get("coffee"))||applyItem(get("rest"))));
+ if(eco.fm>=30)applyItem(get("banquet"));
+}
+function passHours(h,auto=false){
+ const fm0=eco.fm,xp0=eco.xp,lvl0=eco.lvl;
+ for(let i=0;i<h;i++){
+  tickHour();
+  if(eco.zero>=XP.deathHours){die();update();return;}
+  if(auto)autoCare();
+ }
+ level.value=String(eco.lvl);
+ if(eco.hours%24<ECO.nightEnd){action="sleep";syncActions();}
+ else if(action==="sleep"){action="idle";syncActions();}
+ eco.log=`${h} h écoulée${h>1?"s":""} : ${eco.fm>=fm0?"+":"−"}${Math.abs(eco.fm-fm0)} FM, ${eco.xp>=xp0?"+":"−"}${Math.abs(Math.round(eco.xp-xp0))} XP${eco.lvl>lvl0?`, niveau ${eco.lvl} !`:""}.`;
+ update();
+}
+const shopButtons=shop.map(it=>{
+ const b=document.createElement("button");b.type="button";if(it.note)b.title=it.note;
+ b.addEventListener("click",()=>buy(it));document.getElementById("shop").append(b);return b;
+});
+function refreshShop(){
+ shop.forEach((it,i)=>{
+  const b=shopButtons[i],name=document.createElement("span"),price=document.createElement("span");
+  name.textContent=`${it[camp.value]} · ${fxText(it.fx)}`;price.className="price";price.textContent=it.price?`${it.price} FM`:"gratuit";
+  b.replaceChildren(name,price);b.disabled=blocked(it);
+ });
+ document.getElementById("wallet").textContent=`${eco.fm} FM`;
+ document.getElementById("eco-log").textContent=eco.log;
+ const bonus=Math.round(100*Math.min(XP.streakCap,XP.streakStep*eco.streak));
+ const next=eco.lvl<100?` · XP ${Math.floor(eco.xp-xpFloor(eco.lvl))} / ${xpCost(eco.lvl)} vers le niveau ${eco.lvl+1}`:" · niveau maximal";
+ ensureDay();
+ const danger=eco.zero?` · ⚠ jauge à zéro depuis ${eco.zero} h : mort politique à ${XP.deathHours} h`:"";
+ document.getElementById("form-detail").textContent=`Jour ${Math.floor(eco.hours/24)+1}, ${eco.hours%24} h · forme ${eco.form} (×${String(eco.mult).replace(".",",")})${eco.streak?` · série de ${eco.streak} h (+${bonus} %)`:""}${next} · visites ${eco.visitsToday}/${XP.visitsPerDay}, activités ${eco.actsToday}/${XP.actsPerDay}${danger}`;
+}
+for(const it of shop){
+ const row=document.createElement("tr");
+ for(const text of [it.price?`${it.price} FM`:"Gratuit",it.left,it.right,fxText(it.fx)+(it.note?`. ${it.note}`:"")]){const cell=document.createElement("td");cell.textContent=text;row.append(cell);}
+ document.getElementById("shop-table").append(row);
+}
+document.getElementById("hour").addEventListener("click",()=>passHours(1));
+document.getElementById("night").addEventListener("click",()=>passHours((30-eco.hours%24)%24||24));
+document.getElementById("autoday").addEventListener("click",()=>passHours(24,true));
+document.getElementById("act-debate").addEventListener("click",()=>activity("debate"));
+document.getElementById("act-game").addEventListener("click",()=>startPong());
+document.getElementById("preview-death").addEventListener("click",()=>startScene("death",camp.value,people[camp.value][stage(Number(level.value))].name));
+document.getElementById("preview-rebirth").addEventListener("click",()=>startScene(camp.value,camp.value,""));
+// ---------- Death and rebirth scenes: real time, so they play even while paused ----------
+const SCENE_DUR={death:4.5,left:7.5,right:7.5};
+let scene=null;
+function startScene(kind,side,name){scene={kind,side,name,t0:performance.now()};}
+function sceneBackdrop(ctx,left){
+ ctx.fillStyle="#141b2a";ctx.fillRect(0,0,466,466);
+ ctx.fillStyle=left?"#583345":"#2d4265";ctx.beginPath();ctx.arc(233,231,173,0,Math.PI*2);ctx.fill();
+ ctx.fillStyle="#222b3b";ctx.fillRect(0,291,466,175);
+}
+function caption(ctx,title,sub){
+ ctx.textAlign="center";ctx.fillStyle="#f8efdf";ctx.font="bold 22px sans-serif";ctx.fillText(title,233,92);
+ ctx.fillStyle="#e9c58f";fitLabel(ctx,sub,400);
+}
+function bigSprite(ctx,p,state,size,cx,ground){
+ sprite(scratch.getContext("2d"),p,clock,state);
+ ctx.imageSmoothingEnabled=false;ctx.drawImage(scratch,cx-size/2,ground-size,size,size);
+}
+function newcomer(ctx,side,k){
+ const p=people[side][0];
+ bigSprite(ctx,{...p,prop:personalItems[p.name][0].prop},"win",Math.min(1,k/0.6)*192,233,315);
+}
+// Both camps: the companion leaves with the famous cardboard box.
+function drawDeath(ctx,e){
+ sceneBackdrop(ctx,scene.side==="left");
+ const p=people[scene.side].find(x=>x.name===scene.name)||people[scene.side][0];
+ bigSprite(ctx,{...p,prop:"box"},"idle",192,233+Math.max(0,e-1)*130,315);
+ caption(ctx,"MORT POLITIQUE",`${scene.name} range son bureau. Le carton attend dans le couloir.`);
+}
+// Left: five candidates, one ballot box, one brawl, one "historic agreement".
+function drawPrimary(ctx,e){
+ sceneBackdrop(ctx,true);
+ const colors=["#ef7c91","#63a774","#e15f66","#a13c68","#f3be75"],bx=183+(e>2&&e<4.5?Math.sin(e*40)*4:0),by=205;
+ if(e<5){
+  ctx.fillStyle="#cfe3f5aa";ctx.fillRect(bx,by,100,86);ctx.strokeStyle="#f8efdf";ctx.lineWidth=3;ctx.strokeRect(bx,by,100,86);
+  ctx.fillStyle="#202330";ctx.fillRect(bx+30,by-4,40,6);
+  ctx.fillStyle="#f8efdf";ctx.font="bold 14px sans-serif";ctx.textAlign="center";ctx.fillText("URNE",bx+50,by+52);
+ }
+ for(let i=0;i<5;i++){
+  const t=(e-i*0.35)/0.8;if(t<0||t>1)continue;
+  const x0=i%2?426:40,cx=x0+(233-x0)*t,cy=280-Math.sin(t*Math.PI)*170;
+  ctx.fillStyle=colors[i];ctx.fillRect(cx-8,cy-8,16,16);ctx.fillStyle="#e9b38e";ctx.fillRect(cx-6,cy-20,12,12);
+ }
+ if(e>2&&e<4.5){
+  ctx.fillStyle="#f2e7d6";
+  for(let i=0;i<6;i++){const a=i*Math.PI/3+e*3;ctx.beginPath();ctx.arc(233+Math.cos(a)*55,190+Math.sin(a)*22,28,0,Math.PI*2);ctx.fill();}
+  ctx.fillStyle="#c23b4a";ctx.font="bold 26px monospace";ctx.textAlign="center";ctx.fillText(["#@!","%*?!","&!#@"][Math.floor(e*6)%3],233,198);
+ }
+ if(e>=4.5&&e<5.6){const k=(e-4.5)/1.1;for(let i=0;i<40;i++){const a=i*2.4,r=k*170;ctx.fillStyle=colors[i%5];ctx.fillRect(233+Math.cos(a)*r,248+Math.sin(a)*r*0.8+k*k*60,6,4);}}
+ if(e>=5)newcomer(ctx,"left",e-5);
+ if(e<2)caption(ctx,"PRIMAIRE UNITAIRE","Cinq candidats, une seule urne.");
+ else if(e<4.5)caption(ctx,"DÉBAT FRATERNEL","La gauche se rassemble… façon mêlée.");
+ else caption(ctx,"ACCORD HISTORIQUE !","Valable jusqu'à jeudi. Nouveau départ au niveau 1.");
+}
+// Right: the party repaints its sign until nobody remembers the old name.
+function drawRename(ctx,e){
+ sceneBackdrop(ctx,false);
+ const names=["RPR","UMP","LR","FN","RN"],spin=["LRN","UMR","RLP","PRU","NRL","MRU"];
+ const label=e<4?names[Math.min(4,Math.floor(e/0.8))]:e<5.2?spin[Math.floor(e*12)%spin.length]:"LES RENOMMÉS";
+ if(e<6){
+  ctx.fillStyle="#3a4660";ctx.fillRect(113,150,240,140);
+  ctx.fillStyle="#f2e8cd";ctx.fillRect(133,170,200,56);ctx.strokeStyle="#c9a85a";ctx.lineWidth=4;ctx.strokeRect(133,170,200,56);
+  ctx.fillStyle="#2d4265";ctx.font=`bold ${label.length>6?20:32}px sans-serif`;ctx.textAlign="center";ctx.fillText(label,233,210);
+  ctx.fillStyle="#26304a";ctx.fillRect(208,240,50,50);
+  if(e<4){const rx=133+(e%0.8)/0.8*200;ctx.fillStyle="#7fa8f8";ctx.fillRect(rx-4,160,10,76);ctx.fillStyle="#8b6a45";ctx.fillRect(rx,236,3,30);}
+ }
+ if(e>=6)newcomer(ctx,"right",e-6);
+ if(e<4)caption(ctx,"LE PARTI CHANGE DE NOM","Un coup de rouleau, et tout est pardonné.");
+ else if(e<5.2)caption(ctx,"RECHERCHE D'UN NOM NEUF…","Consultation des militants en cours.");
+ else caption(ctx,"NOUVEAU NOM, MÊMES TÊTES !","Ex-RPR, ex-UMP, ex-LR, ex-FN. Nouveau départ au niveau 1.");
+}
+function drawScene(ctx){
+ if((performance.now()-scene.t0)/1000>SCENE_DUR[scene.kind]){
+  if(scene.kind!=="death"){scene=null;return false;}
+  startScene(scene.side,scene.side,scene.name);       // a death always ends on its camp's rebirth
+ }
+ const e=(performance.now()-scene.t0)/1000;
+ if(scene.kind==="death")drawDeath(ctx,e);else if(scene.kind==="left")drawPrimary(ctx,e);else drawRename(ctx,e);
+ return true;
+}
+function currentStress(p){const list=stresses[p.name];return list[stressIndex%list.length];}
+function appearance(p,n){
+ return p.name==="Édouard Philippe"?{...p,...philippePhases[Math.floor((n-30)/2)]}:p;
+}
+const actionNames={idle:"Repos",eat:"Manger",debate:"Débattre",sleep:"Dormir",win:"Célébrer",stress:"Stresser"};
+const camp=document.getElementById("camp"),level=document.getElementById("level"),screen=document.getElementById("screen");
+const item=document.getElementById("item");
+const equippedItems=new Map();
+let action="idle",paused=matchMedia("(prefers-reduced-motion: reduce)").matches,clock=0,last=0;
+const cards=[];
+function stage(n){return Math.min(9,Math.floor(n/10));}
+function span(i){return i===0?"1–9":i===9?"90–100":`${i*10}–${i*10+9}`;}
+function rect(c,x,y,w,h,color){c.fillStyle=color;c.fillRect(Math.round(x),Math.round(y),w,h);}
+function sprite(c,p,t,state,legend=false){
+ c.clearRect(0,0,64,64);
+ const phase=Math.floor(t/300)%4,sulk=state==="debate"&&phase>=2,stomp=state==="debate"&&!sulk,bob=state==="sleep"?0:state==="win"?[0,-3,-5,-2][phase]:[0,-1,0,0][phase];
+ c.fillStyle="#0004";c.beginPath();c.ellipse(32,59,15,3,0,0,Math.PI*2);c.fill();
+ if(legend){for(let i=0;i<8;i++){const a=i*Math.PI/4+t/1300;rect(c,31+Math.cos(a)*25,29+Math.sin(a)*26,2,2,"#fbd47b");}}
+ c.save();c.translate(state==="stress"?(phase%2?1:-1):0,bob);
+ const skin="#e9b38e",shade="#c78e76",ink="#202330",body=p.tall?34:37;
+ if(p.style==="long"){rect(c,21,15,23,26,p.hair);}
+ rect(c,22,body,20,18,ink);rect(c,24,body,16,16,p.coat);
+ rect(c,29,body,6,9,"#f1e9da");if(p.tie){rect(c,31,body+2,2,11,p.tie);}
+ rect(c,24,54-(stomp&&phase===0?2:0),6,5,ink);rect(c,35,54-(stomp&&phase===1?2:0),6,5,ink);
+ const lift=state==="debate"?(phase===0?9:5):state==="win"?5+phase%2*2:state==="eat"?3:0;
+ if(sulk){rect(c,18,body+2,5,7,p.coat);rect(c,42,body+2,5,7,p.coat);rect(c,21,body+7,23,4,p.coat);rect(c,21,body+7,23,1,ink);rect(c,22,body+8,3,3,skin);rect(c,40,body+8,3,3,skin);}
+ else{rect(c,18,body+2,5,12,p.coat);rect(c,19,body+13,4,4,skin);rect(c,42,body+2-lift,5,12,p.coat);rect(c,43,body+13-lift,4,4,skin);}
+ rect(c,29,31,7,8,shade);
+ const face=state==="debate"?"#ee9f86":skin;
+ rect(c,22,13,21,20,ink);rect(c,23,14,19,18,face);rect(c,21,22,2,6,face);rect(c,42,22,2,6,face);
+ rect(c,23,12,19,5,p.style==="bald"?skin:p.hair);
+ if(p.style==="receding"){rect(c,27,12,11,4,skin);rect(c,22,15,3,7,p.hair);rect(c,40,15,3,7,p.hair);}
+ if(p.style==="short"){rect(c,22,15,3,5,p.hair);}
+ if(p.style==="quiff"){rect(c,25,9,15,5,p.hair);rect(c,22,13,4,8,p.hair);}
+ if(p.style==="bob"||p.style==="long"){rect(c,21,16,4,18,p.hair);rect(c,40,16,4,18,p.hair);rect(c,25,13,9,5,p.hair);}
+ if(p.style==="curly"){for(let i=0;i<5;i++){rect(c,21+i*4,11-(i%2)*2,5,6,p.hair);}rect(c,21,16,3,7,p.hair);rect(c,41,16,3,7,p.hair);}
+ if(p.style==="bun"){rect(c,37,8,8,8,p.hair);rect(c,22,14,4,9,p.hair);}
+ if(p.style==="cap"){rect(c,21,8,23,8,"#62634e");rect(c,22,15,24,3,ink);rect(c,30,10,5,2,"#d1b76a");}
+ const blink=state==="sleep"||Math.floor(t/180)%19===0;
+ if(state==="stress"){rect(c,26,21,4,4,"#fff");rect(c,35,21,4,4,"#fff");rect(c,27,22,2,2,ink);rect(c,36,22,2,2,ink);}
+ else{rect(c,27,22,2,blink?1:3,ink);rect(c,36,22,2,blink?1:3,ink);}
+ if(state==="debate"){rect(c,25,19,2,1,ink);rect(c,27,20,2,1,ink);rect(c,38,19,2,1,ink);rect(c,36,20,2,1,ink);rect(c,24,26,3,2,"#e2777a");rect(c,38,26,3,2,"#e2777a");}
+ rect(c,32,25,2,3,shade);
+ if(p.glasses){c.strokeStyle=ink;c.lineWidth=1;c.strokeRect(25.5,20.5,6,5);c.strokeRect(34.5,20.5,6,5);rect(c,32,22,2,1,ink);}
+ if(state==="stress"){for(let i=0;i<4;i++){rect(c,29+i*2,29+(i+phase)%2,2,1,ink);}}
+ else if(stomp){rect(c,30,28,6,3,ink);rect(c,31,29,4,1,"#783f49");}
+ else if(sulk){rect(c,31,29,4,1,ink);rect(c,30,30,1,1,ink);rect(c,35,30,1,1,ink);rect(c,31,30,4,1,"#c56a6a");}
+ else{rect(c,30,29,6,state==="eat"&&phase%2?3:1,state==="eat"?"#783f49":ink);}
+ if(p.beard){rect(c,25,30,15,p.beard==="full"?8:3,p.beardColor||p.hair);rect(c,29,29,7,2,skin);rect(c,30,31,5,1,ink);}
+ if(p.scarf){rect(c,24,body,17,3,p.scarf);rect(c,25,body+3,4,10,p.scarf);}
+ if(state==="eat")drawFood(c,foodKey,p.side==="left",28,31,t);
+ else if(!sulk)drawProp(c,p.prop,46,43-lift);
+ c.restore();
+ if(state==="sleep"){c.fillStyle="#a8c9ff";c.font="bold 8px monospace";c.fillText("z",48,17-phase*2);c.fillText("Z",53,10-phase);}
+ if(stomp){const red="#c23b4a",k="#202330";rect(c,44,2,18,10,"#ffd2a6");rect(c,46,12,3,3,"#ffd2a6");rect(c,46,4,1,6,red);rect(c,48,4,1,6,red);rect(c,45,5,5,1,red);rect(c,45,8,5,1,red);rect(c,52,4,4,6,k);rect(c,53,5,2,4,"#ffd2a6");rect(c,54,6,1,2,k);rect(c,59,4,1,4,red);rect(c,59,9,1,1,red);rect(c,17,10-phase*2,3,2,"#dfe6f0");rect(c,14,6-phase,2,2,"#dfe6f0");}
+ if(sulk){rect(c,26,3,12,4,"#6d7385");rect(c,28,1,8,2,"#6d7385");rect(c,32,7,1,2,"#f4d57b");rect(c,31,9,1,2,"#f4d57b");}
+ if(state==="stress"){rect(c,18,14+phase*2,2,3,"#8fd0ff");rect(c,45,17+(phase+2)%4*2,2,3,"#8fd0ff");rect(c,44,2,18,10,"#f6c9c9");rect(c,46,12,3,3,"#f6c9c9");for(let i=0;i<3;i++){rect(c,47+i*5,4,2,4,"#c23b4a");rect(c,47+i*5,9,2,1,"#c23b4a");}}
+ if(state==="win"){for(let i=0;i<7;i++){rect(c,5+i*8,(t/40+i*9)%25,2,3,["#fbd47b","#ed819a","#8db4ff"][i%3]);}}
+}
+function drawProp(c,type,x,y){
+ const k="#202330",paper="#f2e8cd";
+ switch(type){
+ case"puzzle":rect(c,x-4,y-10,12,12,"#d69bc3");rect(c,x,y-10,2,12,"#70567b");rect(c,x-4,y-5,12,2,"#70567b");break;
+ case"watering":rect(c,x-4,y-7,9,9,"#81b5a3");rect(c,x+5,y-8,5,3,"#81b5a3");rect(c,x-3,y-11,6,2,"#81b5a3");break;
+ case"jacket":rect(c,x-3,y-11,10,14,"#d56b73");rect(c,x-6,y-9,3,8,"#d56b73");rect(c,x+7,y-9,3,8,"#d56b73");rect(c,x+1,y-11,2,14,paper);break;
+ case"camera":rect(c,x-5,y-7,14,9,"#7f8e9d");rect(c,x-2,y-10,5,3,"#7f8e9d");rect(c,x,y-5,5,5,k);break;
+ case"pot":rect(c,x-4,y-7,12,9,"#b5b9c9");rect(c,x-6,y-7,16,2,k);rect(c,x,y-10,4,2,paper);break;
+ case"calculator":rect(c,x-3,y-12,11,15,"#859aa3");rect(c,x-1,y-10,7,4,"#c6e4c4");for(let i=0;i<6;i++)rect(c,x-1+(i%3)*3,y-4+Math.floor(i/3)*3,2,2,k);break;
+ case"water":rect(c,x-2,y-12,5,3,paper);rect(c,x-4,y-9,10,12,"#9bcdda");rect(c,x-2,y-4,6,5,"#559dd3");break;
+ case"hologram":rect(c,x-5,y+1,14,3,"#6b8ebd");rect(c,x,y-12,4,4,"#8ff3ef");rect(c,x-2,y-7,8,7,"#76bfe2");break;
+ case"ticket":rect(c,x-5,y-9,15,9,"#957ee2");rect(c,x-3,y-7,6,2,paper);rect(c,x+5,y-9,1,9,paper);break;
+ case"train":rect(c,x-5,y-10,14,12,"#849bd8");rect(c,x-3,y-8,10,4,"#dceafa");rect(c,x-3,y+2,3,2,k);rect(c,x+4,y+2,3,2,k);break;
+ case"palette":rect(c,x-5,y-10,15,11,"#cbaa72");for(let i=0;i<4;i++)rect(c,x-3+i*3,y-8+(i%2)*4,2,2,["#dd7070","#7da8db","#e9d478","#7fba8c"][i]);break;
+ case"tower":rect(c,x-3,y-12,10,15,"#beaa8c");rect(c,x-5,y-14,14,3,"#beaa8c");rect(c,x,y-9,4,4,k);break;
+ case"lighthouse":rect(c,x-2,y-12,6,15,paper);rect(c,x-2,y-4,6,3,"#e87c7e");rect(c,x-4,y-14,10,3,"#f4d57b");rect(c,x-5,y+3,12,2,k);break;
+ case"gloves":rect(c,x-5,y-9,6,9,"#e27876");rect(c,x+3,y-11,6,9,"#e27876");rect(c,x-4,y,4,3,paper);rect(c,x+4,y-2,4,3,paper);break;
+ case"compass":rect(c,x-4,y-11,13,13,"#c6ae76");rect(c,x-2,y-9,9,9,paper);rect(c,x+2,y-8,1,7,"#d15e65");break;
+ case"stone":rect(c,x-5,y-6,14,7,"#9faab5");rect(c,x-2,y-8,8,2,"#bac4cc");break;
+ case"cat":rect(c,x-3,y-10,10,8,"#d7bb94");rect(c,x-3,y-13,3,3,"#d7bb94");rect(c,x+4,y-13,3,3,"#d7bb94");rect(c,x-1,y-7,1,2,k);rect(c,x+4,y-7,1,2,k);rect(c,x-2,y-2,9,6,"#d7bb94");rect(c,x+7,y,3,2,"#d7bb94");break;
+ case"leaf":rect(c,x,y-9,1,12,"#6bac73");rect(c,x-4,y-8,4,4,"#83c678");rect(c,x+1,y-11,4,4,"#83c678");break;
+ case"rose":rect(c,x,y-7,1,12,"#6bac73");rect(c,x-3,y-12,7,6,"#ef6c89");rect(c,x-1,y-13,3,8,"#bc3f68");break;
+ case"paper":case"book":case"scroll":rect(c,x-2,y-10,11,14,type==="book"?"#bd8959":paper);for(let i=0;i<3;i++){rect(c,x,y-7+i*3,6,1,"#685a67");}break;
+ case"badge":rect(c,x-4,y-5,7,7,"#da5d6e");rect(c,x-2,y-3,3,3,"#f2d879");break;
+ case"bike":c.strokeStyle="#99c5ba";c.lineWidth=1;for(const dx of [-5,6]){c.beginPath();c.arc(x+dx,y+4,4,0,Math.PI*2);c.stroke();}c.beginPath();c.moveTo(x-5,y+4);c.lineTo(x,y-3);c.lineTo(x+6,y+4);c.lineTo(x-5,y+4);c.stroke();break;
+ case"mic":rect(c,x,y-6,2,12,k);rect(c,x-2,y-10,6,6,"#aeb4c3");break;
+ case"case":rect(c,x-1,y-8,6,3,k);rect(c,x-4,y-5,13,10,"#9c7354");rect(c,x+1,y-2,2,3,"#edcb78");break;
+ case"flag":rect(c,x,y-15,1,22,paper);rect(c,x+1,y-15,4,8,"#6893dc");rect(c,x+5,y-15,4,8,paper);rect(c,x+9,y-15,4,8,"#e1777e");break;
+ case"mountain":c.fillStyle="#c6d1de";c.beginPath();c.moveTo(x-5,y+3);c.lineTo(x+1,y-9);c.lineTo(x+9,y+3);c.fill();break;
+ case"apple":rect(c,x,y-10,2,3,"#a1bd79");rect(c,x-4,y-7,10,8,"#df7770");rect(c,x-2,y-8,6,10,"#df7770");break;
+ case"box":rect(c,x-6,y-9,14,11,"#b8895a");rect(c,x-6,y-9,14,2,"#9a6e44");rect(c,x,y-9,2,11,"#e2cf9a");rect(c,x-4,y-12,3,3,paper);break;
+ case"europe":rect(c,x-4,y-11,15,13,"#4873bb");for(let i=0;i<6;i++){const a=i*Math.PI/3;rect(c,x+3+Math.cos(a)*4,y-5+Math.sin(a)*4,1,1,"#f8d476");}break;
+ }
+}
+function drawFood(c,key,left,x,y,t){
+ const steam="#dfe6f0",puff=Math.floor(t/300)%2,paper="#f2e8cd",brown="#6b4426";
+ switch(key){
+ case"bread":rect(c,x,y-3,10,4,"#d9a35f");rect(c,x+2,y-4,6,1,"#e9c07a");rect(c,x+3,y-3,1,1,"#a8703a");rect(c,x+6,y-2,1,1,"#a8703a");break;
+ case"banquet":rect(c,x-3,y,16,2,paper);rect(c,x-1,y-4,8,4,"#b0703a");rect(c,x+5,y-6,2,3,paper);rect(c,x+9,y-7,3,4,left?"#b8324a":"#f0d97a");rect(c,x+10,y-3,1,3,paper);rect(c,x+9,y,3,1,paper);break;
+ case"soup":rect(c,x,y-4,10,5,"#b5b9c9");rect(c,x+1,y-5,8,2,left?"#d98a4e":"#7fa860");rect(c,x+3,y-9+puff,1,3,steam);rect(c,x+6,y-8-puff,1,3,steam);break;
+ case"meal":rect(c,x-1,y,12,2,paper);
+  if(left){rect(c,x+1,y-3,8,3,"#e8c96a");rect(c,x+3,y-5,4,2,"#e8c96a");rect(c,x+2,y-3,2,2,"#d9603f");rect(c,x+6,y-2,2,2,"#7fae5a");}
+  else{rect(c,x,y-4,10,4,"#a8653a");rect(c,x+1,y-5,8,2,"#e9b55a");rect(c,x+3,y-5,2,1,"#c98a3a");}break;
+ case"snack":
+  if(left){rect(c,x+1,y-5,8,6,"#c99a5b");rect(c,x+3,y-3,1,1,brown);rect(c,x+6,y-2,1,1,brown);rect(c,x+4,y-4,1,1,brown);}
+  else{rect(c,x,y-1,10,2,"#d9a35f");rect(c,x+1,y-3,7,2,"#d9a35f");rect(c,x+1,y-4,5,1,"#c2414f");rect(c,x+2,y-5,3,1,"#c2414f");}break;
+ case"coffee":rect(c,x+2,y-5,6,6,left?"#e98f6f":paper);rect(c,x+3,y-4,4,2,brown);rect(c,x+8,y-3,2,2,left?"#e98f6f":paper);rect(c,x,y+1,10,1,paper);rect(c,x+4,y-9+puff,1,3,steam);break;
+ }
+}
+function syncActions(){document.querySelectorAll("[data-action]").forEach(el=>el.setAttribute("aria-pressed",String(el.dataset.action===action)));}
+for(const side of ["left","right"]){
+ people[side].forEach((p,i)=>{
+  p.side=side;
+  const b=document.createElement("button");b.type="button";b.className=`card side-${side}`;
+  const cv=document.createElement("canvas");cv.width=64;cv.height=64;cv.setAttribute("aria-label",`Caricature animée de ${p.name}`);cv.setAttribute("role","img");
+  const lv=document.createElement("span");lv.className="level";lv.textContent=`NIVEAUX ${span(i)}`;
+  const h=document.createElement("h3");h.textContent=p.name;const desc=document.createElement("p");desc.textContent=p.detail;
+  const objects=document.createElement("p");objects.textContent=personalItems[p.name].map(obj=>obj.name).join(" · ");
+  b.append(cv,lv,h,desc,objects);b.addEventListener("click",()=>{camp.value=side;level.value=i===0?1:i*10;update();document.querySelector(".studio").scrollIntoView({behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"instant":"smooth",block:"start"});});
+  document.getElementById(`${side}-gallery`).append(b);cards.push({ctx:cv.getContext("2d"),p,startLevel:i===0?1:i*10});
+  const row=document.createElement("tr");
+  for(const text of [p.name,...personalItems[p.name].map(obj=>`${obj.name} — ${obj.text}`)]){
+   const cell=document.createElement("td");cell.textContent=text;row.append(cell);
+  }
+  document.getElementById("personal-items").append(row);
+  stresses[p.name].forEach((s,j)=>{
+   const sr=document.createElement("tr");
+   for(const text of [j===0?p.name:"",s.trigger,`« ${s.line} »`,s.ref]){const cell=document.createElement("td");cell.textContent=text;sr.append(cell);}
+   document.getElementById("stress-table").append(sr);
+  });
+ });
+}
+for(const [key,name] of Object.entries(actionNames)){
+ const b=document.createElement("button");b.type="button";b.textContent=name;b.dataset.action=key;b.setAttribute("aria-pressed",String(key===action));
+ b.addEventListener("click",()=>{if(key==="stress"&&action==="stress")stressIndex++;action=key;syncActions();update();});
+ document.getElementById("actions").append(b);
+}
+function update(){
+ const n=Number(level.value),p=people[camp.value][stage(n)];
+ if(n!==eco.lvl){eco.lvl=n;eco.xp=xpFloor(n);}
+ item.replaceChildren(...personalItems[p.name].map((obj,i)=>new Option(obj.name,String(i))));
+ item.value=String(equippedItems.get(p.name)||0);
+ const selected=personalItems[p.name][Number(item.value)];
+ document.getElementById("level-value").value=n;
+ document.getElementById("current-name").textContent=p.name;
+ document.getElementById("current-prop").textContent=p.detail+(n===100?" Variante légende débloquée.":"");
+ document.getElementById("item-detail").textContent=selected.text;
+ document.getElementById("appearance-detail").textContent=p.name==="Édouard Philippe"?appearance(p,n).text:"";
+ refreshShop();
+ const s=currentStress(p);
+ document.getElementById("stress-detail").textContent=action==="stress"?`Stress : ${s.trigger}. Clin d'œil à : ${s.ref}`:"";
+ screen.setAttribute("aria-label",`${p.name}, niveau ${n}, animation ${actionNames[action]}, objet ${selected.name}${p.name==="Édouard Philippe"?", "+appearance(p,n).text:""}`);
+ render();
+}
+item.addEventListener("change",()=>{const p=people[camp.value][stage(Number(level.value))];equippedItems.set(p.name,Number(item.value));update();});
+camp.addEventListener("change",update);level.addEventListener("input",update);
+const pause=document.getElementById("pause");
+function pauseLabel(){pause.textContent=paused?"Reprendre l'animation":"Mettre en pause";pause.setAttribute("aria-pressed",String(paused));}
+pause.addEventListener("click",()=>{paused=!paused;pauseLabel();});pauseLabel();
+const scratch=document.createElement("canvas");scratch.width=scratch.height=64;
+function render(){
+ const ctx=screen.getContext("2d"),n=Number(level.value),base=people[camp.value][stage(n)],left=camp.value==="left";
+ if(scene&&drawScene(ctx))return;
+ if(pong){drawPong(ctx,base,n);return;}
+ const withItem=(p,lv)=>({...appearance(p,lv),prop:personalItems[p.name][equippedItems.get(p.name)||0].prop});
+ for(const {ctx:cardCtx,p,startLevel}of cards){sprite(cardCtx,withItem(p,p.name===base.name?n:startLevel),clock,action);}
+ const p=withItem(base,n);
+ ctx.clearRect(0,0,466,466);ctx.fillStyle="#141b2a";ctx.fillRect(0,0,466,466);
+ ctx.fillStyle=left?"#583345":"#2d4265";ctx.beginPath();ctx.arc(233,231,173,0,Math.PI*2);ctx.fill();
+ ctx.fillStyle="#a0adc955";for(let i=0;i<9;i++){ctx.fillRect(50+i*46,226-(i%3)*20,27,65+(i%3)*20);}
+ ctx.fillStyle="#222b3b";ctx.fillRect(0,291,466,175);
+ ctx.textAlign="center";ctx.fillStyle=left?"#ffb2c2":"#b4ceff";ctx.font="bold 17px monospace";ctx.fillText("P O L I T I G O",233,58);
+ ctx.fillStyle="#f8efdf";ctx.font="bold 23px sans-serif";ctx.fillText(p.name,233,97);
+ ctx.font="15px monospace";ctx.fillStyle="#bfc9dc";ctx.fillText(`NIVEAU ${n} / 100 · ${eco.fm} FM`,233,122);
+ const xpPart=n>=100?1:Math.min(1,(eco.xp-xpFloor(n))/xpCost(n));
+ ctx.fillStyle="#465065";ctx.fillRect(153,130,160,4);ctx.fillStyle="#e9c58f";ctx.fillRect(153,130,Math.round(160*xpPart),4);
+ sprite(scratch.getContext("2d"),p,clock,action,n===100);ctx.imageSmoothingEnabled=false;ctx.drawImage(scratch,137,123,192,192);
+ const labels=["SATIÉTÉ","MORAL","ÉNERGIE","HYGIÈNE"],colors=["#f1bc72","#ef91ae","#85cbbb","#93b4ec"],vals=[eco.sat,eco.moral,eco.energy,eco.hyg];
+ if(action==="stress"){
+  const s=currentStress(base);
+  ctx.fillStyle="#f8efdf";ctx.beginPath();ctx.roundRect(98,326,270,82,14);ctx.moveTo(220,327);ctx.lineTo(233,312);ctx.lineTo(246,327);ctx.fill();
+  ctx.textAlign="center";ctx.font="bold 14px sans-serif";ctx.fillStyle="#2a2230";
+  const lines=[];let cur="";
+  for(const w of `« ${s.line} »`.split(" ")){const t=cur?cur+" "+w:w;if(ctx.measureText(t).width>246&&cur){lines.push(cur);cur=w;}else cur=t;}
+  lines.push(cur);
+  lines.slice(0,3).forEach((l,i)=>ctx.fillText(l,233,367-(Math.min(lines.length,3)-1)*9+i*18));
+ }else{
+  for(let i=0;i<4;i++){const x=112+(i%2)*129,y=337+Math.floor(i/2)*45;ctx.textAlign="left";ctx.font="11px monospace";ctx.fillStyle="#d1d8e4";ctx.fillText(labels[i],x,y);ctx.fillStyle="#465065";ctx.fillRect(x,y+7,107,6);ctx.fillStyle=vals[i]<30?"#e0656f":colors[i];ctx.fillRect(x,y+7,Math.round(107*vals[i]/100),6);}
+ }
+ ctx.textAlign="center";ctx.fillStyle="#e9c58f";fitLabel(ctx,action==="stress"?"STRESS : "+currentStress(base).trigger.toUpperCase():n===100?"LÉGENDE DE LA COLLECTION":actionNames[action].toUpperCase(),425);
+}
+// Fits a centred label inside the round panel: shrink first, then split into two balanced lines.
+function fitLabel(ctx,text,y){
+ const room=yy=>2*Math.sqrt(233*233-(yy-233)**2)-28;
+ for(let size=12;size>=10;size--){ctx.font=`${size}px monospace`;if(ctx.measureText(text).width<=room(y)){ctx.fillText(text,233,y);return;}}
+ const words=text.split(" ");let best=null;
+ for(let i=1;i<words.length;i++){const l1=words.slice(0,i).join(" "),l2=words.slice(i).join(" "),w=Math.max(ctx.measureText(l1).width,ctx.measureText(l2).width);if(!best||w<best.w)best={l1,l2,w};}
+ if(!best){ctx.fillText(text,233,y);return;}
+ ctx.fillText(best.l1,233,y-6);ctx.fillText(best.l2,233,y+7);
+}
+// ---------- Mini-game: the Pong of arguments (TamaDigi's ball game, reskinned) ----------
+// The opponent's lines fall from the lectern; the companion sends them back with its own.
+const PONG={ms:20000,misses:3,speed:190,accel:1.06,maxSpeed:480,bubbleW:50,top:150,hitY:292,lost:390,wallL:80,wallR:386};
+const pongLines={
+ left:["Et les riches ?","Réac !","Et le climat ?","Cadeaux fiscaux !","Et vos affaires ?","Les patrons d'abord ?"],
+ right:["Et la dette ?","Utopiste !","Et l'insécurité ?","Assistanat !","Bobo !","Vous taxez tout !"]
+};
+let pong=null;
+function pongText(mine){const side=mine?camp.value:camp.value==="left"?"right":"left",l=pongLines[side];return l[Math.floor(Math.random()*l.length)];}
+function pongServe(){
+ Object.assign(pong,{bx:233,by:PONG.top+10,vx:(Math.random()<0.5?-1:1)*(50+Math.random()*60),vy:PONG.speed,text:pongText(false),mine:false});
+}
+function startPong(){
+ if(pong||scene)return;
+ const visit=registerVisit(),err=tryActivity();
+ if(err){eco.log=`Refusé : ${err}.`;update();return;}
+ pong={t0:performance.now(),last:performance.now(),score:0,missed:0,px:233,hitT:0,flashT:0,endT:0};
+ pongServe();
+ eco.log=`Pong des arguments : +${XP.activity} XP, énergie −8, moral +10${visit?`, visite +${XP.visit} XP`:""}. Déplace la souris ou le doigt sur l'écran, ou utilise les flèches.`;
+ level.value=String(eco.lvl);update();
+}
+function endPong(){
+ const bonus=Math.min(20,pong.score*2);
+ addXp(bonus);
+ eco.log=`Fin du débat : ${pong.score} renvoi${pong.score>1?"s":""}, ${pong.missed} raté${pong.missed>1?"s":""}. Bonus d'éloquence : +${bonus} XP.`;
+ pong=null;action=bonus>=10?"win":"idle";syncActions();
+ level.value=String(eco.lvl);update();
+}
+function stepPong(now){
+ const dt=Math.min(0.05,(now-pong.last)/1000);pong.last=now;clock+=dt*1000;
+ if(pong.endT){if(now-pong.endT>2500)endPong();return;}
+ if(now-pong.t0>PONG.ms||pong.missed>=PONG.misses){pong.endT=now;return;}
+ pong.bx+=pong.vx*dt;pong.by+=pong.vy*dt;
+ const half=PONG.bubbleW;
+ if(pong.bx-half<PONG.wallL){pong.bx=PONG.wallL+half;pong.vx=Math.abs(pong.vx);}
+ if(pong.bx+half>PONG.wallR){pong.bx=PONG.wallR-half;pong.vx=-Math.abs(pong.vx);}
+ if(pong.vy<0&&pong.by<=PONG.top){                       // the opponent always answers
+  pong.by=PONG.top;pong.vy=Math.abs(pong.vy);pong.text=pongText(false);pong.mine=false;
+ }
+ if(pong.vy>0&&pong.by>=PONG.hitY&&pong.by<=PONG.hitY+24&&Math.abs(pong.bx-pong.px)<62){
+  pong.vy=-Math.min(PONG.maxSpeed,Math.abs(pong.vy)*PONG.accel);pong.vx=pong.vx*0.6+(pong.bx-pong.px)*4;
+  pong.text=pongText(true);pong.mine=true;pong.score++;pong.hitT=now;
+ }
+ if(pong.by>PONG.lost){pong.missed++;pong.flashT=now;pongServe();}
+}
+function drawPong(ctx,base,n){
+ const now=performance.now(),left=camp.value==="left";
+ ctx.fillStyle="#141b2a";ctx.fillRect(0,0,466,466);
+ ctx.fillStyle=left?"#583345":"#2d4265";ctx.beginPath();ctx.arc(233,231,173,0,Math.PI*2);ctx.fill();
+ ctx.fillStyle="#222b3b";ctx.fillRect(0,330,466,136);
+ ctx.textAlign="center";ctx.fillStyle="#f8efdf";ctx.font="bold 18px sans-serif";ctx.fillText("PONG DES ARGUMENTS",233,70);
+ // the opponent's lectern
+ ctx.fillStyle=left?"#7fa8f8":"#ef7c91";ctx.fillRect(198,104,70,26);ctx.fillStyle="#202330";ctx.fillRect(228,96,10,8);
+ ctx.fillStyle="#202330";ctx.font="bold 10px monospace";ctx.fillText("ADVERSAIRE",233,121);
+ // the companion is the paddle
+ const p={...appearance(base,n),prop:personalItems[base.name][equippedItems.get(base.name)||0].prop};
+ sprite(scratch.getContext("2d"),p,clock,now-pong.hitT<400?"debate":"idle");
+ ctx.imageSmoothingEnabled=false;ctx.drawImage(scratch,pong.px-48,262,96,96);
+ if(!pong.endT){
+  ctx.font="bold 13px sans-serif";const w=Math.max(70,ctx.measureText(pong.text).width+18);
+  ctx.fillStyle=pong.mine?"#fff3cf":"#f8efdf";ctx.beginPath();ctx.roundRect(pong.bx-w/2,pong.by-14,w,28,12);ctx.fill();
+  ctx.strokeStyle=pong.mine?"#e9c58f":(left?"#7fa8f8":"#ef7c91");ctx.lineWidth=3;ctx.stroke();
+  ctx.fillStyle="#2a2230";ctx.fillText(pong.text,pong.bx,pong.by+5);
+ }
+ if(now-pong.flashT<1200&&pong.flashT){ctx.fillStyle="#c23b4a";ctx.font="bold 16px sans-serif";ctx.fillText("Petite phrase reprise par la presse !",233,215);}
+ const left_s=Math.max(0,Math.ceil((PONG.ms-(now-pong.t0))/1000));
+ ctx.fillStyle="#e9c58f";
+ if(pong.endT){
+  ctx.fillStyle="#f8efdf";ctx.font="bold 24px sans-serif";ctx.fillText("FIN DU DÉBAT",233,215);
+  ctx.fillStyle="#e9c58f";fitLabel(ctx,`${pong.score} renvoi${pong.score>1?"s":""} : +${Math.min(20,pong.score*2)} XP d'éloquence`,400);
+ }else fitLabel(ctx,`RENVOIS ${pong.score} · RATÉS ${pong.missed}/${PONG.misses} · ${left_s} S`,400);
+}
+function pongAim(e){if(!pong)return;const r=screen.getBoundingClientRect();pong.px=Math.max(PONG.wallL+30,Math.min(PONG.wallR-30,(e.clientX-r.left)/r.width*466));}
+screen.addEventListener("pointermove",pongAim);
+screen.addEventListener("pointerdown",pongAim);
+document.addEventListener("keydown",e=>{
+ if(!pong)return;
+ if(e.key==="ArrowLeft"||e.key==="ArrowRight"){pong.px=Math.max(PONG.wallL+30,Math.min(PONG.wallR-30,pong.px+(e.key==="ArrowLeft"?-28:28)));e.preventDefault();}
+ if(e.key==="Escape"&&!pong.endT)pong.endT=performance.now();
+});
+function tick(now){
+ if(pong){stepPong(now);if(pong)render();last=now;requestAnimationFrame(tick);return;}
+ if(last===0)last=now;const delta=now-last;if(delta>=125){if(!paused)clock+=Math.min(delta,250);last=now;render();}requestAnimationFrame(tick);
+}
+update();requestAnimationFrame(tick);
+</script>
+</body>
+</html>

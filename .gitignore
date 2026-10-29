@@ -1,0 +1,4 @@
+# Never published: the real settings hold the invite code.
+.env
+*.db
+*.db-*

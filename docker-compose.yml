@@ -1,0 +1,63 @@
+# PolitiGo: static site + game API, meant to sit behind the site's own reverse proxy (TLS, domain).
+# Settings come from .env (see .env.example).
+services:
+  web:
+    build: .
+    image: politigo-web
+    ports:
+      # Bind to the server's internal address and allow only the reverse proxy to reach it.
+      - "${POLITIGO_BIND:-127.0.0.1}:${POLITIGO_PORT:-8080}:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    init: true
+    mem_limit: 128m
+    pids_limit: 128
+    cpus: 1.0
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  api:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    image: politigo-api
+    environment:
+      POLITIGO_INVITE: ${POLITIGO_INVITE:?set POLITIGO_INVITE in .env}
+      POLITIGO_SPEED: ${POLITIGO_SPEED:-1}
+      COOKIE_SECURE: ${COOKIE_SECURE:-1}
+      PROXY_HOPS: ${PROXY_HOPS:-2}
+      MAX_PLAYERS: ${MAX_PLAYERS:-50}
+    volumes:
+      - politigo-data:/data
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    init: true
+    mem_limit: 256m
+    pids_limit: 128
+    cpus: 1.0
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  politigo-data:
