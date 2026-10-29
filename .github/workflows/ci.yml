@@ -1,0 +1,22 @@
+# Runs the whole test suite on dev and on every pull request. Publishes nothing (images: see images.yml, main only).
+# The job name "tests" is the status check required by main's ruleset: renaming it blocks every pull request.
+name: ci
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [main, dev]
+permissions:
+  contents: read
+# A newer push to the same branch or pull request cancels the run it makes obsolete.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  tests:
+    name: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash tests/run-server.sh
