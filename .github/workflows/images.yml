@@ -1,5 +1,6 @@
 # Builds the two PolitiGo images and publishes them to GitHub's registry (ghcr.io/<owner>/politigo-web|api).
-# Runs on every push to main, on version tags (v1.2.0 -> image tag 1.2.0) and on demand.
+# Runs on every push to main (a merged pull request from dev), on version tags (v1.2.0 -> image tag 1.2.0) and
+# on demand. Day-to-day work happens on dev, where ci.yml only runs the tests.
 name: images
 on:
   push:
@@ -13,7 +14,24 @@ concurrency:
   group: images-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  # Last guard before publishing, for both images: the tests pass, and a version tag sits on main.
+  tests:
+    # Not "tests": that name is the pull request check required by main's ruleset (ci.yml).
+    name: tests before publishing
+    # A manual run started from another branch must not publish unmerged code.
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: a version tag must point at a commit of main
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "::error::$GITHUB_REF_NAME is not on main"; exit 1; }
+      - run: bash tests/run-server.sh
   build:
+    needs: tests
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # Only this job may publish packages; the GITHUB_TOKEN gets nothing else.
@@ -27,9 +45,6 @@ jobs:
           - {name: api, dockerfile: server/Dockerfile}
     steps:
       - uses: actions/checkout@v4
-      # Tests first: an image is only published when the rules and the API pass.
-      - if: matrix.name == 'api'
-        run: docker run --rm -e TZ=Europe/Paris -v "$PWD/web/rules.mjs:/app/rules.mjs:ro" -v "$PWD/server/server.mjs:/app/server.mjs:ro" -v "$PWD/web:/w/web:ro" -v "$PWD/tests:/w/tests:ro" -w /w node:24-alpine node --test tests/rules.test.mjs tests/rules.extra.test.mjs tests/server.test.mjs tests/server.extra.test.mjs
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3

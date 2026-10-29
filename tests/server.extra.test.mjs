@@ -108,25 +108,30 @@ test("B1 state, journal, feed and the old cookie survive a restart",async()=>{
 });
 
 // ------------------------------------------------------------------ B2
-test("B2 downtime is rebased: nobody dies because the server was off",async()=>{
+test("B2 a downtime is skipped: back on the real hour, nobody dies, nothing on the public feed",async()=>{
  const db=dbOf("b2");let p=await boot(P.persist,{DB_PATH:db});
  let c;
  try{c=await player("Rebased",P.persist);}finally{await stop(p);}
  const d=new DatabaseSync(db);
  const row=d.prepare("SELECT state FROM players WHERE name='Rebased'").get(),s=JSON.parse(row.state);
- s.lastReal=Date.now()-48*H;                    // two days of "downtime"
+ s.vclock=s.lastReal=Date.now()-48*H;s.hourIdx=Math.floor(s.vclock/H);   // two days of downtime
  for(const k of ["sat","moral","energy","hyg"])s[k]=0;
  s.zero=0;
  d.prepare("UPDATE players SET state=? WHERE name='Rebased'").run(JSON.stringify(s));d.close();
  p=await boot(P.persist,{DB_PATH:db});
  try{
   await new Promise(r=>setTimeout(r,700));      // a few sweeps
-  const me=await c.call("GET","/api/me");
+  const me=await c.call("GET","/api/me"),now=Date.now(),st=me.json.state;
   assert.equal(me.status,200);
-  assert.equal(me.json.state.deaths,0);
-  assert.ok(!me.json.state.journal.some(j=>j.k==="death"));
-  assert.ok(Math.abs(me.json.state.vclock-s.vclock)<60000,"the virtual clock did not jump over the downtime");
-  assert.ok(Math.abs(me.json.state.lastReal-Date.now())<60000);
+  assert.equal(st.deaths,0);
+  assert.ok(!st.journal.some(j=>j.k==="death"));
+  assert.ok(Math.abs(st.vclock-now)<60000,"the game clock is back on the real hour");
+  assert.ok(st.hourIdx>=Math.floor(now/H)-1);
+  const sync=st.journal.find(j=>j.k==="sync");
+  assert.ok(sync&&Math.abs(sync.d.skipped-48*H)<60000,"one sync entry tells the downtime");
+  assert.match(p.out,/Clocks back on the real hour/);
+  const board=await c.call("GET","/api/board");
+  assert.ok(!board.json.feed.some(f=>f.kind==="sync"),"a maintenance is not news for the group");
  }finally{await stop(p);}
 });
 

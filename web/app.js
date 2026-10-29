@@ -79,6 +79,7 @@ function playJournal(onlyMajor){
   else if(act.k==="nap"){if(!d.on)playAnim("win",1200);toast(d.on?"Lumière éteinte : il se réveillera seul une fois reposé.":act.text);}
   else if(act.k==="wake"){playAnim("win",1500);toast("Il se réveille tout seul, reposé !");}
   else if(act.k==="equip")playAnim("win",1500);
+  else if(act.k==="sync")toast(act.text);              // back from a maintenance: said once, nothing to animate
   else if(level)toast(level.text);
  }else if(level)toast(level.text);
 }

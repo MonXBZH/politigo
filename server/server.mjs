@@ -43,7 +43,9 @@ const COOKIE=COOKIE_SECURE?"__Host-pg_session":"pg_session";
 R.setTimeZone(env.POLITIGO_TZ||"Europe/Paris");
 
 // ===================================================================== STORAGE
-const db=new DatabaseSync(DB_PATH);
+// A short wait rather than an immediate "database is locked" when another process (a backup, a maintenance
+// command) holds the file for a moment.
+const db=new DatabaseSync(DB_PATH,{timeout:5000});
 db.exec(`PRAGMA journal_mode=WAL;PRAGMA foreign_keys=ON;
 CREATE TABLE IF NOT EXISTS players(id INTEGER PRIMARY KEY,name TEXT NOT NULL,name_key TEXT NOT NULL UNIQUE,pass TEXT NOT NULL,
  created INTEGER NOT NULL,state TEXT NOT NULL,score INTEGER NOT NULL DEFAULT 0,updated INTEGER NOT NULL);
@@ -68,10 +70,22 @@ const q={
 };
 
 // Players live in memory (a group of friends, not a nation); every change is written through.
-// After a downtime the clocks are rebased: nobody's companion dies because the server was off.
+// After a downtime every clock is put back on the real hour, skipping (not playing) the time the server was
+// off: day and night stay true, and nobody's companion dies or even gets hungry because of a maintenance.
 const players=new Map();
+// The host clock is checked against the last save before any game clock moves: a container started before its
+// time sync must neither throw every game into the future nor, once corrected, replay hours (and kill).
+// Refusing to start is safe: the container is restarted until the clock is right, and no game is touched.
 {
- const now=Date.now();
+ const newest=Number(db.prepare("SELECT MAX(updated) AS t FROM players").get().t)||0,off=newest?Date.now()-newest:0;
+ if(env.POLITIGO_TRUST_CLOCK!=="1"&&(off<-5*60e3||off>366*864e5)){
+  console.error(`Host clock looks wrong: it says ${new Date().toISOString()}, the last save was at ${new Date(newest).toISOString()}. `+
+   "Not starting, so that no game clock is damaged. Fix the server's time sync (or set POLITIGO_TRUST_CLOCK=1 if this date is right).");
+  process.exit(1);
+ }
+}
+{
+ const now=Date.now();let resynced=0,longest=0;
  for(const row of q.allPlayers.all()){
   let state=null,why="",camp="left";
   try{const raw=JSON.parse(row.state);if(R.CAMPS.includes(raw?.camp))camp=raw.camp;state=R.sanitize(raw,now);}catch(e){why=e.message;}
@@ -82,9 +96,15 @@ const players=new Map();
    console.error(`player ${row.id}: unreadable state (${why||"rejected"}), saved to ${backup}, restarting their game`);
    state=R.newGame(camp,now);
   }
-  state.lastReal=now;
+  try{
+   const skipped=R.resync(state,now);if(skipped>0){resynced++;longest=Math.max(longest,skipped);}
+   if(skipped>7*864e5)console.log(`player ${row.id}: ${Math.round(skipped/864e5)} days skipped`);
+   // Ahead of real time on a real-time server: left as is (no replay), but said, since it should not happen.
+   if(SPEED===1&&state.vclock-now>10*60e3)console.error(`player ${row.id}: game clock ${Math.round((state.vclock-now)/60e3)} min ahead of real time`);
+  }catch(e){console.error(`player ${row.id}: clock not resynced`,e);state.lastReal=now;}
   players.set(row.id,{id:row.id,name:row.name,state});
  }
+ if(longest>=60000)console.log(`Clocks back on the real hour: ${resynced} player(s), up to ${Math.round(longest/60000)} min skipped, gauges untouched.`);
 }
 function persist(p){q.savePlayer.run(JSON.stringify(p.state),R.score(p.state),Date.now(),p.id);p.saved=Date.now();}
 // A change runs on a copy and only replaces the live state once it is written: a failed write (full disk)
