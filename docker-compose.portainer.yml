@@ -1,6 +1,6 @@
 # PolitiGo for Portainer (or any server that pulls images instead of building them).
 # Paste this file into a Portainer stack (Web editor) and set the variables in "Environment variables"
-# (same names as .env.example). The images come from a registry: see README, "Portainer".
+# (same names as .env.example). The images come from a registry: see docs/DEPLOIEMENT.md, "Variante Portainer".
 services:
   web:
     image: ${POLITIGO_IMAGES:-ghcr.io/monxbzh/politigo}-web:${POLITIGO_TAG:-latest}

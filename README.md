@@ -1,184 +1,209 @@
-# PolitiGo — déploiement
+<p align="center">
+  <img src="docs/images/banner.svg" alt="PolitiGo, la République dans la poche" width="100%">
+</p>
 
-Tamagotchi satirique multijoueur : un site statique (nginx) et une API de jeu (Node 24, SQLite), dans deux conteneurs.
-Le serveur fait foi : il détient les parties, fait tourner l'horloge et vérifie chaque action.
+<p align="center">
+  <a href="LICENSE"><img alt="Licence MIT" src="https://img.shields.io/badge/licence-MIT-blue"></a>
+  <img alt="Node 24" src="https://img.shields.io/badge/node-24%20LTS-5fa04e">
+  <img alt="Aucune dépendance" src="https://img.shields.io/badge/d%C3%A9pendances-0-success">
+  <img alt="Docker" src="https://img.shields.io/badge/docker-compose%20%7C%20Portainer-2496ed">
+  <img alt="107 tests" src="https://img.shields.io/badge/tests-107-brightgreen">
+  <img alt="Satire" src="https://img.shields.io/badge/genre-satire-ff9db0">
+</p>
 
+<p align="center">
+  <b>Un tamagotchi satirique et multijoueur sur la politique française.</b><br>
+  Choisis ton camp, élève ton petit élu de niveau 1 à 100, fais-le évoluer de figure en figure,<br>
+  et grimpe au classement de tes amis… sans provoquer sa <i>mort politique</i>.
+</p>
+
+---
+
+## 🎬 Aperçu
+
+| Ton élu | Choisir son camp | Le tableau de bord |
+|:---:|:---:|:---:|
+| <img src="docs/images/game-mobile.png" width="240" alt="Écran principal sur mobile"> | <img src="docs/images/auth.png" width="240" alt="Écran d'inscription et choix du camp"> | <img src="docs/images/sheet-dossier.png" width="240" alt="Le dossier : objets et casseroles"> |
+
+<p align="center">
+  <img src="docs/images/game-desktop.png" width="92%" alt="Version ordinateur : l'élu, ses jauges, le classement et le fil en direct">
+</p>
+
+| La Buvette | Jouer | Pong des arguments |
+|:---:|:---:|:---:|
+| <img src="docs/images/sheet-buvette.png" width="240" alt="La Buvette : se nourrir avec des frais de mandat"> | <img src="docs/images/sheet-jouer.png" width="240" alt="Débattre, puis quitte ou double"> | <img src="docs/images/pong.png" width="240" alt="Mini-jeu Pong des arguments"> |
+
+| Passation de pouvoir | Mort politique, à gauche | Mort politique, à droite |
+|:---:|:---:|:---:|
+| <img src="docs/images/evolution.png" width="240" alt="Animation d'évolution"> | <img src="docs/images/rebirth-left.png" width="240" alt="Renaissance à gauche : la primaire unitaire"> | <img src="docs/images/rebirth-right.png" width="240" alt="Renaissance à droite : le parti change de nom"> |
+
+---
+
+## 🗳️ C'est quoi ?
+
+**PolitiGo** reprend le principe du tamagotchi : un petit compagnon qu'il faut nourrir, soigner, distraire… et surtout ne pas
+oublier. Sauf qu'ici, le compagnon est **un élu**, dessiné en pixel art, et qu'il change de visage tous les dix niveaux.
+
+On joue **entre amis**, chacun sur son téléphone : un serveur fait tourner toutes les parties en **temps réel**, et un
+**classement en direct** départage les meilleurs éleveurs de la République.
+
+### Deux collections, vingt figures
+
+Au début, tu choisis un camp. Ton élu traverse ensuite sa collection, une nouvelle figure tous les 10 niveaux,
+jusqu'à la **légende** du niveau 100.
+
+| Niveaux | 🌹 Collection gauche | 🔵 Collection droite |
+|:---:|---|---|
+| 1 – 9 | Olivier Faure | Valérie Pécresse |
+| 10 – 19 | Raphaël Glucksmann | Rachida Dati |
+| 20 – 29 | Marine Tondelier | Xavier Bertrand |
+| 30 – 39 | François Ruffin | Édouard Philippe *(qui grisonne puis se dégarnit au fil des niveaux)* |
+| 40 – 49 | Fabien Roussel | Laurent Wauquiez |
+| 50 – 59 | Nathalie Arthaud | Bruno Retailleau |
+| 60 – 69 | Sandrine Rousseau | Éric Ciotti |
+| 70 – 79 | Philippe Poutou | Marion Maréchal |
+| 80 – 89 | Mathilde Panot | Jordan Bardella |
+| 90 – 100 | Jean-Luc Mélenchon | Marine Le Pen |
+
+<p align="center">
+  <img src="docs/images/collection-left.png" width="45%" alt="La collection gauche au complet">
+  &nbsp;
+  <img src="docs/images/collection-right.png" width="45%" alt="La collection droite au complet">
+</p>
+
+<p align="center">
+  <img src="docs/images/legend.png" width="260" alt="Un élu au niveau 100 : la légende de la collection"><br>
+  <sub>Niveau 100 : ton élu entre dans la légende… ou dans les manuels.</sub>
+</p>
+
+---
+
+## 🎮 Comment ça marche
+
+### Quatre jauges à surveiller
+
+| | Jauge | Elle baisse… | On la remonte avec… |
+|:---:|---|---|---|
+| 🍞 | **Satiété** | à chaque heure, surtout éveillé | la Buvette : du quignon gratuit (qui fait un peu grimacer) au banquet |
+| 💗 | **Moral** | avec le temps, la faim, la saleté… et les casseroles | les débats, le jardin, les douceurs, une tape sur l'épaule, le quitte ou double |
+| ⚡ | **Énergie** | avec les heures éveillées et les activités | la nuit, la sieste, le hamac, le café (trois par jour) |
+| 🫧 | **Hygiène** | doucement, heure après heure | le savon |
+
+Une jauge **à zéro pendant 12 heures**, et c'est la **mort politique** : la partie repart au niveau 1, avec une animation
+de renaissance propre à chaque camp (la *primaire unitaire* à gauche, *le parti change de nom* à droite).
+
+### Le rythme d'une journée
+
+- ⏰ **Le jeu suit l'heure réelle** (Paris). La nuit, de 0 h à 6 h, ton élu dort et récupère.
+- 👋 **Passe le voir** : chaque visite rapporte de l'XP, une fois toutes les 2 heures, 8 fois par jour au maximum.
+- 🎤 **Fais-le débattre** ou lance le **Pong des arguments** : 2 activités par visite, 8 par jour.
+- 🎲 **Quitte ou double** : juste après un débat, une revanche à pile ou face. Gagnée : moral **+12** et énergie **+12**.
+  Perdue : un **stress ×2**.
+- 💼 **Frais de mandat (FM)** : la monnaie du jeu, 2 FM gagnés par heure de vie. **Aucun achat réel, jamais.**
+- 📈 **La forme compte** : bien soigné, il gagne de l'XP plus vite et enchaîne les séries. Négligé, il régresse.
+  Avec six visites et quelques activités par jour, le niveau 100 se gagne en une quinzaine de jours.
+
+### Les casseroles
+
+Chaque personnage traîne **deux casseroles** : des stress qui tombent au hasard, plus souvent quand son moral est bas.
+Chacune fait un clin d'œil à un **fait public** (un score électoral, une petite phrase, une procédure, avec son stade exact),
+et toutes sont recensées, avec leurs références, dans **[docs/SOURCES.md](docs/SOURCES.md)**.
+
+### Entre amis
+
+- 🏆 **Classement en direct** : score, niveau, série record, survie.
+- 📰 **Fil de la République** : les évolutions, les morts politiques et les beaux scores au Pong de chacun, en temps réel.
+- 🔐 **Sur invitation** : un code donné par l'organisateur, et le nombre de comptes plafonné.
+
+---
+
+## 🛠️ Sous le capot
+
+```mermaid
+flowchart LR
+  P["📱 Navigateur<br/>web/app.js"] -- HTTPS --> RP["Reverse proxy<br/>TLS + domaine"]
+  RP -- HTTP --> W["web · nginx<br/>fichiers du jeu"]
+  W -- "/api/*" --> A["api · Node 24<br/>server.mjs"]
+  W -- "/events (SSE)" --> A
+  A --- R["rules.mjs<br/>règles partagées"]
+  P -. "importe aussi" .-> R
+  A --- DB[("SQLite<br/>volume Docker")]
 ```
-Internet ─HTTPS─> reverse proxy (TLS, domaine) ─HTTP─> web:8080 (nginx) ─┬─ fichiers du jeu
-                                                                          ├─ /api/*  ─> api:3000 (Node)
-                                                                          └─ /events ─> api:3000 (flux temps réel)
-                                                                                           └─ volume SQLite
-```
 
-## 1. Sur le serveur Docker
+- **Le serveur fait foi.** Il détient les parties, fait tourner l'horloge de chacun (même page fermée) et vérifie chaque
+  action. Le navigateur affiche et anime, il ne décide rien.
+- **Les mêmes règles des deux côtés** : `web/rules.mjs` est importé par le navigateur et par le serveur.
+- **Temps réel** par Server-Sent Events : le classement et le fil se mettent à jour sans recharger la page.
+- **Zéro dépendance** : Node 24 seul (`node:http`, `node:sqlite`, `node:crypto`), aucun `npm install`.
+- **Robuste aux maintenances** : après un arrêt, même de plusieurs jours, chaque partie revient sur l'heure réelle, sans
+  que les jauges bougent ; personne ne meurt parce que le serveur était éteint.
+- **Sécurité** : mots de passe hachés (scrypt), cookies `__Host-`, protection CSRF, limites de tentatives, CSP stricte sans
+  `unsafe-inline`, conteneurs non-root en lecture seule et sans capacités. Le détail est dans le [guide technique](docs/DEPLOIEMENT.md#4-sécurité-en-bref).
+
+---
+
+## 🚀 Installer sa partie
+
+Il faut un serveur avec Docker. Les images sont publiées sur le registre GitHub, pour `amd64` et `arm64`.
 
 ```bash
-cp .env.example .env      # puis éditer .env
+git clone https://github.com/MonXBZH/politigo.git && cd politigo
+cp .env.example .env          # POLITIGO_BIND = l'IP du serveur, le reste convient pour commencer
 docker compose up -d --build
+docker compose logs api       # le code d'invitation à donner aux amis s'y affiche
 ```
 
-À régler dans `.env` :
+Puis place-le derrière ton reverse proxy en HTTPS. Pour un simple essai en local, sans proxy ni HTTPS, mets
+`COOKIE_SECURE=0` et `PROXY_HOPS=1` dans `.env` : sinon le navigateur refuse le cookie de session. Le **[guide technique](docs/DEPLOIEMENT.md)** détaille tout :
+les variables, la configuration nginx du reverse proxy, le pare-feu, la stack **Portainer** avec les images prêtes,
+les sauvegardes, les mises à jour, le cycle de développement et les tests.
 
-| Variable | Valeur en production |
-|---|---|
-| `POLITIGO_INVITE` | facultatif. **Vide** : le serveur génère un code au premier démarrage, le garde dans le volume (`/data/invite.txt`) et l'affiche dans ses logs à chaque démarrage (`docker compose logs api`, ou les logs du conteneur `api` dans Portainer). **Renseigné** : ce code, d'au moins 16 caractères (le serveur refuse de démarrer avec un code court ou celui de l'exemple). **`off`** : inscriptions fermées |
-| `MAX_PLAYERS` | `50` : nombre maximum de comptes |
-| `POLITIGO_BIND` | l'IP interne du serveur Docker (le reverse proxy est sur une autre machine) |
-| `POLITIGO_PORT` | `8080` |
-| `COOKIE_SECURE` | `1` (cookies de session HTTPS uniquement) |
-| `PROXY_HOPS` | `2` (le reverse proxy + le nginx de la pile) |
-| `POLITIGO_SPEED` | `1` (temps réel ; plus grand uniquement sur un serveur de test) |
+---
 
-**Pare-feu** : n'autoriser le port 8080 qu'à l'adresse du reverse proxy. Attention, les ports publiés par Docker
-contournent UFW et firewalld : la règle se pose dans la chaîne `DOCKER-USER` (à rendre persistante, par exemple avec `iptables-persistent`) :
+## 🤝 Contribuer
 
-```bash
-sudo iptables -I DOCKER-USER -p tcp -m conntrack --ctorigdstport 8080 ! -s IP_DU_REVERSE_PROXY -j DROP
-```
+- Le travail se fait sur la branche **`dev`** ; `main` ne reçoit que des pull requests, et publie les images.
+- Chaque pull request passe la batterie de tests (`bash tests/run-server.sh`, dans l'image Node de production).
+- **Un fait dépassé, une procédure qui a évolué ?** Ouvre une *issue* : l'exactitude des références passe avant tout.
+  Les références vivent dans `web/rules.mjs`, et `docs/SOURCES.md` se régénère avec `tools/make-sources.mjs`.
 
-Sans ce filtrage, quelqu'un sur le réseau pourrait joindre la pile sans passer par le reverse proxy, en HTTP clair,
-et inventer son adresse IP pour contourner les limites de tentatives.
+---
 
-### Variante Portainer (images prêtes, aucun build sur le serveur)
+## 🙏 Crédits
 
-Portainer déploie mieux une stack qui **tire** des images qu'une stack qui les construit. Les images sont donc
-construites par GitHub et publiées sur son registre (ghcr.io) :
+- **L'idée** vient de [TamaDigi](https://github.com/MonXBZH/TamaDigi), un V-Pet pour ESP32 à écran rond, lui-même issu du
+  moteur [TamaPoke](https://github.com/socquique/TamaPoke) de Quique Tortosa. PolitiGo en reprend l'esprit et le format
+  (l'écran rond de 466 px), mais c'est une réécriture complète pour le web : aucun code n'en provient.
+- **Polices** : [Fredoka](https://github.com/hafontia/Fredoka-One) (The Fredoka Project Authors) et
+  [Inter](https://github.com/rsms/inter) (The Inter Project Authors), sous licence SIL Open Font License 1.1
+  ([Fredoka](web/fonts/OFL-fredoka.txt), [Inter](web/fonts/OFL-inter.txt)), servies depuis le jeu lui-même.
+- **Dessins** : tous les sprites sont originaux, tracés pixel par pixel dans le code (aucune image importée).
 
-1. Pousser le projet sur GitHub (le `.gitignore` exclut `.env`). À chaque push sur `main`, le workflow
-   `.github/workflows/images.yml` lance les tests puis publie `ghcr.io/<compte>/politigo-web` et `politigo-api`
-   (tags `latest`, `sha-xxxxxxx`, et `1.2.0` pour un tag git `v1.2.0`), pour amd64 et arm64.
-2. Si le dépôt est privé, les images le sont aussi : créer un jeton GitHub avec le droit `read:packages`, puis dans
-   Portainer → Registries → Add registry → Custom : URL `ghcr.io`, identifiant GitHub, le jeton comme mot de passe.
-3. Portainer → Stacks → Add stack → Web editor : coller `docker-compose.portainer.yml`, puis dans
-   « Environment variables » :
+---
 
-   | Variable | Valeur |
-   |---|---|
-   | `POLITIGO_IMAGES` | `ghcr.io/<compte>/politigo` |
-   | `POLITIGO_TAG` | `latest`, ou une version figée (`1.2.0`, `sha-xxxxxxx`) pour maîtriser les mises à jour |
-   | `POLITIGO_INVITE`, `POLITIGO_BIND`, `POLITIGO_PORT`, `COOKIE_SECURE`, `PROXY_HOPS`, `MAX_PLAYERS` | comme dans le tableau ci-dessus |
+## ⚠️ Avertissements
 
-4. **Mise à jour** : dans la stack, « Update the stack » en cochant « Re-pull image ». Le volume (les parties) est conservé.
-   Portainer préfixe le volume du nom de la stack : `<stack>_politigo-data`, à sauvegarder.
+> **PolitiGo est une œuvre satirique.** Il relève de la parodie et de la caricature, et n'a d'autre but que de faire sourire.
 
-Sans GitHub, on peut aussi construire sur le serveur (`docker compose build`, qui crée `politigo-web` et `politigo-api`),
-puis déclarer dans Portainer `POLITIGO_IMAGES=politigo` et `POLITIGO_TAG=latest` : la stack utilise alors ces images locales.
+- **Aucune affiliation** avec les personnes, partis ou institutions évoqués, et **aucune prise de position** : les deux camps
+  sont traités sur un pied d'égalité, et ni le jeu ni ses auteurs n'appellent à voter pour qui que ce soit.
+- **Les répliques sont inventées ou librement adaptées**, jamais présentées comme des citations exactes ; le jeu n'a aucune
+  valeur d'information.
+- **Les faits évoqués sont publics** et accompagnés de leur source ([docs/SOURCES.md](docs/SOURCES.md)). Quand une procédure
+  judiciaire est citée, c'est avec son stade exact au moment de l'écriture : **la présomption d'innocence s'applique** à
+  toute personne qui n'a pas été définitivement condamnée.
+- **Les dessins sont des caricatures originales**, sans photo ni logo officiel.
+- **Aucun argent réel** : la seule monnaie, les frais de mandat, se gagne en gardant son élu en vie.
+- **Données** : seuls le pseudo, le mot de passe haché et la partie sont enregistrés, sur le serveur de l'organisateur.
+  Chaque joueur peut supprimer son compte depuis Dossier → Compte.
+- **Une personne citée estime un contenu inexact ou blessant ?** Ouvre une *issue* sur ce dépôt : il sera revu, corrigé ou
+  retiré sans discussion.
 
-## 2. Sur le reverse proxy
+---
 
-```nginx
-# Dans le bloc http { } : limites par visiteur réel (c'est ici qu'on connaît sa vraie adresse).
-limit_conn_zone $binary_remote_addr zone=pg_conn:10m;
-limit_req_zone  $binary_remote_addr zone=pg_req:10m rate=20r/s;
+## 📄 Licence
 
-server {
-    listen 80;
-    server_name politigo.example.fr;
-    return 301 https://$host$request_uri;
-}
-server {
-    listen 443 ssl;
-    http2 on;
-    server_name politigo.example.fr;
-    server_tokens off;
-    # ssl_certificate / ssl_certificate_key : comme pour les autres sites
+Le code et les dessins sont sous licence **[MIT](LICENSE)**. Les polices restent sous leur propre licence (SIL OFL 1.1).
+Les noms des personnes, partis et institutions cités appartiennent à leurs titulaires ; aucun droit n'est revendiqué dessus.
 
-    add_header Strict-Transport-Security "max-age=31536000" always;
-    client_max_body_size 8k;
-    limit_conn pg_conn 20;
-    limit_req zone=pg_req burst=40 nodelay;
-
-    location / {
-        proxy_pass http://IP_DU_SERVEUR_DOCKER:8080;
-        proxy_http_version 1.1;
-        proxy_set_header Connection "";
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        # $remote_addr et non $proxy_add_x_forwarded_for : une adresse inventée par le visiteur est écrasée.
-        proxy_set_header X-Forwarded-For $remote_addr;
-    }
-    # Classement et fil en direct : flux ouvert, jamais mis en tampon.
-    location /events {
-        limit_conn pg_conn 4;
-        proxy_pass http://IP_DU_SERVEUR_DOCKER:8080;
-        proxy_http_version 1.1;
-        proxy_set_header Connection "";
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-For $remote_addr;
-        proxy_buffering off;
-        proxy_cache off;
-        proxy_read_timeout 1h;
-    }
-}
-```
-
-Le reverse proxy ne doit pas réécrire les en-têtes de sécurité envoyés par la pile (CSP, X-Frame-Options…), seulement ajouter HSTS.
-Si l'un de ses `location` utilise `add_header`, recopier la ligne HSTS dedans : nginx n'hérite alors plus de celle du `server`.
-
-## 3. Exploitation
-
-- **Sauvegarde** : le volume `politigo_politigo-data` contient `politigo.db` (comptes, parties, fil). Exemple :
-  `docker run --rm -v politigo_politigo-data:/d -v "$PWD":/b alpine tar czf /b/politigo-$(date +%F).tgz -C /d .`
-- **Mise à jour** : `docker compose build --pull && docker compose up -d` (récupère aussi les correctifs de sécurité de nginx et Node). Les parties sont conservées. Pendant un arrêt, même de plusieurs jours, rien ne se joue : au redémarrage, chaque partie
-  revient sur l'heure réelle (jour et nuit restent justes), et ses jauges sont inchangées (personne ne meurt ni n'a faim parce que
-  le serveur était éteint). Le journal du joueur l'indique (« Maintenance du serveur (3 h) : ce temps est sauté… »), et les logs aussi.
-  Garde-fou : si l'horloge du serveur est en retard sur la dernière sauvegarde (heure pas encore synchronisée au démarrage)
-  ou en avance de plus d'un an, l'API refuse de démarrer sans toucher aux parties, et Docker la relance jusqu'à ce que l'heure
-  soit bonne. Si la date affichée dans le log est pourtant la bonne : `POLITIGO_TRUST_CLOCK=1`.
-- **Logs** : `docker compose logs -f api`.
-- **Fermer les inscriptions** : `POLITIGO_INVITE=off` puis `docker compose up -d`. Les comptes existants continuent de jouer.
-- **Nouveau code généré** (après une fuite) : `docker compose exec api rm /data/invite.txt && docker compose restart api`
-  (dans Portainer : conteneur `api` → Console → `rm /data/invite.txt`, puis Restart), et lire le nouveau code dans les logs.
-
-## 4. Sécurité en bref
-
-- **Comptes** : mots de passe hachés (scrypt, sans bloquer le serveur), code d'invitation exigé (16 caractères minimum), nombre de comptes plafonné.
-  Pseudos en alphabet latin uniquement, et unicité sans tenir compte des majuscules ni des accents : personne ne peut se faire passer pour un autre avec un « о » cyrillique.
-- **Sessions** : cookie `__Host-` `HttpOnly` + `SameSite=Lax` + `Secure`, 10 appareils au plus par joueur, supprimées côté serveur à la déconnexion et à la suppression du compte.
-- **Requêtes** : écritures refusées hors JSON et hors origine du site ; limitation des tentatives par adresse, par adresse et pseudo,
-  et par pseudo, si bien qu'un inconnu ne peut pas bloquer le compte d'un ami ; 5 essais de suppression de compte par quart d'heure ;
-  3 flux en direct par joueur ; une démission par heure.
-- **Jeu** : le serveur fait foi ; score du mini-jeu vérifié (durée, cadence, pas de rejeu) ; états relus et bornés au démarrage.
-- **Robustesse** :
-  - un joueur ou une connexion en erreur est ignoré sans arrêter le serveur ;
-  - une écriture ratée (disque plein) annule l'action au lieu de désynchroniser mémoire et base ;
-  - une partie illisible est mise de côté dans `/data/state-<id>-<date>.bad.json` avant d'être recommencée ;
-  - à l'arrêt, toutes les horloges sont enregistrées ;
-  - `/api/health` vérifie la base et l'horloge du jeu, et pas seulement que le processus répond ;
-  - au-delà de 16 vérifications de mot de passe simultanées, le serveur répond « occupé » au lieu de saturer sa mémoire.
-- **Client** : requêtes abandonnées après 15 s, bandeau « Connexion perdue » et reconnexion automatique, flux en direct relancé s'il se tait,
-  messages visibles même sous un panneau ouvert, bouton Retour du téléphone qui ferme le panneau.
-- **Infrastructure** : CSP stricte sans `unsafe-inline`, aucune ressource externe, conteneurs non-root en lecture seule, sans capacités, avec
-  mémoire, processus et logs plafonnés ; délais courts contre les connexions lentes. Seuls le pseudo et la partie sont stockés ;
-  chaque joueur peut supprimer son compte depuis Dossier → Compte.
-
-Avant d'ouvrir au groupe, vérifier les deux statuts judiciaires cités dans les dossiers (Marine Le Pen : appel ; Rachida Dati : procès).
-
-## 5. Cycle de développement
-
-On ne pousse jamais directement sur `main` : tout passe par `dev`, et `main` ne reçoit que des fusions.
-
-1. **Travail sur `dev`** : chaque push lance le workflow `ci` (toute la batterie de tests, aucune publication).
-   Dependabot propose aussi ses mises à jour sur `dev`.
-2. **Mise en production** : pull request `dev` → `main`, fusionnée quand le statut `tests` est vert, en
-   « Create a merge commit » (pas de squash ni de rebase, sinon les historiques de `dev` et `main` divergent).
-   La fusion sur `main` relance les tests, puis publie les images `latest` et `sha-xxxxxxx`.
-3. **Version** : sur `main` à jour, `git tag -a v1.2.1 -m "…" && git push origin v1.2.1` → images `1.2.1`, puis la release GitHub.
-   La version est lue par `git describe` au build et affichée dans le jeu (Dossier → Compte) : « PolitiGo 1.2.1 »,
-   ou « 1.2.1-3-gabc1234 » pour un commit de `main` postérieur au tag. Un build local affiche « version de développement »
-   (`POLITIGO_VERSION=v1.2.1 docker compose build` pour la fixer).
-4. **Portainer** lit le compose sur `main` : un changement du compose n'arrive en production qu'après la fusion.
-   Mettre `POLITIGO_TAG` sur la nouvelle version, puis « Update the stack » en re-téléchargeant l'image.
-5. **Après une fusion**, remettre `dev` à niveau : `git switch dev && git merge main && git push`.
-
-Protection de `main` (Settings → Rules → Rulesets → New branch ruleset, cible « Include default branch », Active) :
-interdire la suppression et le force push, exiger une pull request (0 approbation, on est seul), exiger le statut
-`tests` (il n'apparaît dans la liste qu'après une première exécution du workflow `ci`), fusion autorisée : « Merge » seulement.
-
-## 6. Tests
-
-```bash
-bash tests/run-server.sh                       # 89 tests : règles (dont l'équilibrage J15) + API, dans l'image Node de production
-docker compose restart api                     # remet à zéro les limites d'inscription avant l'e2e
-powershell -File tests\e2e.ps1                 # parcours complet dans Chrome (crée deux joueurs de test)
-```
+<p align="center"><sub>Fait avec 🌹, 🔵 et beaucoup de café de la permanence.</sub></p>

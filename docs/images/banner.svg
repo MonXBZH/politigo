@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 420" width="1280" height="420" role="img" aria-labelledby="t d">
+ <title id="t">PolitiGo</title>
+ <desc id="d">PolitiGo, le tamagotchi satirique de la politique française : un petit élu en pixel art dans un écran rond.</desc>
+ <defs>
+  <radialGradient id="bg" cx="30%" cy="0%" r="120%">
+   <stop offset="0" stop-color="#7a2f4f"/><stop offset=".45" stop-color="#4a1d3a"/><stop offset="1" stop-color="#1d0f24"/>
+  </radialGradient>
+  <linearGradient id="rim" x1="0" y1="0" x2="1" y2="1">
+   <stop offset="0" stop-color="#ff9db0"/><stop offset="1" stop-color="#7a2f4f"/>
+  </linearGradient>
+  <linearGradient id="rim2" x1="0" y1="0" x2="1" y2="1">
+   <stop offset="0" stop-color="#9cc0ff"/><stop offset="1" stop-color="#2f5b9a"/>
+  </linearGradient>
+  <linearGradient id="title" x1="0" x2="1">
+   <stop offset="0" stop-color="#ff9db0"/><stop offset="1" stop-color="#ffd59a"/>
+  </linearGradient>
+  <clipPath id="scr"><circle cx="0" cy="0" r="118"/></clipPath>
+ </defs>
+ <rect width="1280" height="420" fill="url(#bg)"/>
+ <circle cx="1180" cy="60" r="190" fill="#9cc0ff" opacity=".10"/>
+ <circle cx="80" cy="400" r="160" fill="#ffd59a" opacity=".08"/>
+
+ <!-- the round device -->
+ <g transform="translate(250 210)">
+  <circle r="150" fill="url(#rim)"/>
+  <circle r="132" fill="#05060a"/>
+  <g clip-path="url(#scr)">
+   <rect x="-120" y="-120" width="240" height="240" fill="#7a3d5c"/>
+   <g fill="none" stroke="#ffb2c2" stroke-opacity=".14" stroke-width="7">
+    <path d="M-95 45a95 95 0 0 1 190 0"/><path d="M-70 45a70 70 0 0 1 140 0"/>
+   </g>
+   <rect x="-120" y="45" width="240" height="80" fill="#1f2536"/>
+   <!-- gauges on the rim -->
+   <g fill="none" stroke-width="7" stroke-linecap="round">
+    <path d="M-104 -50a114 114 0 0 1 50 -52" stroke="#f1bc72"/>
+    <path d="M54 -102a114 114 0 0 1 50 52" stroke="#ef91ae"/>
+    <path d="M104 50a114 114 0 0 1 -40 56" stroke="#85cbbb"/>
+    <path d="M-64 106a114 114 0 0 1 -40 -56" stroke="#93b4ec"/>
+   </g>
+   <!-- a generic little elected official, 64x64 pixel grid scaled x2.4 -->
+   <g transform="translate(-77 -100) scale(2.4)" shape-rendering="crispEdges">
+    <ellipse cx="32" cy="59" rx="15" ry="3" fill="#0004"/>
+    <rect x="22" y="37" width="20" height="18" fill="#202330"/><rect x="24" y="37" width="16" height="16" fill="#364a6c"/>
+    <rect x="29" y="37" width="6" height="9" fill="#f1e9da"/><rect x="31" y="39" width="2" height="11" fill="#c23b4a"/>
+    <rect x="24" y="54" width="6" height="5" fill="#202330"/><rect x="35" y="54" width="6" height="5" fill="#202330"/>
+    <rect x="18" y="39" width="5" height="12" fill="#364a6c"/><rect x="19" y="50" width="4" height="4" fill="#e9b38e"/>
+    <rect x="42" y="34" width="5" height="12" fill="#364a6c"/><rect x="43" y="33" width="4" height="4" fill="#e9b38e"/>
+    <rect x="29" y="31" width="7" height="8" fill="#c78e76"/>
+    <rect x="22" y="13" width="21" height="20" fill="#202330"/><rect x="23" y="14" width="19" height="18" fill="#e9b38e"/>
+    <rect x="21" y="22" width="2" height="6" fill="#e9b38e"/><rect x="42" y="22" width="2" height="6" fill="#e9b38e"/>
+    <rect x="23" y="12" width="19" height="5" fill="#44382f"/><rect x="22" y="15" width="3" height="5" fill="#44382f"/>
+    <rect x="27" y="22" width="2" height="3" fill="#202330"/><rect x="36" y="22" width="2" height="3" fill="#202330"/>
+    <rect x="32" y="25" width="2" height="3" fill="#c78e76"/><rect x="30" y="29" width="6" height="1" fill="#202330"/>
+    <!-- a rose in hand -->
+    <rect x="47" y="24" width="1" height="12" fill="#6bac73"/><rect x="44" y="19" width="7" height="6" fill="#ef6c89"/><rect x="46" y="18" width="3" height="8" fill="#bc3f68"/>
+    <!-- confetti -->
+    <rect x="6" y="8" width="2" height="3" fill="#fbd47b"/><rect x="54" y="4" width="2" height="3" fill="#ed819a"/><rect x="12" y="2" width="2" height="3" fill="#8db4ff"/>
+   </g>
+  </g>
+  <text y="146" text-anchor="middle" font-family="Fredoka, 'Trebuchet MS', system-ui, sans-serif" font-weight="700" font-size="11" letter-spacing="4" fill="#ffffffaa">POLITIGO</text>
+ </g>
+
+ <!-- title -->
+ <g font-family="Fredoka, 'Trebuchet MS', system-ui, sans-serif">
+  <text x="460" y="170" font-size="104" font-weight="700" fill="url(#title)">PolitiGo</text>
+  <text x="464" y="222" font-size="30" font-weight="600" fill="#f7f2ea">La République dans la poche.</text>
+  <text x="464" y="268" font-family="Inter, 'Segoe UI', system-ui, sans-serif" font-size="21" fill="#cdc4d8">Un tamagotchi satirique et multijoueur : élève ton petit élu jusqu'au niveau 100,</text>
+  <text x="464" y="298" font-family="Inter, 'Segoe UI', system-ui, sans-serif" font-size="21" fill="#cdc4d8">grimpe au classement de tes amis… sans provoquer sa mort politique.</text>
+ </g>
+ <g font-family="ui-monospace, 'Cascadia Mono', Menlo, monospace" font-size="15" font-weight="700">
+  <rect x="464" y="328" width="150" height="34" rx="17" fill="#ffffff14" stroke="#ff9db0" stroke-opacity=".6"/>
+  <text x="539" y="350" text-anchor="middle" fill="#ff9db0">● GAUCHE</text>
+  <rect x="626" y="328" width="150" height="34" rx="17" fill="#ffffff14" stroke="#9cc0ff" stroke-opacity=".6"/>
+  <text x="701" y="350" text-anchor="middle" fill="#9cc0ff">● DROITE</text>
+  <rect x="788" y="328" width="230" height="34" rx="17" fill="#ffffff14" stroke="#ffd59a" stroke-opacity=".6"/>
+  <text x="903" y="350" text-anchor="middle" fill="#ffd59a">NIVEAUX 1 → 100</text>
+ </g>
+</svg>
