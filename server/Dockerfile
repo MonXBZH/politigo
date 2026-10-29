@@ -1,5 +1,5 @@
 # PolitiGo API: plain Node, no npm dependency, running as the unprivileged "node" user.
-FROM node:24-alpine
+FROM node:25-alpine
 ENV NODE_ENV=production NODE_NO_WARNINGS=1 TZ=Europe/Paris PORT=3000 DB_PATH=/data/politigo.db
 WORKDIR /app
 COPY web/rules.mjs server/server.mjs ./
