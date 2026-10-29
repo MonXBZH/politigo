@@ -7,7 +7,7 @@ const motionQuery=matchMedia("(prefers-reduced-motion: reduce)");
 let reduced=motionQuery.matches;motionQuery.addEventListener?.("change",e=>{reduced=e.matches;});
 
 // ===================================================================== STATE (a copy of the server's)
-let S=null,me=null,SPEED=1,syncReal=0,syncV=0,busy=false;
+let S=null,me=null,SPEED=1,syncReal=0,syncV=0,busy=false,VERSION="dev";
 let anim=null,scene=null,pong=null,lvlFx=null;
 let board=[],feed=[],journalShown=-1,journalRendered=-1,boardTab="score";
 const curIdx=()=>R.curIdx(S),hodOf=R.hodOf,isNight=()=>R.isNight(S),isAsleep=()=>R.isAsleep(S);
@@ -36,7 +36,7 @@ function applyMe(m,{replay=false}={}){
  const first=!S||me!==m.name;
  // The action answer and the live stream race each other: an older copy of the state never replaces a newer one.
  if(!first&&m.state.lastReal<S.lastReal)return;
- me=m.name;SPEED=m.speed||1;R.setTimeZone(m.tz||"Europe/Paris");
+ me=m.name;SPEED=m.speed||1;VERSION=m.version||"dev";R.setTimeZone(m.tz||"Europe/Paris");
  S=m.state;syncReal=Date.now();syncV=S.vclock;
  if(first){journalShown=replay?Math.min(readSeen()||S.jn,S.jn):S.jn;journalRendered=-1;}
  playJournal(first&&replay);
@@ -739,7 +739,11 @@ function renderSheet(kind,opener){
     if(r.ok){closeSheet();endSession("Compte supprimé. Merci d'avoir joué !");}else{err.textContent=r.error;pw.focus();}
    });
   });
-  acc.append(out,del);body.append(who,acc);
+  acc.append(out,del);
+  // The version the server was built from (git describe), without the tag's leading "v".
+  const ver=document.createElement("p");ver.className="fine";
+  ver.textContent=VERSION==="dev"?"PolitiGo, version de développement":`PolitiGo ${VERSION.replace(/^v(?=\d)/,"")}`;
+  body.append(who,acc,ver);
   const about=document.createElement("p");about.className="fine";
   about.textContent="PolitiGo est une satire. Personnages caricaturés et répliques inventées ; les faits rappelés sont publics, avec le stade de chaque procédure, et la présomption d'innocence s'applique. Aucun achat réel : la seule monnaie est le frais de mandat, gagné en restant en vie. Seuls ton pseudo et ta partie sont enregistrés.";
   body.append(about);

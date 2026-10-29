@@ -164,6 +164,9 @@ On ne pousse jamais directement sur `main` : tout passe par `dev`, et `main` ne 
    « Create a merge commit » (pas de squash ni de rebase, sinon les historiques de `dev` et `main` divergent).
    La fusion sur `main` relance les tests, puis publie les images `latest` et `sha-xxxxxxx`.
 3. **Version** : sur `main` à jour, `git tag -a v1.2.1 -m "…" && git push origin v1.2.1` → images `1.2.1`, puis la release GitHub.
+   La version est lue par `git describe` au build et affichée dans le jeu (Dossier → Compte) : « PolitiGo 1.2.1 »,
+   ou « 1.2.1-3-gabc1234 » pour un commit de `main` postérieur au tag. Un build local affiche « version de développement »
+   (`POLITIGO_VERSION=v1.2.1 docker compose build` pour la fixer).
 4. **Portainer** lit le compose sur `main` : un changement du compose n'arrive en production qu'après la fusion.
    Mettre `POLITIGO_TAG` sur la nouvelle version, puis « Update the stack » en re-téléchargeant l'image.
 5. **Après une fusion**, remettre `dev` à niveau : `git switch dev && git merge main && git push`.

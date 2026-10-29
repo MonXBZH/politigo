@@ -32,6 +32,9 @@ services:
     build:
       context: .
       dockerfile: server/Dockerfile
+      # Shown in the game's Dossier sheet: POLITIGO_VERSION=v1.2.1 docker compose build (default "dev").
+      args:
+        VERSION: ${POLITIGO_VERSION:-dev}
     image: politigo-api
     environment:
       # Unset: the server generates a code once and prints it in its logs ("off" closes registrations).

@@ -10,6 +10,8 @@ import * as R from "./rules.mjs";
 
 const env=process.env;
 const PORT=Number(env.PORT||3000);
+// Baked into the image from git describe; anything that is not a plain version string is shown as "dev".
+const VERSION=/^[0-9A-Za-z._+-]{1,40}$/.test(env.POLITIGO_VERSION||"")?env.POLITIGO_VERSION:"dev";
 const DB_PATH=env.DB_PATH||"/data/politigo.db";
 // Invite code: POLITIGO_INVITE, "off" to close registrations, or unset for a code generated once and kept next to
 // the database (same code across restarts and image updates; delete the file and restart for a new one).
@@ -242,7 +244,7 @@ function publishBoard(force=false){
  const rows=boardRows(),json=JSON.stringify(rows);
  if(force||json!==lastBoard){lastBoard=json;broadcast("board",rows);}
 }
-function mePayload(p){return {name:p.name,state:p.state,speed:SPEED,tz:R.timeZone(),serverNow:Date.now()};}
+function mePayload(p){return {name:p.name,state:p.state,speed:SPEED,tz:R.timeZone(),serverNow:Date.now(),version:VERSION};}
 // The clock runs for everyone, connected or not: needs drain and deaths happen while the page is closed.
 setInterval(()=>{
  const now=Date.now();
@@ -361,7 +363,7 @@ const server=http.createServer((req,res)=>{
 server.headersTimeout=15000;server.requestTimeout=15000;
 // Logged on every start, so log rotation never loses it.
 if(INVITE_GENERATED)console.log(`Invite code: ${INVITE} (generated, kept in ${INVITE_FILE}; delete that file and restart for a new one)`);
-server.listen(PORT,()=>console.log(`PolitiGo API on :${PORT} (speed x${SPEED}, ${players.size} players, registrations ${INVITE?"open with invite":"closed"})`));
+server.listen(PORT,()=>console.log(`PolitiGo API ${VERSION} on :${PORT} (speed x${SPEED}, ${players.size} players, registrations ${INVITE?"open with invite":"closed"})`));
 // A bug that escapes every handler is logged with its stack, then the container restarts the process cleanly.
 // Every clock is written as it stands before leaving, so a restart never sets anyone's game time back.
 function saveAll(){for(const p of players.values()){try{persist(p);}catch(e){console.error(`saving player ${p.id}:`,e);}}}
