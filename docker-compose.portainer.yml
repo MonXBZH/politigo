@@ -3,7 +3,7 @@
 # (same names as .env.example). The images come from a registry: see README, "Portainer".
 services:
   web:
-    image: ${POLITIGO_IMAGES:-ghcr.io/OWNER/politigo}-web:${POLITIGO_TAG:-latest}
+    image: ${POLITIGO_IMAGES:-ghcr.io/monxbzh/politigo}-web:${POLITIGO_TAG:-latest}
     ports:
       # Bind to the server's internal address and allow only the reverse proxy to reach it.
       - "${POLITIGO_BIND:-127.0.0.1}:${POLITIGO_PORT:-8080}:8080"
@@ -29,7 +29,7 @@ services:
         max-file: "3"
 
   api:
-    image: ${POLITIGO_IMAGES:-ghcr.io/OWNER/politigo}-api:${POLITIGO_TAG:-latest}
+    image: ${POLITIGO_IMAGES:-ghcr.io/monxbzh/politigo}-api:${POLITIGO_TAG:-latest}
     environment:
       # Unset: the server generates a code once and prints it in its logs ("off" closes registrations).
       POLITIGO_INVITE: ${POLITIGO_INVITE:-}
