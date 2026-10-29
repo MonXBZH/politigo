@@ -294,6 +294,21 @@ export function advance(S,realNow,speed=1,random=Math.random){
  if(S.pong&&realNow-S.pong.t>PONG_RULES.timeoutSeconds*1000)S.pong=null;
  return S.hourIdx!==h0;
 }
+// After the server was down: the game goes back on the real hour, and the downtime is skipped, not played.
+// No gauge drains, no FM or XP comes in, nobody dies because the server was off. Returns the skipped ms.
+// A test server running faster than real time is already ahead, and stays as it is.
+export function resync(S,realNow){
+ if(!Number.isFinite(realNow))return 0;
+ const target=Math.max(S.vclock,realNow),skipped=target-S.vclock;
+ S.vclock=target;S.hourIdx=Math.max(S.hourIdx,Math.floor(target/H));S.lastReal=realNow;
+ if(S.pong&&realNow-S.pong.t>PONG_RULES.timeoutSeconds*1000)S.pong=null;
+ if(skipped>=15*60000)log(S,"sync",`Maintenance du serveur (${duration(skipped)}) : ce temps est sauté, l'horloge est recalée sur l'heure réelle. Jauges inchangées.`,{skipped});
+ return skipped;
+}
+function duration(ms){
+ const m=Math.round(ms/60000),d=Math.floor(m/1440),h=Math.floor(m%1440/60),min=m%60;
+ return [d&&`${d} j`,h&&`${h} h`,min&&`${min} min`].filter(Boolean).join(" ");
+}
 const fail=error=>({ok:false,error}),done=(info={})=>({ok:true,...info});
 // Every player action goes through here, on the server, after bringing the state up to date.
 export function act(S,a,{now,speed=1,random=Math.random}){

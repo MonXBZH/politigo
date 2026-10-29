@@ -1,11 +1,14 @@
-# Weekly pull requests when an action used by the workflow, or a base image, gets a new version.
+# Weekly pull requests when an action used by the workflows, or a base image, gets a new version.
+# They target dev, like any other change: main only receives merges from dev.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
+    target-branch: dev
     schedule:
       interval: weekly
   - package-ecosystem: docker
     directories: ["/", "/server"]
+    target-branch: dev
     schedule:
       interval: weekly

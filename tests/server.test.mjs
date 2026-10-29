@@ -163,7 +163,7 @@ test("logout ends the session and account deletion needs the password",async()=>
 
 test("an expired session is refused",async()=>{
  const c=client("10.0.1.6");await reg(c,"Odile");
- const db=new DatabaseSync(join(DIR,"t.db"));db.exec("UPDATE sessions SET expires=1 WHERE player_id=(SELECT id FROM players WHERE name='Odile')");db.close();
+ const db=new DatabaseSync(join(DIR,"t.db"),{timeout:5000});db.exec("UPDATE sessions SET expires=1 WHERE player_id=(SELECT id FROM players WHERE name='Odile')");db.close();
  assert.equal((await c.call("GET","/api/me")).status,401);
 });
 

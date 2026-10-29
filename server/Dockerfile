@@ -6,6 +6,9 @@ COPY web/rules.mjs server/server.mjs ./
 # The volume inherits this ownership the first time it is created.
 RUN mkdir -p /data && chown node:node /data
 USER node
+# Set by the image workflow from git describe ("v1.2.1"); a local build is "dev". Late, so it never busts the cache above.
+ARG VERSION=dev
+ENV POLITIGO_VERSION=$VERSION
 VOLUME /data
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s --retries=3 CMD node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"

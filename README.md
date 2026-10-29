@@ -119,7 +119,12 @@ Si l'un de ses `location` utilise `add_header`, recopier la ligne HSTS dedans : 
 
 - **Sauvegarde** : le volume `politigo_politigo-data` contient `politigo.db` (comptes, parties, fil). Exemple :
   `docker run --rm -v politigo_politigo-data:/d -v "$PWD":/b alpine tar czf /b/politigo-$(date +%F).tgz -C /d .`
-- **Mise à jour** : `docker compose build --pull && docker compose up -d` (récupère aussi les correctifs de sécurité de nginx et Node). Les parties sont conservées ; pendant un arrêt, l'horloge est gelée (personne ne meurt parce que le serveur était éteint).
+- **Mise à jour** : `docker compose build --pull && docker compose up -d` (récupère aussi les correctifs de sécurité de nginx et Node). Les parties sont conservées. Pendant un arrêt, même de plusieurs jours, rien ne se joue : au redémarrage, chaque partie
+  revient sur l'heure réelle (jour et nuit restent justes), et ses jauges sont inchangées (personne ne meurt ni n'a faim parce que
+  le serveur était éteint). Le journal du joueur l'indique (« Maintenance du serveur (3 h) : ce temps est sauté… »), et les logs aussi.
+  Garde-fou : si l'horloge du serveur est en retard sur la dernière sauvegarde (heure pas encore synchronisée au démarrage)
+  ou en avance de plus d'un an, l'API refuse de démarrer sans toucher aux parties, et Docker la relance jusqu'à ce que l'heure
+  soit bonne. Si la date affichée dans le log est pourtant la bonne : `POLITIGO_TRUST_CLOCK=1`.
 - **Logs** : `docker compose logs -f api`.
 - **Fermer les inscriptions** : `POLITIGO_INVITE=off` puis `docker compose up -d`. Les comptes existants continuent de jouer.
 - **Nouveau code généré** (après une fuite) : `docker compose exec api rm /data/invite.txt && docker compose restart api`
@@ -149,7 +154,28 @@ Si l'un de ses `location` utilise `add_header`, recopier la ligne HSTS dedans : 
 
 Avant d'ouvrir au groupe, vérifier les deux statuts judiciaires cités dans les dossiers (Marine Le Pen : appel ; Rachida Dati : procès).
 
-## 5. Tests
+## 5. Cycle de développement
+
+On ne pousse jamais directement sur `main` : tout passe par `dev`, et `main` ne reçoit que des fusions.
+
+1. **Travail sur `dev`** : chaque push lance le workflow `ci` (toute la batterie de tests, aucune publication).
+   Dependabot propose aussi ses mises à jour sur `dev`.
+2. **Mise en production** : pull request `dev` → `main`, fusionnée quand le statut `tests` est vert, en
+   « Create a merge commit » (pas de squash ni de rebase, sinon les historiques de `dev` et `main` divergent).
+   La fusion sur `main` relance les tests, puis publie les images `latest` et `sha-xxxxxxx`.
+3. **Version** : sur `main` à jour, `git tag -a v1.2.1 -m "…" && git push origin v1.2.1` → images `1.2.1`, puis la release GitHub.
+   La version est lue par `git describe` au build et affichée dans le jeu (Dossier → Compte) : « PolitiGo 1.2.1 »,
+   ou « 1.2.1-3-gabc1234 » pour un commit de `main` postérieur au tag. Un build local affiche « version de développement »
+   (`POLITIGO_VERSION=v1.2.1 docker compose build` pour la fixer).
+4. **Portainer** lit le compose sur `main` : un changement du compose n'arrive en production qu'après la fusion.
+   Mettre `POLITIGO_TAG` sur la nouvelle version, puis « Update the stack » en re-téléchargeant l'image.
+5. **Après une fusion**, remettre `dev` à niveau : `git switch dev && git merge main && git push`.
+
+Protection de `main` (Settings → Rules → Rulesets → New branch ruleset, cible « Include default branch », Active) :
+interdire la suppression et le force push, exiger une pull request (0 approbation, on est seul), exiger le statut
+`tests` (il n'apparaît dans la liste qu'après une première exécution du workflow `ci`), fusion autorisée : « Merge » seulement.
+
+## 6. Tests
 
 ```bash
 bash tests/run-server.sh                       # 89 tests : règles (dont l'équilibrage J15) + API, dans l'image Node de production
