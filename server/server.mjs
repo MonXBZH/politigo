@@ -1,10 +1,11 @@
 // PolitiGo game server: accounts, the authoritative game clock, the leaderboard and the live feed.
 // No dependency outside Node itself (node:http, node:sqlite, node:crypto).
 import http from "node:http";
+import net from "node:net";
 import crypto from "node:crypto";
 import {promisify} from "node:util";
 import {DatabaseSync} from "node:sqlite";
-import {readFileSync,writeFileSync} from "node:fs";
+import {readFileSync,writeFileSync,lstatSync,unlinkSync,chmodSync} from "node:fs";
 import {dirname,join} from "node:path";
 import * as R from "./rules.mjs";
 
@@ -50,22 +51,32 @@ R.setTimeZone(env.POLITIGO_TZ||"Europe/Paris");
 const db=new DatabaseSync(DB_PATH,{timeout:5000});
 db.exec(`PRAGMA journal_mode=WAL;PRAGMA foreign_keys=ON;
 CREATE TABLE IF NOT EXISTS players(id INTEGER PRIMARY KEY,name TEXT NOT NULL,name_key TEXT NOT NULL UNIQUE,pass TEXT NOT NULL,
- created INTEGER NOT NULL,state TEXT NOT NULL,score INTEGER NOT NULL DEFAULT 0,updated INTEGER NOT NULL);
+ created INTEGER NOT NULL,state TEXT NOT NULL,score INTEGER NOT NULL DEFAULT 0,updated INTEGER NOT NULL,seen_version TEXT);
 CREATE TABLE IF NOT EXISTS sessions(token_hash TEXT PRIMARY KEY,player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,expires INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS feed(id INTEGER PRIMARY KEY,t INTEGER NOT NULL,player TEXT NOT NULL,kind TEXT NOT NULL,text TEXT NOT NULL);`);
+// Databases from before the changelog lack the column: NULL means "has read nothing yet".
+// Another process starting on the same file at the same moment may have added it first: that is fine too.
+if(!db.prepare("PRAGMA table_info(players)").all().some(c=>c.name==="seen_version")){
+ try{db.exec("ALTER TABLE players ADD COLUMN seen_version TEXT");}catch(e){if(!/duplicate column/i.test(e.message))throw e;}
+}
+const RELEASE=R.releaseOf(VERSION);   // "1.3.0" for v1.3.0-3-gabc1234, null on a dev server
 const q={
- insertPlayer:db.prepare("INSERT INTO players(name,name_key,pass,created,state,score,updated) VALUES(?,?,?,?,?,?,?)"),
+ insertPlayer:db.prepare("INSERT INTO players(name,name_key,pass,created,state,score,updated,seen_version) VALUES(?,?,?,?,?,?,?,?)"),
  savePlayer:db.prepare("UPDATE players SET state=?,score=?,updated=? WHERE id=?"),
  playerByKey:db.prepare("SELECT id,pass FROM players WHERE name_key=?"),
  deletePlayer:db.prepare("DELETE FROM players WHERE id=?"),
- allPlayers:db.prepare("SELECT id,name,state FROM players"),
+ allPlayers:db.prepare("SELECT id,name,state,seen_version FROM players"),
  insertSession:db.prepare("INSERT INTO sessions(token_hash,player_id,expires) VALUES(?,?,?)"),
  session:db.prepare("SELECT player_id FROM sessions WHERE token_hash=? AND expires>?"),
  deleteSession:db.prepare("DELETE FROM sessions WHERE token_hash=?"),
  purgeSessions:db.prepare("DELETE FROM sessions WHERE expires<=?"),
  trimSessions:db.prepare("DELETE FROM sessions WHERE player_id=? AND token_hash NOT IN (SELECT token_hash FROM sessions WHERE player_id=? ORDER BY expires DESC LIMIT ?)"),
  countPlayers:db.prepare("SELECT COUNT(*) AS n FROM players"),
+ setSeen:db.prepare("UPDATE players SET seen_version=? WHERE id=?"),
  setKey:db.prepare("UPDATE players SET name_key=? WHERE id=?"),
+ setPass:db.prepare("UPDATE players SET pass=? WHERE id=?"),
+ deleteSessionsOf:db.prepare("DELETE FROM sessions WHERE player_id=?"),
+ listPlayers:db.prepare("SELECT name,created,updated FROM players ORDER BY name_key"),
  insertFeed:db.prepare("INSERT INTO feed(t,player,kind,text) VALUES(?,?,?,?)"),
  recentFeed:db.prepare("SELECT t,player,kind,text FROM feed ORDER BY id DESC LIMIT ?"),
  trimFeed:db.prepare("DELETE FROM feed WHERE id<=(SELECT id FROM feed ORDER BY id DESC LIMIT 1 OFFSET ?)"),
@@ -104,7 +115,7 @@ const players=new Map();
    // Ahead of real time on a real-time server: left as is (no replay), but said, since it should not happen.
    if(SPEED===1&&state.vclock-now>10*60e3)console.error(`player ${row.id}: game clock ${Math.round((state.vclock-now)/60e3)} min ahead of real time`);
   }catch(e){console.error(`player ${row.id}: clock not resynced`,e);state.lastReal=now;}
-  players.set(row.id,{id:row.id,name:row.name,state});
+  players.set(row.id,{id:row.id,name:row.name,state,seen:row.seen_version??null});
  }
  if(longest>=60000)console.log(`Clocks back on the real hour: ${resynced} player(s), up to ${Math.round(longest/60000)} min skipped, gauges untouched.`);
 }
@@ -216,9 +227,9 @@ function auth(req){
 }
 
 // ===================================================================== GAME: TICKS, FEED, LEADERBOARD
-const FEED_KINDS=new Set(["new","evolve","legend","death","stress","pong"]);
+const FEED_KINDS=new Set(["new","evolve","legend","death","stress","pong","mini"]);
 function newFeedEntries(p,jnBefore){
- const fresh=p.state.journal.filter(j=>j.n>jnBefore&&FEED_KINDS.has(j.k)&&(j.k!=="pong"||j.d?.score>=8)).reverse();
+ const fresh=p.state.journal.filter(j=>j.n>jnBefore&&FEED_KINDS.has(j.k)&&(j.k!=="pong"||j.d?.score>=8)&&(j.k!=="mini"||j.d?.great===true)).reverse();
  const out=[];
  for(const j of fresh){const e={t:Date.now(),player:p.name,kind:j.k,text:j.text};q.insertFeed.run(e.t,e.player,e.kind,e.text);out.push(e);}
  if(out.length)q.trimFeed.run(FEED_KEEP);
@@ -244,7 +255,7 @@ function publishBoard(force=false){
  const rows=boardRows(),json=JSON.stringify(rows);
  if(force||json!==lastBoard){lastBoard=json;broadcast("board",rows);}
 }
-function mePayload(p){return {name:p.name,state:p.state,speed:SPEED,tz:R.timeZone(),serverNow:Date.now(),version:VERSION};}
+function mePayload(p){return {name:p.name,state:p.state,speed:SPEED,tz:R.timeZone(),serverNow:Date.now(),version:VERSION,release:RELEASE,seenVersion:p.seen??null};}
 // The clock runs for everyone, connected or not: needs drain and deaths happen while the page is closed.
 setInterval(()=>{
  const now=Date.now();
@@ -285,8 +296,8 @@ async function route(req,res){
   if(q.playerByKey.get(nameKey(name)))throw new HttpError(409,"Ce pseudo est déjà pris.");
   if(q.countPlayers.get().n>=MAX_PLAYERS)throw new HttpError(403,"La partie est complète.");
   const now=Date.now(),state=R.newGame(b.camp,now);
-  const {lastInsertRowid}=q.insertPlayer.run(name,nameKey(name),pass,now,JSON.stringify(state),R.score(state),now);
-  const p={id:Number(lastInsertRowid),name,state};players.set(p.id,p);
+  const {lastInsertRowid}=q.insertPlayer.run(name,nameKey(name),pass,now,JSON.stringify(state),R.score(state),now,RELEASE);
+  const p={id:Number(lastInsertRowid),name,state,seen:RELEASE};players.set(p.id,p);   // a new player has nothing to catch up on
   // The account exists from here on: a failed announcement must not turn the sign-up into an error.
   try{const feed=newFeedEntries(p,0);if(feed.length)broadcast("feed",feed);publishBoard();}catch(e){console.error("register: announce failed",e);}
   return send(res,201,mePayload(p),{"Set-Cookie":startSession(p.id)});
@@ -300,8 +311,9 @@ async function route(req,res){
    throw new HttpError(429,"Trop de tentatives, réessaie dans un quart d'heure.");
   const row=q.playerByKey.get(key),pw=typeof b.password==="string"?b.password.slice(0,200):"";
   const okPw=await checkPassword(pw,row?row.pass:DUMMY_HASH);   // same cost whether the name exists or not
+  // A password reset that landed during the hashing pause wins: the old password no longer opens a session.
   const p=row&&players.get(row.id);
-  if(!p||!okPw)throw new HttpError(401,"Pseudo ou mot de passe incorrect.");
+  if(!p||!okPw||q.playerByKey.get(key)?.pass!==row.pass)throw new HttpError(401,"Pseudo ou mot de passe incorrect.");
   return send(res,200,mePayload(p),{"Set-Cookie":startSession(p.id)});
  }
  if(path==="/api/logout"&&method==="POST"){
@@ -312,6 +324,14 @@ async function route(req,res){
   const p=auth(req);
   update(p,S=>R.advance(S,Date.now(),SPEED,Math.random));
   return send(res,200,mePayload(p));
+ }
+ // The client never chooses the version: it only says "I read it", and the server records its own release.
+ if(path==="/api/changelog/seen"&&method==="POST"){
+  const p=auth(req);if(limited("seen:"+p.id,20,600e3))throw new HttpError(429,"Doucement : réessaie dans un instant.");
+  await readJson(req);
+  if(!players.has(p.id))throw new HttpError(401,"Connexion requise.");   // deleted while the body was arriving
+  if(RELEASE){q.setSeen.run(RELEASE,p.id);p.seen=RELEASE;}
+  return send(res,200,{ok:true,seenVersion:p.seen??null});
  }
  if(path==="/api/action"&&method==="POST"){
   const p=auth(req);if(limited("act:"+p.id,40,10e3))throw new HttpError(429,"Doucement : trop d'actions d'un coup.");
@@ -361,15 +381,103 @@ const server=http.createServer((req,res)=>{
  });
 });
 server.headersTimeout=15000;server.requestTimeout=15000;
+
+// ===================================================================== ADMIN SOCKET
+// In-container administration (node admin.mjs ...): a Unix socket, never a network port, so only someone who can
+// already run a command inside this container (docker exec, the Portainer console) reaches it. Mode 0600 keeps it
+// to the "node" user and root. The server does the work itself: no second writer on the database, no restart.
+const ADMIN_SOCKET=env.POLITIGO_ADMIN_SOCKET==="off"?"":(env.POLITIGO_ADMIN_SOCKET||"/tmp/politigo-admin.sock");
+const ADMIN_LIMIT=4096,ADMIN_TIMEOUT=5000;
+// Forgets the login counters a name has run into: the name itself, each address+name pair, and the addresses
+// that tried it (an address also locked out by other names is merely given a fresh quarter of an hour).
+function unlockName(key){
+ let n=0;const ips=new Set();
+ for(const k of [...buckets.keys()]){
+  if(k==="login-name:"+key){buckets.delete(k);n++;}
+  else if(k.startsWith("login-ipname:")&&k.endsWith("|"+key)){ips.add(k.slice(13,-key.length-1));buckets.delete(k);n++;}
+ }
+ for(const ip of ips)if(buckets.delete("login:"+ip))n++;
+ return n;
+}
+// Found the way a login finds it: case and accents do not matter.
+function adminPlayer(name){
+ const row=typeof name==="string"&&q.playerByKey.get(nameKey(cleanName(name).slice(0,40)));
+ const p=row&&players.get(row.id);
+ if(!p)throw new HttpError(404,`Joueur introuvable : ${typeof name==="string"?cleanName(name).slice(0,40):"?"}`);
+ return p;
+}
+async function adminCommand(b){
+ if(b.cmd==="list")return {players:q.listPlayers.all()};
+ if(b.cmd==="unlock"){
+  const p=adminPlayer(b.name),cleared=unlockName(nameKey(p.name));
+  console.log(`admin: login counters cleared for player ${p.id}`);
+  return {name:p.name,cleared};
+ }
+ if(b.cmd==="reset-password"){
+  const p=adminPlayer(b.name);
+  if(typeof b.password!=="string"||b.password.length<8||b.password.length>200)throw new HttpError(400,"Mot de passe : 8 à 200 caractères.");
+  const pass=await hashPassword(b.password);
+  if(!players.has(p.id))throw new HttpError(404,"Ce joueur a supprimé son compte entre-temps.");
+  // Every device is signed out: whoever knew the old password (or held a session) is out as well.
+  db.exec("BEGIN");
+  try{q.setPass.run(pass,p.id);q.deleteSessionsOf.run(p.id);db.exec("COMMIT");}catch(e){db.exec("ROLLBACK");throw e;}
+  for(const c of [...clients])if(c.playerId===p.id)closeStream(c);
+  const cleared=unlockName(nameKey(p.name));
+  console.log(`admin: password reset for player ${p.id}, sessions revoked`);
+  return {name:p.name,cleared};
+ }
+ throw new HttpError(400,"Commande inconnue.");
+}
+let admin=null;
+function startAdmin(){
+ if(!ADMIN_SOCKET)return;
+ // A socket left by a crash is replaced; anything else at that path is someone else's file and is not touched.
+ try{
+  let st=null;try{st=lstatSync(ADMIN_SOCKET);}catch(e){if(e.code!=="ENOENT")throw e;}
+  if(st&&!st.isSocket())throw new Error(`${ADMIN_SOCKET} exists and is not a socket, left untouched`);
+  if(st)unlinkSync(ADMIN_SOCKET);
+ }catch(e){console.error(`admin socket disabled: ${e.message}`);return;}
+ // Half-open: a client that sends its line then closes its side (echo ... | nc -U) still gets the answer.
+ admin=net.createServer({allowHalfOpen:true},sock=>{
+  // One small JSON line in, one line out, within a few seconds: a stuck or chatty client is simply cut off.
+  sock.setEncoding("utf8");sock.setTimeout(ADMIN_TIMEOUT,()=>sock.destroy());sock.on("error",()=>{});
+  let buf="",started=false,done=false;
+  const reply=o=>{if(!done){done=true;sock.end(JSON.stringify(o)+"\n");}};
+  sock.on("end",()=>{if(!started)reply({ok:false,error:"Requête incomplète."});});
+  sock.on("data",d=>{
+   // Bytes arriving while the command runs are ignored: one line runs one command, once.
+   if(started||done)return;
+   buf+=d;
+   const i=buf.indexOf("\n");
+   if(i<0?buf.length>ADMIN_LIMIT:i>ADMIN_LIMIT)return reply({ok:false,error:"Requête trop grosse."});
+   if(i<0)return;
+   started=true;
+   let b=null;try{b=JSON.parse(buf.slice(0,i));}catch{}
+   if(!b||typeof b!=="object"||Array.isArray(b))return reply({ok:false,error:"JSON invalide."});
+   adminCommand(b).then(r=>reply({ok:true,...r}),e=>{
+    if(!(e instanceof HttpError))console.error("admin:",e);
+    reply({ok:false,error:e instanceof HttpError?e.message:"Erreur interne."});
+   });
+  });
+ });
+ admin.maxConnections=4;
+ // Created 0600 from the start (no window where it is world-writable), then the usual mask is put back.
+ const mask=process.umask(0o177);
+ admin.on("error",e=>{process.umask(mask);console.error(`admin socket disabled: ${e.message}`);admin=null;});
+ admin.listen(ADMIN_SOCKET,()=>{process.umask(mask);try{chmodSync(ADMIN_SOCKET,0o600);}catch{}});
+}
+function stopAdmin(){if(!admin)return;try{admin.close();}catch{}try{unlinkSync(ADMIN_SOCKET);}catch{}admin=null;}
+startAdmin();
 // Logged on every start, so log rotation never loses it.
 if(INVITE_GENERATED)console.log(`Invite code: ${INVITE} (generated, kept in ${INVITE_FILE}; delete that file and restart for a new one)`);
 server.listen(PORT,()=>console.log(`PolitiGo API ${VERSION} on :${PORT} (speed x${SPEED}, ${players.size} players, registrations ${INVITE?"open with invite":"closed"})`));
 // A bug that escapes every handler is logged with its stack, then the container restarts the process cleanly.
 // Every clock is written as it stands before leaving, so a restart never sets anyone's game time back.
 function saveAll(){for(const p of players.values()){try{persist(p);}catch(e){console.error(`saving player ${p.id}:`,e);}}}
-for(const ev of ["unhandledRejection","uncaughtException"])process.on(ev,e=>{console.error(`${ev}:`,e);saveAll();try{db.close();}catch{}process.exit(1);});
+for(const ev of ["unhandledRejection","uncaughtException"])process.on(ev,e=>{console.error(`${ev}:`,e);saveAll();stopAdmin();try{db.close();}catch{}process.exit(1);});
 function shutdown(code){try{db.close();}catch(e){console.error("closing the database:",e);}process.exit(code);}
 for(const sig of ["SIGTERM","SIGINT"])process.on(sig,()=>{
+ stopAdmin();
  for(const c of [...clients])closeStream(c);
  saveAll();
  server.close(()=>shutdown(0));

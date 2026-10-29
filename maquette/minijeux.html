@@ -1,0 +1,614 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PolitiGo — mini-jeux (maquette)</title>
+<style>
+@font-face{font-family:Fredoka;src:url(../web/fonts/fredoka-latin.woff2) format("woff2");font-weight:300 700}
+@font-face{font-family:Inter;src:url(../web/fonts/inter-latin.woff2) format("woff2");font-weight:100 900}
+:root{--bg:#141b2a;--card:#1f2738;--ink:#fff6ea;--muted:#b9b2c7;--gold:#ffd59a;--left:#ef7c91;--right:#7fa8f8}
+*{box-sizing:border-box}
+body{margin:0;min-height:100dvh;background:var(--bg);color:var(--ink);font:15px/1.4 Inter,system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;gap:14px;padding:16px}
+h1{font:700 22px Fredoka,system-ui,sans-serif;margin:4px 0 0}
+#screen{width:min(466px,100%);aspect-ratio:1;border-radius:50%;background:#000;box-shadow:0 0 0 10px #2a3247,0 0 0 13px #0d121d,0 18px 40px #0008;touch-action:none;cursor:crosshair}
+.panel{width:min(466px,100%);display:grid;gap:10px}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+button,select{font:600 14px Inter,system-ui,sans-serif;border-radius:12px;border:0;padding:10px 14px;background:var(--card);color:var(--ink)}
+button{cursor:pointer}
+button.left{background:#583345}
+button.right{background:#2d4265}
+button:disabled{opacity:.45;cursor:default}
+select{flex:1;min-width:0}
+.help{color:var(--muted);font-size:13px;margin:0}
+kbd{background:#2a3247;border-radius:5px;padding:1px 5px;font-size:12px}
+</style>
+</head>
+<body>
+<h1>Mini-jeux · maquette</h1>
+<canvas id="screen" width="466" height="466" tabindex="0" aria-label="Écran du mini-jeu"></canvas>
+<div class="panel">
+ <div class="row">
+  <button class="left" id="goCortege">✊ Le Cortège (gauche)</button>
+  <button class="right" id="goEpervier">🛡️ L'Épervier (droite)</button>
+  <button id="goDebat">🎤 Débat chrono (camp du candidat)</button>
+ </div>
+ <div class="row">
+  <select id="cand" aria-label="Candidat"></select>
+  <button id="umbrella" disabled>☂ Parapluie</button>
+ </div>
+ <p class="help" id="help">Choisis un mini-jeu. Déplacement : doigt, souris ou flèches. <kbd>Espace</kbd> : parapluie (Cortège). <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> : réponses (Débat). Le Débat suit le camp du candidat choisi. <kbd>Échap</kbd> : abandonner.</p>
+</div>
+<script>
+"use strict";
+// ===================================================================== DATA (copied from web/rules.mjs for the mock-up)
+const people={
+ left:[
+  {name:"Olivier Faure",hair:"#44382f",style:"short",coat:"#364a6c",glasses:true,prop:"rose"},
+  {name:"Raphaël Glucksmann",hair:"#614637",style:"curly",coat:"#48546c",beard:true,prop:"europe"},
+  {name:"Marine Tondelier",hair:"#724630",style:"bob",coat:"#63a774",glasses:true,prop:"watering"},
+  {name:"François Ruffin",hair:"#624438",style:"short",coat:"#c16f48",beard:true,prop:"paper"},
+  {name:"Fabien Roussel",hair:"#777d82",style:"short",coat:"#445b7d",prop:"badge"},
+  {name:"Nathalie Arthaud",hair:"#6a4632",style:"bob",coat:"#b8323a",prop:"book"},
+  {name:"Sandrine Rousseau",hair:"#a67643",style:"bob",coat:"#478e72",glasses:true,prop:"bike"},
+  {name:"Philippe Poutou",hair:"#4a3a2e",style:"short",coat:"#6b7480",beard:true,prop:"badge"},
+  {name:"Mathilde Panot",hair:"#674331",style:"long",coat:"#a94964",prop:"water"},
+  {name:"Jean-Luc Mélenchon",hair:"#9b9b92",style:"receding",coat:"#303b54",tie:"#e15f66",prop:"hologram"}],
+ right:[
+  {name:"Valérie Pécresse",hair:"#bd935c",style:"bob",coat:"#e8e0ca"},
+  {name:"Rachida Dati",hair:"#342a30",style:"bob",coat:"#bb4553"},
+  {name:"Xavier Bertrand",hair:"#7a726a",style:"receding",coat:"#465574",tie:"#8badd2"},
+  {name:"Édouard Philippe",hair:"#554137",style:"short",coat:"#3b485f",glasses:true,beard:true},
+  {name:"Laurent Wauquiez",hair:"#b5b4ab",style:"short",coat:"#b24949"},
+  {name:"Bruno Retailleau",hair:"#6b655e",style:"receding",coat:"#354660",tie:"#6689b1"},
+  {name:"Éric Ciotti",hair:"#a19a91",style:"receding",coat:"#41495e",glasses:true},
+  {name:"Marion Maréchal",hair:"#c5a16b",style:"long",coat:"#d9d4c7"},
+  {name:"Jordan Bardella",hair:"#292731",style:"quiff",coat:"#33456b",tie:"#708bbd"},
+  {name:"Marine Le Pen",hair:"#d9bd76",style:"long",coat:"#3f577e"}]
+};
+for(const p of people.right)p.prop="tonfa";
+
+// ===================================================================== SPRITES (64x64 grid, same drawing as web/app.js)
+function rect(c,x,y,w,h,color){c.fillStyle=color;c.fillRect(Math.round(x),Math.round(y),w,h);}
+function sprite(c,p,t,state){
+ c.clearRect(0,0,64,64);
+ const phase=Math.floor(t/300)%4,sulk=state==="debate"&&phase>=2,stomp=state==="debate"&&!sulk;
+ const bob=state==="sleep"?0:state==="win"?[0,-3,-5,-2][phase]:state==="run"?[0,-2,0,-2][phase]:[0,-1,0,0][phase];
+ c.fillStyle="#0004";c.beginPath();c.ellipse(32,59,15,3,0,0,Math.PI*2);c.fill();
+ c.save();c.translate(state==="stress"?(phase%2?1:-1):0,bob);
+ const skin="#e9b38e",shade="#c78e76",ink="#202330",body=37;
+ if(p.style==="long")rect(c,21,15,23,26,p.hair);
+ rect(c,22,body,20,18,ink);rect(c,24,body,16,16,p.coat);
+ rect(c,29,body,6,9,"#f1e9da");if(p.tie)rect(c,31,body+2,2,11,p.tie);
+ const run=state==="run";
+ rect(c,24,54-(run&&phase%2===0?2:0),6,5,ink);rect(c,35,54-(run&&phase%2===1?2:0),6,5,ink);
+ const lift=state==="win"?5+phase%2*2:0;
+ rect(c,18,body+2,5,12,p.coat);rect(c,19,body+13,4,4,skin);rect(c,42,body+2-lift,5,12,p.coat);rect(c,43,body+13-lift,4,4,skin);
+ rect(c,29,31,7,8,shade);
+ const face=skin;
+ rect(c,22,13,21,20,ink);rect(c,23,14,19,18,face);rect(c,21,22,2,6,face);rect(c,42,22,2,6,face);
+ rect(c,23,12,19,5,p.hair);
+ if(p.style==="receding"){rect(c,27,12,11,4,face);rect(c,22,15,3,7,p.hair);rect(c,40,15,3,7,p.hair);}
+ if(p.style==="short")rect(c,22,15,3,5,p.hair);
+ if(p.style==="quiff"){rect(c,25,9,15,5,p.hair);rect(c,22,13,4,8,p.hair);}
+ if(p.style==="bob"||p.style==="long"){rect(c,21,16,4,18,p.hair);rect(c,40,16,4,18,p.hair);rect(c,25,13,9,5,p.hair);}
+ if(p.style==="curly"){for(let i=0;i<5;i++)rect(c,21+i*4,11-(i%2)*2,5,6,p.hair);rect(c,21,16,3,7,p.hair);rect(c,41,16,3,7,p.hair);}
+ const blink=Math.floor(t/180)%19===0;
+ if(state==="stress"){rect(c,26,21,4,4,"#fff");rect(c,35,21,4,4,"#fff");rect(c,27,22,2,2,ink);rect(c,36,22,2,2,ink);}
+ else{rect(c,27,22,2,blink?1:3,ink);rect(c,36,22,2,blink?1:3,ink);}
+ rect(c,32,25,2,3,shade);
+ if(p.glasses){c.strokeStyle=ink;c.lineWidth=1;c.strokeRect(25.5,20.5,6,5);c.strokeRect(34.5,20.5,6,5);rect(c,32,22,2,1,ink);}
+ if(state==="stress"){for(let i=0;i<4;i++)rect(c,29+i*2,29+(i+phase)%2,2,1,ink);}
+ else rect(c,30,29,6,1,ink);
+ if(p.beard){rect(c,25,30,15,3,p.hair);rect(c,29,29,7,2,face);rect(c,30,31,5,1,ink);}
+ drawProp(c,p.prop,46,43-lift,state==="win");
+ c.restore();
+ if(state==="stress"){rect(c,18,14+phase*2,2,3,"#8fd0ff");rect(c,45,17+(phase+2)%4*2,2,3,"#8fd0ff");}
+}
+function drawProp(c,type,x,y,swing){
+ const k="#202330",paper="#f2e8cd";
+ switch(type){
+ case"tonfa":if(swing){rect(c,x-2,y-14,14,3,k);rect(c,x+1,y-16,2,7,k);}else{rect(c,x,y-12,3,17,k);rect(c,x-3,y-6,4,2,k);}break;
+ case"watering":rect(c,x-4,y-7,9,9,"#81b5a3");rect(c,x+5,y-8,5,3,"#81b5a3");rect(c,x-3,y-11,6,2,"#81b5a3");break;
+ case"water":rect(c,x-2,y-12,5,3,paper);rect(c,x-4,y-9,10,12,"#9bcdda");rect(c,x-2,y-4,6,5,"#559dd3");break;
+ case"hologram":rect(c,x-5,y+1,14,3,"#6b8ebd");rect(c,x,y-12,4,4,"#8ff3ef");rect(c,x-2,y-7,8,7,"#76bfe2");break;
+ case"rose":rect(c,x,y-7,1,12,"#6bac73");rect(c,x-3,y-12,7,6,"#ef6c89");rect(c,x-1,y-13,3,8,"#bc3f68");break;
+ case"paper":case"book":rect(c,x-2,y-10,11,14,type==="book"?"#bd8959":paper);for(let i=0;i<3;i++)rect(c,x,y-7+i*3,6,1,"#685a67");break;
+ case"badge":rect(c,x-4,y-5,7,7,"#da5d6e");rect(c,x-2,y-3,3,3,"#f2d879");break;
+ case"bike":c.strokeStyle="#99c5ba";c.lineWidth=1;for(const dx of [-5,6]){c.beginPath();c.arc(x+dx,y+4,4,0,Math.PI*2);c.stroke();}break;
+ case"europe":rect(c,x-4,y-11,15,13,"#4873bb");for(let i=0;i<6;i++){const a=i*Math.PI/3;rect(c,x+3+Math.cos(a)*4,y-5+Math.sin(a)*4,1,1,"#f8d476");}break;
+ case"sign":rect(c,x+1,y-8,2,14,"#8a6a48");rect(c,x-6,y-20,16,12,paper);rect(c,x-4,y-17,12,2,"#c23b4a");rect(c,x-4,y-13,8,2,"#685a67");break;
+ }
+}
+// A CRS: helmet, visor, padded uniform, shield optional, LBD or tonfa in hand.
+function crs(c,t,state,weapon){
+ c.clearRect(0,0,64,64);
+ const phase=Math.floor(t/300)%4,ink="#151a24",blue="#2c3a52",pad="#3e5170",run=state==="run";
+ c.fillStyle="#0004";c.beginPath();c.ellipse(32,59,15,3,0,0,Math.PI*2);c.fill();
+ c.save();c.translate(0,run?[0,-2,0,-2][phase]:0);
+ rect(c,24,54-(run&&phase%2===0?2:0),7,5,ink);rect(c,34,54-(run&&phase%2===1?2:0),7,5,ink);
+ rect(c,21,36,22,19,ink);rect(c,23,37,18,17,blue);rect(c,24,39,7,6,pad);rect(c,33,39,7,6,pad);rect(c,23,49,18,2,"#1d2638");
+ rect(c,17,38,5,13,blue);rect(c,42,38,5,13,blue);rect(c,17,38,5,4,pad);rect(c,42,38,5,4,pad);
+ rect(c,20,12,24,23,ink);rect(c,21,13,22,21,"#1f2a3d");rect(c,22,14,20,4,"#33425e");
+ rect(c,23,20,18,11,"#e9b38e");rect(c,22,19,20,8,"#8db3d6aa");rect(c,22,19,20,1,"#d6e6f5");
+ rect(c,27,24,2,2,ink);rect(c,35,24,2,2,ink);rect(c,30,29,5,1,ink);
+ if(weapon==="lbd"){rect(c,40,44,12,4,"#3a3a3a");rect(c,50,44,3,4,"#f2a03d");rect(c,43,48,3,4,"#3a3a3a");}
+ if(weapon==="tonfa"){if(state==="win"){rect(c,40,30,14,3,ink);rect(c,44,28,2,7,ink);}else{rect(c,44,40,3,16,ink);rect(c,41,45,4,2,ink);}}
+ if(weapon==="shield"){c.fillStyle="#bcd6ee66";c.fillRect(13,32,22,26);c.strokeStyle="#e5f0fa";c.lineWidth=1;c.strokeRect(13.5,32.5,21,25);rect(c,17,36,14,2,"#f5f9fd88");}
+ c.restore();
+}
+// A protester; kind sets the outfit: plain, gilet, bloc, retraite, presse.
+const KINDS={
+ plain:{coat:"#c75c5c",hair:"#4b3628",speed:1},
+ gilet:{coat:"#e8d23a",hair:"#3b2b22",speed:1.25},
+ bloc:{coat:"#1b1b22",hair:"#1b1b22",speed:1.3},
+ retraite:{coat:"#b99f7b",hair:"#d8d8d2",speed:.7},
+ presse:{coat:"#3b6fd1",hair:"#6a4a32",speed:1},
+ infiltre:{coat:"#c75c5c",hair:"#4b3628",speed:1}
+};
+function protester(c,t,kind,state,tint){
+ c.clearRect(0,0,64,64);
+ const k=KINDS[kind],phase=Math.floor(t/220)%4,ink="#202330",skin=tint||"#e9b38e",run=state==="run",caught=state==="caught";
+ c.fillStyle="#0004";c.beginPath();c.ellipse(32,59,13,3,0,0,Math.PI*2);c.fill();
+ c.save();c.translate(0,run?[0,-2,0,-2][phase]:0);
+ rect(c,25,54-(run&&phase%2===0?2:0),6,5,ink);rect(c,34,54-(run&&phase%2===1?2:0),6,5,ink);
+ rect(c,23,38,18,17,ink);rect(c,24,39,16,15,k.coat);
+ if(kind==="gilet"){rect(c,24,46,16,2,"#d8dde2");rect(c,24,50,16,2,"#d8dde2");}
+ if(kind==="presse"){rect(c,25,42,14,5,"#f4f6fb");rect(c,27,44,10,1,"#3b6fd1");}
+ if(caught){rect(c,22,42,4,8,k.coat);rect(c,38,42,4,8,k.coat);rect(c,28,50,8,3,"#9aa3b0");}
+ else{rect(c,19,40,5,11,k.coat);rect(c,40,34,5,11,k.coat);rect(c,41,31,4,4,skin);}
+ rect(c,23,16,19,20,ink);rect(c,24,17,17,18,skin);
+ rect(c,24,15,17,5,k.hair);rect(c,23,17,3,6,k.hair);rect(c,39,17,3,6,k.hair);
+ if(kind==="bloc"){rect(c,23,15,19,21,"#1b1b22");rect(c,26,22,13,5,skin);}
+ if(kind==="retraite"){c.strokeStyle=ink;c.lineWidth=1;c.strokeRect(26.5,23.5,5,4);c.strokeRect(33.5,23.5,5,4);}
+ rect(c,28,24,2,2,ink);rect(c,35,24,2,2,ink);
+ rect(c,30,30,5,caught?1:2,caught?ink:"#783f49");
+ if(!caught&&kind!=="presse"){rect(c,42,8,2,24,"#8a6a48");rect(c,34,4,18,11,"#f2e8cd");rect(c,36,7,14,2,"#c23b4a");rect(c,36,11,9,2,"#685a67");}
+ if(kind==="presse"&&!caught){rect(c,40,34,9,7,"#2a2a2a");rect(c,43,36,4,3,"#8fd0ff");}
+ c.restore();
+}
+const cv=document.getElementById("screen"),ctx=cv.getContext("2d"),scratch=document.createElement("canvas");scratch.width=scratch.height=64;
+const sctx=scratch.getContext("2d");
+function blit(size,cx,ground,flip){
+ ctx.imageSmoothingEnabled=false;
+ if(flip){ctx.save();ctx.translate(cx,0);ctx.scale(-1,1);ctx.drawImage(scratch,-size/2,ground-size,size,size);ctx.restore();}
+ else ctx.drawImage(scratch,cx-size/2,ground-size,size,size);
+}
+const drawCand=(p,state,size,cx,ground,t)=>{sprite(sctx,p,t,state);blit(size,cx,ground);};
+const drawCrs=(state,weapon,size,cx,ground,t,flip)=>{crs(sctx,t,state,weapon);blit(size,cx,ground,flip);};
+const drawProt=(kind,state,size,cx,ground,t,flip)=>{protester(sctx,t,kind,state);blit(size,cx,ground,flip);};
+
+// ===================================================================== SHARED
+const W=466,C=233,R=222;
+const rnd=(a,b)=>a+Math.random()*(b-a),clamp=(v,a,b)=>Math.max(a,Math.min(b,v)),dist=(a,b,c,d)=>Math.hypot(a-c,b-d);
+// Keeps a point inside the round panel, with a margin.
+function inCircle(x,y,m){const dx=x-C,dy=y-C,d=Math.hypot(dx,dy),max=R-m;return d<=max?[x,y]:[C+dx/d*max,C+dy/d*max];}
+function text(s,x,y,font,color,align="center"){ctx.font=font;ctx.fillStyle=color;ctx.textAlign=align;ctx.fillText(s,x,y);}
+function outlined(s,x,y,size,color){ctx.font=`700 ${size}px Fredoka, system-ui, sans-serif`;ctx.textAlign="center";ctx.lineWidth=4;ctx.strokeStyle="#141b2a";ctx.strokeText(s,x,y);ctx.fillStyle=color;ctx.fillText(s,x,y);}
+function heart(x,y,on){ctx.fillStyle=on?"#ef6c89":"#ffffff30";const s=[[1,0],[2,0],[4,0],[5,0],[0,1],[1,1],[2,1],[3,1],[4,1],[5,1],[6,1],[0,2],[1,2],[2,2],[3,2],[4,2],[5,2],[6,2],[1,3],[2,3],[3,3],[4,3],[5,3],[2,4],[3,4],[4,4],[3,5]];for(const [a,b] of s)ctx.fillRect(x+a*2,y+b*2,2,2);}
+let game=null,pointer=null;const keys={};
+const floaters=[];let tick=0;
+function floater(s,x,y,color){floaters.push({s,x,y,color,t:tick});}
+function drawFloaters(now){
+ for(let i=floaters.length-1;i>=0;i--){const f=floaters[i],a=(now-f.t)/900;if(a>=1){floaters.splice(i,1);continue;}
+  ctx.globalAlpha=1-a;outlined(f.s,f.x,f.y-a*28,15,f.color);ctx.globalAlpha=1;}
+}
+function steer(g,dt,speed){
+ let vx=(keys.ArrowRight?1:0)-(keys.ArrowLeft?1:0),vy=(keys.ArrowDown?1:0)-(keys.ArrowUp?1:0);
+ if(vx||vy){const n=Math.hypot(vx,vy);g.x+=vx/n*speed*dt;g.y+=vy/n*speed*dt;g.tx=null;}
+ else if(pointer){const dx=pointer[0]-g.x,dy=pointer[1]-g.y,d=Math.hypot(dx,dy),step=Math.min(d,speed*dt);if(d>1){g.x+=dx/d*step;g.y+=dy/d*step;}}
+}
+function endPanel(title,lines,color){
+ ctx.fillStyle="#0b0f19cc";ctx.fillRect(0,0,W,W);
+ outlined(title,C,170,26,color);
+ lines.forEach((l,i)=>text(l,C,214+i*26,"600 15px Inter, system-ui, sans-serif",i===lines.length-1?"#ffd59a":"#fff6ea"));
+ text("Touche l'écran pour revenir au menu",C,360,"500 12px Inter, system-ui, sans-serif","#b9b2c7");
+}
+
+// ===================================================================== GAME 1 — LE CORTÈGE (left: dodge LBD and tear gas, scrolling street)
+const CG={ms:30000,lives:3,speed:210,scroll:70};
+function startCortege(p){
+ const now=performance.now();
+ game={mode:"cortege",p,t0:now,last:now,x:C,y:380,hp:CG.lives,inv:-Infinity,tears:0,tracts:0,blocked:0,scroll:0,shots:[],grenades:[],clouds:[],items:[],nextItem:now+800,
+  crs:[150,233,316].map((x,i)=>({x,dir:i%2?1:-1,cool:1.2+i*.6,aim:null})),
+  crowd:[{dx:-46,dy:34,kind:"plain"},{dx:44,dy:40,kind:"gilet"},{dx:-12,dy:62,kind:"retraite"},{dx:26,dy:74,kind:"plain"}].map(m=>({...m,x:C+m.dx,y:380+m.dy})),
+  umbrella:-Infinity,umbrellaCd:-Infinity,endT:0,why:""};
+}
+function stepCortege(g,now,dt){
+ tick=now;
+ const prog=Math.min(1,(now-g.t0)/CG.ms),slow=g.clouds.some(c=>dist(c.x,c.y,g.x,g.y-24)<c.r)?.5:1;
+ if(!g.endT&&(prog>=1||g.hp<=0)){g.endT=now;g.why=g.hp<=0?"down":"nation";}
+ if(g.endT)return;
+ g.scroll+=CG.scroll*dt;
+ steer(g,dt,CG.speed*slow);
+ g.y=clamp(g.y,250,420);[g.x,g.y]=inCircle(g.x,g.y,26);
+ for(const m of g.crowd){m.x+=(g.x+m.dx-m.x)*Math.min(1,dt*2.2);m.y+=(g.y+m.dy-m.y)*Math.min(1,dt*2.2);}
+ // CRS line: wander, telegraph an LBD shot (red line) or lob a tear-gas canister.
+ for(const c of g.crs){
+  c.x+=c.dir*30*dt;if(c.x<110||c.x>356)c.dir*=-1;
+  if(c.aim){if(now>=c.aim.at){const dx=c.aim.x-c.x,dy=c.aim.y-128,d=Math.hypot(dx,dy),v=280+150*prog;g.shots.push({x:c.x+10,y:128,vx:dx/d*v,vy:dy/d*v});c.aim=null;c.kick=now;}continue;}
+  c.cool-=dt;if(c.cool>0)continue;
+  c.cool=rnd(1.7,2.9)*(1-.45*prog);
+  if(Math.random()<.58)c.aim={x:g.x+rnd(-14,14),y:g.y-26,at:now+620-200*prog};
+  else g.grenades.push({x0:c.x,y0:122,x1:clamp(g.x+rnd(-70,70),90,376),y1:clamp(g.y-20+rnd(-50,40),220,410),t0:now,ms:1100});
+ }
+ for(let i=g.shots.length-1;i>=0;i--){const s=g.shots[i];s.x+=s.vx*dt;s.y+=s.vy*dt;
+  if(s.y>W+10||s.x<-10||s.x>W+10){g.shots.splice(i,1);continue;}
+  if(dist(s.x,s.y,g.x,g.y-30)<(g.umbrella>now?34:17)){g.shots.splice(i,1);
+   if(g.umbrella>now){g.blocked++;floater("Ploc !",g.x,g.y-70,"#8fd0ff");}
+   else if(now>g.inv){g.hp--;g.inv=now+1200;g.hitT=now;floater("Aïe ! LBD",g.x,g.y-70,"#ff9aa5");}}
+ }
+ for(let i=g.grenades.length-1;i>=0;i--){const n=g.grenades[i];if(now-n.t0>=n.ms){g.clouds.push({x:n.x1,y:n.y1,r:0,max:rnd(48,62),born:now,life:4200});g.grenades.splice(i,1);}}
+ for(let i=g.clouds.length-1;i>=0;i--){const c=g.clouds[i],age=now-c.born;if(age>c.life){g.clouds.splice(i,1);continue;}c.y+=CG.scroll*.6*dt;c.r=c.max*Math.min(1,age/600)*(age>c.life-800?(c.life-age)/800:1);}
+ if(slow<1&&now>g.inv){g.tears+=55*dt;if(g.tears>=100){g.tears=0;g.hp--;g.inv=now+1200;g.hitT=now;floater("Les yeux qui piquent !",g.x,g.y-70,"#cfe9ff");}}
+ else g.tears=Math.max(0,g.tears-18*dt);
+ if(now>=g.nextItem){g.nextItem=now+rnd(700,1300);const r=Math.random();g.items.push({x:rnd(110,356),y:150,kind:r<.74?"tract":r<.9?"serum":"merguez"});}
+ for(let i=g.items.length-1;i>=0;i--){const it=g.items[i];it.y+=CG.scroll*dt;if(it.y>440){g.items.splice(i,1);continue;}
+  if(dist(it.x,it.y,g.x,g.y-24)<28){g.items.splice(i,1);
+   if(it.kind==="tract"){g.tracts++;floater("+1 tract",it.x,it.y-10,"#ffd59a");}
+   if(it.kind==="serum"){g.tears=0;floater("Sérum phy !",it.x,it.y-10,"#8fd0ff");}
+   if(it.kind==="merguez"){if(g.hp<CG.lives)g.hp++;floater("Merguez de manif ! ♥",it.x,it.y-10,"#ef6c89");}}}
+}
+function cortegeScore(g){const prog=Math.min(1,((g.endT||performance.now())-g.t0)/CG.ms);return Math.round(prog*60)+g.tracts*5+g.blocked*2;}
+function drawCortege(g,now){
+ // The street: asphalt, white dashes and pavements that scroll down, Haussmann façades on both sides.
+ ctx.fillStyle="#4a4f5c";ctx.fillRect(0,0,W,W);
+ const off=g.scroll%60;
+ ctx.fillStyle="#8c8f99";ctx.fillRect(0,0,92,W);ctx.fillRect(374,0,92,W);
+ ctx.fillStyle="#7a7d87";for(let y=-60+off;y<W;y+=30){ctx.fillRect(0,y,92,2);ctx.fillRect(374,y,92,2);}
+ ctx.fillStyle="#e3d5b8";ctx.fillRect(0,0,52,W);ctx.fillRect(414,0,52,W);
+ ctx.fillStyle="#5d6c86";for(let y=-120+(g.scroll%120);y<W;y+=40){ctx.fillRect(18,y,14,22);ctx.fillRect(434,y,14,22);}
+ ctx.fillStyle="#d9d3c6";for(let y=-60+off;y<W;y+=60)ctx.fillRect(231,y,4,30);
+ ctx.fillStyle="#5a5f6c";for(let i=0;i<10;i++){const y=(i*97+g.scroll)%520-30;ctx.fillRect(110+(i*71)%240,y,8,5);}
+ // Van and CRS line at the top.
+ ctx.fillStyle="#e8edf3";ctx.fillRect(160,40,146,58);ctx.fillStyle="#2f4c8f";ctx.fillRect(160,70,146,8);ctx.fillStyle="#9fb6d2";ctx.fillRect(176,48,34,16);ctx.fillRect(256,48,34,16);
+ ctx.fillStyle=Math.floor(now/250)%2?"#3c7cf0":"#8fb6ff";ctx.fillRect(220,34,26,7);
+ for(const c of g.crs)drawCrs("idle","lbd",62,c.x,140,now+(c.x|0),false);
+ for(const c of g.crs)if(c.aim){ctx.strokeStyle=`rgba(255,70,70,${.35+.4*Math.sin(now/50)**2})`;ctx.setLineDash([6,6]);ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(c.x+18,124);ctx.lineTo(c.aim.x,c.aim.y);ctx.stroke();ctx.setLineDash([]);}
+ // Items on the road.
+ for(const it of g.items){
+  if(it.kind==="tract"){ctx.fillStyle="#f2e8cd";ctx.fillRect(it.x-8,it.y-10,16,20);ctx.fillStyle="#c23b4a";ctx.fillRect(it.x-6,it.y-7,12,3);ctx.fillStyle="#685a67";ctx.fillRect(it.x-6,it.y-1,9,2);ctx.fillRect(it.x-6,it.y+3,11,2);}
+  if(it.kind==="serum"){ctx.fillStyle="#e9f3fb";ctx.fillRect(it.x-4,it.y-11,8,18);ctx.fillStyle="#6fb4e8";ctx.fillRect(it.x-4,it.y-2,8,5);ctx.fillStyle="#bcd3e6";ctx.fillRect(it.x-2,it.y-14,4,3);}
+  if(it.kind==="merguez"){ctx.fillStyle="#e8c27a";ctx.fillRect(it.x-12,it.y-5,24,10);ctx.fillStyle="#a8402e";ctx.fillRect(it.x-10,it.y-3,20,5);}
+ }
+ // Gas canisters in flight, then clouds.
+ for(const n of g.grenades){const a=Math.min(1,((g.endT||now)-n.t0)/n.ms),x=n.x0+(n.x1-n.x0)*a,y=n.y0+(n.y1-n.y0)*a-Math.sin(a*Math.PI)*70;
+  ctx.fillStyle="#dfe6f088";for(let k=1;k<5;k++){const b=Math.max(0,a-k*.05);ctx.beginPath();ctx.arc(n.x0+(n.x1-n.x0)*b,n.y0+(n.y1-n.y0)*b-Math.sin(b*Math.PI)*70,3+k,0,7);ctx.fill();}
+  ctx.save();ctx.translate(x,y);ctx.rotate(now/90);ctx.fillStyle="#7d8a6c";ctx.fillRect(-4,-7,8,14);ctx.fillStyle="#c9c46a";ctx.fillRect(-4,-7,8,3);ctx.restore();}
+ // The candidate and the crowd behind.
+ for(const m of [...g.crowd].sort((a,b)=>a.y-b.y))drawProt(m.kind,"run",46,m.x,m.y,now+m.dx*13,false);
+ const blinkOff=now<g.inv&&Math.floor(now/90)%2;
+ if(!blinkOff)drawCand(g.p,g.hitT&&now-g.hitT<700?"stress":g.endT&&g.why==="nation"?"win":"run",72,g.x,g.y,now);
+ if(g.umbrella>now){ctx.fillStyle="#e1576b";ctx.beginPath();ctx.arc(g.x,g.y-64,34,Math.PI,2*Math.PI);ctx.fill();ctx.fillStyle="#b8324a";for(let k=-2;k<=2;k++){ctx.beginPath();ctx.moveTo(g.x,g.y-98);ctx.lineTo(g.x+k*17-5,g.y-64);ctx.lineTo(g.x+k*17+5,g.y-64);ctx.fill();}ctx.fillStyle="#202330";ctx.fillRect(g.x-1,g.y-64,2,22);}
+ for(const c of g.clouds){for(let k=0;k<5;k++){const a=k*1.3+now/1400,rr=c.r*(.55+.12*k%3);const gr=ctx.createRadialGradient(c.x+Math.cos(a)*c.r*.35,c.y+Math.sin(a)*c.r*.25,0,c.x+Math.cos(a)*c.r*.35,c.y+Math.sin(a)*c.r*.25,rr);gr.addColorStop(0,"#f2f5f0cc");gr.addColorStop(1,"#f2f5f000");ctx.fillStyle=gr;ctx.beginPath();ctx.arc(c.x+Math.cos(a)*c.r*.35,c.y+Math.sin(a)*c.r*.25,rr,0,7);ctx.fill();}}
+ for(const s of g.shots){ctx.fillStyle="#00000040";ctx.beginPath();ctx.arc(s.x-s.vx*.03,s.y-s.vy*.03,4,0,7);ctx.fill();ctx.fillStyle="#2a2a2a";ctx.beginPath();ctx.arc(s.x,s.y,6,0,7);ctx.fill();ctx.fillStyle="#9aa0aa";ctx.fillRect(s.x-3,s.y-3,2,2);}
+ if(g.tears>45){ctx.fillStyle=`rgba(150,200,255,${(g.tears-45)/240})`;ctx.fillRect(0,0,W,W);}
+ if(g.tears>0){ctx.fillStyle="#141b2acc";ctx.fillRect(g.x-26,g.y+6,52,6);ctx.fillStyle="#8fd0ff";ctx.fillRect(g.x-25,g.y+7,50*g.tears/100,4);}
+ // HUD: route République → Nation, lives, tracts.
+ const prog=Math.min(1,((g.endT||now)-g.t0)/CG.ms);
+ ctx.fillStyle="#141b2ad9";ctx.beginPath();ctx.roundRect(126,160,214,44,12);ctx.fill();
+ text("République",140,177,"700 10px Inter, sans-serif","#fff6ea","left");text("Nation",326,177,"700 10px Inter, sans-serif","#fff6ea","right");
+ ctx.fillStyle="#ffffff25";ctx.fillRect(140,184,186,5);ctx.fillStyle="#ef7c91";ctx.fillRect(140,184,186*prog,5);ctx.fillStyle="#fff6ea";ctx.fillRect(137+186*prog,181,6,11);
+ for(let i=0;i<CG.lives;i++)heart(140+i*17,193,i<g.hp);
+ text(`Tracts ${g.tracts}`,326,201,"700 11px Inter, sans-serif","#ffd59a","right");
+ if(!g.endT&&g.umbrellaCd>now){text(`☂ ${Math.ceil((g.umbrellaCd-now)/1000)} s`,233,201,"700 11px Inter, sans-serif","#b9b2c7");}
+ else if(!g.endT)text("☂ prêt",233,201,"700 11px Inter, sans-serif","#8fd0ff");
+ if(now-g.t0<2200)outlined("Tiens le cortège jusqu'à Nation !",C,250,18,"#fff6ea");
+ drawFloaters(now);
+ if(g.endT&&now-g.endT>600){
+  const score=cortegeScore(g);
+  endPanel(g.why==="nation"?"Arrivée à Nation !":"Évacué par les street medics",
+   [`${g.tracts} tract${g.tracts>1?"s":""} ramassé${g.tracts>1?"s":""} · ${g.blocked} tir${g.blocked>1?"s":""} paré${g.blocked>1?"s":""} au parapluie`,
+    `Parcours : ${Math.round(prog*100)} %`,
+    `+${Math.min(20,Math.round(score/5))} XP de terrain (score ${score})`],g.why==="nation"?"#ffd59a":"#ff9aa5");
+ }
+}
+function useUmbrella(){const g=game;if(!g||g.mode!=="cortege"||g.endT)return;const now=performance.now();if(now<g.umbrellaCd)return;g.umbrella=now+1300;g.umbrellaCd=now+6000;}
+
+// ===================================================================== GAME 2 — L'ÉPERVIER (right: the candidate and a CRS catch protesters crossing the square)
+const EP={ms:35000,speed:225,ally:95,catchR:30,zoneL:118,zoneR:348,lives:3,flight:950,lead:.75,fireMs:2000,fireR:34};
+// Who throws what: black blocs favour molotovs, the others mostly paving stones; pensioners and journalists never throw.
+const THROW={bloc:.8,plain:.2,gilet:.2};
+// An undercover officer dresses like a plain protester or a yellow vest; only the aura and the blinking give them away.
+function spawnProt(side,y){const r=Math.random(),kind=r<.34?"plain":r<.52?"gilet":r<.67?"bloc":r<.80?"retraite":r<.90?"presse":"infiltre";
+ return{x:side?EP.zoneR+rnd(18,48):EP.zoneL-rnd(18,48),y,kind,look:kind==="infiltre"?(Math.random()<.5?"plain":"gilet"):kind,state:"wait",side,zig:rnd(0,6),vy:0};}
+// Who costs points when caught, and what the player reads.
+const TRAP={presse:{pts:2,label:"Carte de presse !"},infiltre:{pts:3,label:"C'était un collègue infiltré !"}};
+function startEpervier(p){
+ const now=performance.now();
+ game={mode:"epervier",p,t0:now,last:now,x:C,y:250,hp:EP.lives,inv:-Infinity,hitT:0,throws:[],fires:[],rubble:[],score:0,caught:0,press:0,cops:0,wave:0,waveT:now+1600,side:0,prot:[],ally:{x:C+30,y:320,hitT:0},swingT:0,endT:0,why:""};
+ for(let i=0;i<5;i++)game.prot.push(spawnProt(0,150+i*50));
+}
+function launchWave(g,now){
+ g.wave++;g.shoutT=now;
+ const extra=Math.min(4,1+Math.floor(g.wave/2));
+ for(let i=0;i<extra;i++)g.prot.push(spawnProt(g.side,rnd(140,350)));
+ for(const m of g.prot)if(m.state==="wait"||m.state==="safe"){m.state="run";m.side=g.side;m.delay=now+rnd(0,700);m.speed=rnd(62,96)*KINDS[m.kind].speed*(1+g.wave*.07);m.throwAt=now+rnd(600,2400)/(1+g.wave*.15);}
+}
+function throwAt(g,m,now,dP,minMs,maxMs){
+ if(!(m.kind in THROW)||now<m.throwAt||dP<60||dP>320)return;
+ m.throwAt=now+rnd(minMs,maxMs)/(1+g.wave*.12);
+ // Aims where the player is heading (part of the way), so running in a straight line is not enough.
+ const ms=EP.flight*(.8+dP/800),lead=EP.lead*ms/1000;
+ const [x1,y1]=inCircle(g.x+g.vx*lead+rnd(-18,18),g.y+g.vy*lead+rnd(-12,12),24);
+ g.throws.push({x0:m.x,y0:m.y-40,x1,y1,t0:now,ms,type:Math.random()<THROW[m.kind]?"molotov":"pave"});
+}
+function stepEpervier(g,now,dt){
+ tick=now;
+ if(!g.endT&&now-g.t0>=EP.ms){g.endT=now;g.why="time";}
+ if(g.endT)return;
+ const px=g.x,py=g.y;
+ steer(g,dt,EP.speed);[g.x,g.y]=inCircle(g.x,g.y,24);g.y=clamp(g.y,130,430);
+ g.vx=(g.x-px)/dt;g.vy=(g.y-py)/dt;
+ if(g.waveT&&now>=g.waveT){g.waveT=0;launchWave(g,now);}
+ const runners=g.prot.filter(m=>m.state==="run");
+ // The CRS partner chases the nearest runner, slower than the player, and skips journalists.
+ const tgt=runners.filter(m=>!TRAP[m.kind]).sort((a,b)=>dist(a.x,a.y,g.ally.x,g.ally.y)-dist(b.x,b.y,g.ally.x,g.ally.y))[0];
+ if(tgt){const dx=tgt.x-g.ally.x,dy=tgt.y-g.ally.y,d=Math.hypot(dx,dy);if(d>1){g.ally.x+=dx/d*EP.ally*dt;g.ally.y+=dy/d*EP.ally*dt;}g.ally.flip=dx<0;}
+ for(const m of g.prot){
+  if(m.state==="run"){
+   if(now<m.delay)continue;
+   const dir=m.side?-1:1;let vy=0;
+   if(m.kind==="bloc")vy=Math.sin(now/260+m.zig)*90;
+   const dP=dist(m.x,m.y,g.x,g.y);if(dP<95&&!TRAP[m.kind])vy+=(m.y<g.y?-1:1)*70*(1-dP/95)*2;
+   m.x+=dir*m.speed*dt;m.y=clamp(m.y+vy*dt,130,400);[m.x,m.y]=inCircle(m.x,m.y,22);
+   const hitBy=dP<EP.catchR?"me":dist(m.x,m.y,g.ally.x,g.ally.y)<EP.catchR?"ally":null;
+   if(hitBy){
+    m.state="caught";m.caughtT=now;
+    if(hitBy==="me")g.swingT=now;else g.ally.hitT=now;
+    if(TRAP[m.kind]){const t=TRAP[m.kind];g.score-=t.pts;if(m.kind==="presse")g.press++;else g.cops++;floater(`${t.label} −${t.pts}`,m.x,m.y-60,"#ff9aa5");}
+    else{g.score++;g.caught++;floater(hitBy==="me"?"Interpellé !":"Interpellé (par le CRS)",m.x,m.y-60,"#ffd59a");}
+   }
+   else if((m.side===0&&m.x>=EP.zoneR+20)||(m.side===1&&m.x<=EP.zoneL-20)){m.state="safe";}
+   else throwAt(g,m,now,dP,1500,3000);
+  }
+  // Between crossings, protesters keep throwing from behind their line, a little less often.
+  if(m.state==="wait"||m.state==="safe"){if(!m.throwAt)m.throwAt=now+rnd(1500,4000);throwAt(g,m,now,dist(m.x,m.y,g.x,g.y),2600,4800);}
+  if(m.state==="caught"){const dx=233-m.x,dy=96-m.y,d=Math.hypot(dx,dy);if(d<8)m.state="van";else{m.x+=dx/d*140*dt;m.y+=dy/d*140*dt;}}
+ }
+ // Projectiles land where the player stood when they were thrown: a paving stone hurts on impact,
+ // a molotov leaves a fire that hurts for as long as it burns.
+ const hurt=(label)=>{if(now<g.inv)return;g.hp--;g.inv=now+1200;g.hitT=now;floater(label,g.x,g.y-80,"#ff9aa5");if(g.hp<=0){g.endT=now;g.why="hurt";}};
+ for(let i=g.throws.length-1;i>=0;i--){const s=g.throws[i];if(now-s.t0<s.ms)continue;g.throws.splice(i,1);
+  if(s.type==="pave"){g.rubble.push({x:s.x1,y:s.y1,t:now});if(dist(s.x1,s.y1,g.x,g.y-8)<26)hurt("Aïe ! Un pavé");}
+  else g.fires.push({x:s.x1,y:s.y1,born:now});}
+ g.fires=g.fires.filter(f=>now-f.born<EP.fireMs);g.rubble=g.rubble.filter(r=>now-r.t<1500);
+ if(g.fires.some(f=>dist(f.x,f.y,g.x,g.y-6)<EP.fireR))hurt("Ça brûle !");
+ if(g.endT)return;
+ if(!g.waveT&&!g.prot.some(m=>m.state==="run"||m.state==="caught")){
+  g.side=1-g.side;g.waveT=now+1400;
+  // Everyone was caught: fresh protesters join from the side the next wave leaves from.
+  if(!g.prot.some(m=>m.state==="safe")){for(let i=0;i<Math.min(9,4+g.wave);i++)g.prot.push({...spawnProt(g.side,rnd(150,380)),state:"safe"});g.reinfT=now;}
+ }
+}
+function drawEpervier(g,now){
+ ctx.fillStyle="#b7a98f";ctx.fillRect(0,0,W,W);
+ ctx.fillStyle="#a99b81";for(let y=0;y<W;y+=18)for(let x=(y/18%2)*14;x<W;x+=28)ctx.fillRect(x,y,26,16);
+ ctx.fillStyle="#7fae8a55";ctx.fillRect(0,0,EP.zoneL,W);ctx.fillRect(EP.zoneR,0,W-EP.zoneR,W);
+ ctx.fillStyle="#f6f1e4";ctx.fillRect(EP.zoneL-2,0,4,W);ctx.fillRect(EP.zoneR-2,0,4,W);
+ text("CAMP",60,250,"700 11px Inter, sans-serif","#2f4a36");text("CAMP",406,250,"700 11px Inter, sans-serif","#2f4a36");
+ // The police van at the top, where arrested protesters are taken.
+ ctx.fillStyle="#e8edf3";ctx.fillRect(170,46,126,62);ctx.fillStyle="#2f4c8f";ctx.fillRect(170,80,126,8);ctx.fillStyle="#22293a";ctx.fillRect(206,56,54,22);
+ ctx.fillStyle="#9fb6d2";for(let i=0;i<5;i++)ctx.fillRect(210+i*10,58,3,18);
+ ctx.fillStyle=Math.floor(now/250)%2?"#3c7cf0":"#8fb6ff";ctx.fillRect(220,40,26,7);
+ text(`${g.caught}`,233,104,"700 11px Inter, sans-serif","#fff6ea");
+ // On the ground: where each projectile will land (the ring closes in as it arrives), fires and fallen stones.
+ // Once the game is over nothing steps any more, so every progress ratio is clamped.
+ for(const s of g.throws){const a=Math.min(1,((g.endT||now)-s.t0)/s.ms);ctx.strokeStyle=s.type==="molotov"?`rgba(255,120,40,${.3+.6*a})`:`rgba(40,40,50,${.25+.5*a})`;ctx.lineWidth=2;ctx.beginPath();ctx.ellipse(s.x1,s.y1,(s.type==="molotov"?EP.fireR:26)*(1.5-.5*a),(s.type==="molotov"?EP.fireR:26)*(1.5-.5*a)*.45,0,0,7);ctx.stroke();}
+ for(const f of g.fires){const age=(g.endT||now)-f.born,k=Math.max(0,age<200?age/200:age>EP.fireMs-400?(EP.fireMs-age)/400:1);
+  const gr=ctx.createRadialGradient(f.x,f.y,0,f.x,f.y,EP.fireR*1.3);gr.addColorStop(0,`rgba(255,170,60,${.55*k})`);gr.addColorStop(1,"rgba(255,90,30,0)");ctx.fillStyle=gr;ctx.beginPath();ctx.ellipse(f.x,f.y,EP.fireR*1.3,EP.fireR*.7,0,0,7);ctx.fill();
+  ctx.fillStyle="#3a2a2288";ctx.beginPath();ctx.ellipse(f.x,f.y,EP.fireR*.9,EP.fireR*.4,0,0,7);ctx.fill();
+  for(let i=0;i<9;i++){const fx=f.x+Math.cos(i*2.4)*EP.fireR*.7*((i%3+1)/3),fy=f.y+Math.sin(i*2.4)*EP.fireR*.3,h=(10+((now/60+i*7)%10))*k;
+   ctx.fillStyle="#e8532c";ctx.fillRect(fx-4,fy-h,8,h);ctx.fillStyle="#ffb13b";ctx.fillRect(fx-2,fy-h*.7,4,h*.7);ctx.fillStyle="#fff1a8";ctx.fillRect(fx-1,fy-h*.35,2,h*.35);}}
+ for(const r of g.rubble){ctx.globalAlpha=Math.max(0,1-((g.endT||now)-r.t)/1500);ctx.fillStyle="#6f6a63";ctx.fillRect(r.x-7,r.y-5,14,10);ctx.fillStyle="#8e8880";ctx.fillRect(r.x-7,r.y-5,14,3);ctx.globalAlpha=1;}
+ const actors=[];
+ for(const m of g.prot)if(m.state!=="van")actors.push({y:m.y,draw:()=>{
+  const st=m.state==="caught"?"caught":m.state==="run"&&now>=m.delay?"run":"idle";
+  if(m.kind!=="infiltre"||m.state==="caught"){drawProt(m.look,st,54,m.x,m.y,now+m.zig*500,m.side===1);return;}
+  // Undercover officer: a pulsing police glow around the body, red on one side and blue on the other, swapping
+  // sides like light bars. Canvas shadows only, so it looks the same on every browser.
+  const red="#ff2a44",blu="#2f7bff",swap=Math.floor(now/170)%2===0,pulse=.55+.45*Math.abs(Math.sin(now/150));
+  protester(sctx,now+m.zig*500,m.look,st);
+  const halo=ctx.createRadialGradient(m.x,m.y-27,0,m.x,m.y-27,40);
+  // The square is light: the halo is painted over it (not added to it), and each colour glows in two passes.
+  halo.addColorStop(0,`rgba(${swap?"255,42,68":"47,123,255"},${.5*pulse})`);halo.addColorStop(.6,`rgba(${swap?"47,123,255":"255,42,68"},${.22*pulse})`);halo.addColorStop(1,"rgba(0,0,0,0)");
+  ctx.fillStyle=halo;ctx.beginPath();ctx.ellipse(m.x,m.y-27,36,42,0,0,7);ctx.fill();
+  ctx.save();
+  for(const [col,dx] of [[swap?red:blu,-5],[swap?blu:red,5]])for(const blur of [8,14+18*pulse]){ctx.shadowColor=col;ctx.shadowBlur=blur;ctx.shadowOffsetX=dx;blit(54,m.x,m.y,m.side===1);}
+  ctx.restore();
+  blit(54,m.x,m.y,m.side===1);
+ }});
+ actors.push({y:g.ally.y,draw:()=>drawCrs(g.ally.hitT&&now-g.ally.hitT<300?"win":"run","tonfa",66,g.ally.x,g.ally.y,now,g.ally.flip)});
+ if(!(now<g.inv&&Math.floor(now/90)%2))actors.push({y:g.y,draw:()=>drawCand(g.p,g.hitT&&now-g.hitT<700?"stress":g.swingT&&now-g.swingT<300?"win":"run",70,g.x,g.y,now)});
+ actors.sort((a,b)=>a.y-b.y).forEach(a=>a.draw());
+ // Projectiles in flight, above everyone.
+ for(const s of g.throws){const a=Math.min(1,((g.endT||now)-s.t0)/s.ms),x=s.x0+(s.x1-s.x0)*a,y=s.y0+(s.y1-s.y0)*a-Math.sin(a*Math.PI)*80+40*a;
+  ctx.save();ctx.translate(x,y);ctx.rotate(now/110);
+  if(s.type==="pave"){ctx.fillStyle="#6f6a63";ctx.fillRect(-7,-6,14,12);ctx.fillStyle="#8e8880";ctx.fillRect(-7,-6,14,4);}
+  else{ctx.fillStyle="#4f7a45";ctx.fillRect(-4,-6,8,13);ctx.fillRect(-2,-11,4,5);ctx.fillStyle="#f2e8cd";ctx.fillRect(-2,-14,4,3);ctx.fillStyle=Math.floor(now/80)%2?"#ffb13b":"#e8532c";ctx.fillRect(-3,-20,6,6);}
+  ctx.restore();}
+ // HUD
+ ctx.fillStyle="#141b2ad9";ctx.beginPath();ctx.roundRect(140,122,186,42,10);ctx.fill();
+ for(let i=0;i<EP.lives;i++)heart(209+i*17,147,i<g.hp);
+ text(`Vague ${Math.max(1,g.wave)} · ${g.score} pts · ${Math.max(0,Math.ceil((EP.ms-((g.endT||now)-g.t0))/1000))} s`,233,140,"700 12px Inter, sans-serif","#fff6ea");
+ if(g.reinfT&&now-g.reinfT<1400)outlined("Des renforts arrivent du cortège !",C,236,18,"#ffd59a");
+ else if(g.shoutT&&now-g.shoutT<1300)outlined("« Épervier, sortez ! »",C,236,24,"#fff6ea");
+ if(now-g.t0<1600)outlined("Attrape-les avant l'autre camp !",C,236,18,"#fff6ea");
+ drawFloaters(now);
+ if(g.endT&&now-g.endT>600){
+  const freed=Math.round(g.caught*rnd(.55,.8));
+  endPanel(g.why==="hurt"?"Blessé en service":"Fin de la manif",
+   [`${g.caught} interpellation${g.caught>1?"s":""}${g.press||g.cops?` · erreurs : ${[g.press&&`${g.press} journaliste${g.press>1?"s":""}`,g.cops&&`${g.cops} collègue${g.cops>1?"s":""}`].filter(Boolean).join(", ")}`:""}`,
+    `dont ${freed} relâché${freed>1?"s":""} sans poursuite`,
+    `+${Math.max(0,Math.min(20,g.score*2))} XP d'ordre public (score ${g.score})`],"#7fa8f8");
+ }
+}
+
+// ===================================================================== GAME 3 — LE DÉBAT CHRONO (both camps: answer the party line, fast)
+// Each question has the left answer, the right answer and a decoy that is wrong for everyone.
+const QUESTIONS=[
+ ["Programme économique ?","Taxer les riches","Taxer les pauvres","Taxer les politiques"],
+ ["Le chômage ?","Partager le temps de travail","Supprimer les allocs","Interdire les lundis"],
+ ["La retraite ?","À 60 ans, en fanfare","À 70 ans, en forme","À 18 ans, puis on verra"],
+ ["L'école ?","Plus de profs","Plus d'uniformes","Plus de récré"],
+ ["Les frontières ?","Ouvertes à tous","Fermées à double tour","Une frontière avec la Lune"],
+ ["La sécurité ?","Plus de prévention","Plus de police","Un vigile par habitant"],
+ ["L'écologie ?","Vélo pour tous","Nucléaire pour tous","Trottinette pour les ministres"],
+ ["Les services publics ?","Tout nationaliser","Tout privatiser","Tout vendre aux enchères"],
+ ["La cantine ?","Menu végé","Entrecôte obligatoire","Menu tofu-merguez"],
+ ["Le SMIC ?","Augmenter le SMIC","Baisser les charges","Payer en tickets resto"],
+ ["La voiture ?","Transports gratuits","Autoroute à 150","Voitures à pédales"],
+ ["L'impôt sur la fortune ?","Rétablir l'ISF","Supprimer l'ISF","Impôt sur la moustache"],
+ ["Le temps de travail ?","Semaine de 32 h","Travailler plus","Semaine de 8 jours"],
+ ["Les banques ?","Les nationaliser","Les rassurer","Sous le matelas"],
+ ["L'Europe ?","Europe sociale","Europe des nations","Europe en karaoké"],
+ ["Le logement ?","Encadrer les loyers","Défiscaliser les proprios","Tous en camping-car"],
+ ["La culture ?","Subventionner les artistes","Défendre le patrimoine","Remplacer l'opéra par du karting"],
+ ["Les grèves ?","Soutien total","Service minimum","Grève de la grève"],
+ ["L'héritage ?","Taxer l'héritage","Protéger l'héritage","Hériter de ses voisins"],
+ ["La santé ?","Hôpital public","Mutuelles privées","Tisane remboursée"],
+ ["La justice ?","Réinsertion","Tolérance zéro","Pierre-feuille-ciseaux"],
+ ["Le budget ?","Dépenser pour relancer","Couper dans les dépenses","Imprimer des billets à la cave"],
+ // The rawer ones: café-du-commerce caricatures, as unfair to both sides.
+ ["Les patrons ?","Tous des voleurs","Tous des héros","Tous en slip"],
+ ["Les fonctionnaires ?","Des héros sous-payés","Une armée de planqués","Des robots en kit"],
+ ["Les riches ?","Qu'ils crachent au bassinet !","Qu'on leur fiche la paix !","Qu'ils adoptent un député"],
+ ["Les syndicats ?","Le sel de la terre","Une bande de feignants","Un club de pétanque"],
+ ["Les flics ?","Désarmer la police","Ils ont toujours raison","Les remplacer par des mimes"],
+ ["Le cannabis ?","Légaliser le joint","Prison au premier pétard","Remboursé par la Sécu"],
+ ["Les assistés ?","Ça n'existe pas","Au boulot, les fainéants !","Assistés par ordinateur"],
+ ["Les bobos ?","Notre électorat","Des rebelles en trottinette","Un pansement et ça passe"],
+ ["Le service militaire ?","Jamais de la vie","Obligatoire, en rangers","En pyjama, le dimanche"],
+ ["La fraude ?","La fraude fiscale d'abord","La fraude aux allocs d'abord","Frauder au loto"]
+];
+const DB={ms:15000,intro:1300,penalty:1000,flash:260,top:212,h:46,gap:10,w:316};
+const shuffle=a=>{for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;};
+function startDebat(p,side){
+ const now=performance.now();
+ game={mode:"debat",p,side,t0:now+DB.intro,last:now,lost:0,deck:[],q:null,score:0,errors:0,flashT:-Infinity,flashOk:true,pick:-1,endT:0};
+ nextQuestion(game);
+}
+// The deck is shuffled once, then dealt without repeats; the answers are shuffled every time.
+function nextQuestion(g){
+ if(!g.deck.length)g.deck=shuffle(QUESTIONS.map((_,i)=>i).filter(i=>i!==g.q?.i));
+ const i=g.deck.pop(),[text,left,right,decoy]=QUESTIONS[i];
+ g.q={i,text,answers:shuffle([{t:left,k:"left"},{t:right,k:"right"},{t:decoy,k:"decoy"}])};
+}
+const debatLeft=(g,now)=>Math.max(0,DB.ms-g.lost-Math.max(0,now-g.t0));
+function answerDebat(g,n,now){
+ if(g.endT||now<g.t0||now-g.flashT<DB.flash||!g.q.answers[n])return;
+ const ok=g.q.answers[n].k===g.side;
+ g.flashT=now;g.flashOk=ok;g.pick=n;
+ tick=now;
+ if(ok){g.score++;floater("+1",C+150,160,"#9be59b");}
+ else{g.errors++;g.lost+=DB.penalty;floater(g.q.answers[n].k==="decoy"?"Hors sujet ! −1 s":"Ligne de l'adversaire ! −1 s",C,206,"#ff9aa5");}
+ g.prev=g.q;nextQuestion(g);
+}
+function stepDebat(g,now){if(!g.endT&&now>=g.t0&&debatLeft(g,now)<=0)g.endT=now;}
+function answerRect(n){return{x:C-DB.w/2,y:DB.top+n*(DB.h+DB.gap),w:DB.w,h:DB.h};}
+function drawDebat(g,now){
+ const left=g.side==="left",accent=left?"#ef7c91":"#7fa8f8";
+ ctx.fillStyle="#141b2a";ctx.fillRect(0,0,W,W);
+ ctx.fillStyle=left?"#583345":"#2d4265";ctx.beginPath();ctx.arc(C,C,200,0,7);ctx.fill();
+ ctx.lineWidth=12;ctx.strokeStyle=left?"#ffb2c21c":"#b4ceff1c";for(const r of [150,185]){ctx.beginPath();ctx.arc(C,330,r,Math.PI,2*Math.PI);ctx.stroke();}
+ outlined("DÉBAT CHRONO",C,62,20,"#fff6ea");
+ // Time bar, red when it runs out.
+ const rest=debatLeft(g,now),frac=rest/DB.ms;
+ ctx.fillStyle="#ffffff22";ctx.beginPath();ctx.roundRect(133,76,200,10,5);ctx.fill();
+ ctx.fillStyle=frac<.3?"#ff6b7d":"#ffd59a";ctx.beginPath();ctx.roundRect(133,76,Math.max(10,200*frac),10,5);ctx.fill();
+ text(`${(rest/1000).toFixed(1)} s · ${g.score} argument${g.score>1?"s":""}`,C,104,"700 12px Inter, sans-serif","#fff6ea");
+ if(now<g.t0){
+  outlined(left?"Défends la ligne de gauche !":"Défends la ligne de droite !",C,190,19,"#fff6ea");
+  outlined(String(Math.ceil((g.t0-now)/(DB.intro/3))),C,260,44,accent);
+  drawCand(g.p,"idle",80,C,430,now);return;
+ }
+ // The opponent's question in a speech bubble.
+ ctx.font="700 18px Fredoka, system-ui, sans-serif";const qw=Math.max(170,ctx.measureText(g.q.text).width+40);
+ ctx.fillStyle="#f8efdf";ctx.beginPath();ctx.roundRect(C-qw/2,124,qw,50,16);ctx.fill();
+ ctx.beginPath();ctx.moveTo(C-10,174);ctx.lineTo(C,188);ctx.lineTo(C+10,174);ctx.fill();
+ text(g.q.text,C,156,"700 18px Fredoka, system-ui, sans-serif","#2a2230");
+ text("ADVERSAIRE",C,120,"700 9px ui-monospace, monospace","#fff6ea99");
+ // The three answers; the last answer flashes green or red over the new question for a moment.
+ const flash=now-g.flashT<DB.flash;
+ g.q.answers.forEach((a,n)=>{
+  const r=answerRect(n),hot=flash&&n===g.pick;
+  ctx.fillStyle=hot?(g.flashOk?"#5fbf73":"#e0566a"):"#fff6ea";ctx.beginPath();ctx.roundRect(r.x,r.y,r.w,r.h,14);ctx.fill();
+  ctx.strokeStyle=hot?"#fff":accent;ctx.lineWidth=3;ctx.stroke();
+  ctx.fillStyle=accent;ctx.beginPath();ctx.arc(r.x+24,r.y+r.h/2,12,0,7);ctx.fill();
+  text(String(n+1),r.x+24,r.y+r.h/2+5,"700 13px Inter, sans-serif","#141b2a");
+  ctx.font="700 15px Inter, system-ui, sans-serif";let s=a.t;while(ctx.measureText(s).width>r.w-60)s=s.slice(0,-2)+"…";
+  text(s,r.x+r.w/2+14,r.y+r.h/2+5,"700 15px Inter, system-ui, sans-serif",hot?"#fff":"#2a2230");
+ });
+ drawCand(g.p,flash?(g.flashOk?"win":"stress"):"idle",64,C,446,now);
+ drawFloaters(now);
+ if(g.endT&&now-g.endT>500){
+  const rate=g.score+g.errors?Math.round(100*g.score/(g.score+g.errors)):0;
+  endPanel(g.score>=18?"Débat remporté !":g.score>=9?"Match nul sur le plateau":"Recadré par le parti",
+   [`${g.score} argument${g.score>1?"s":""} dans la ligne · ${g.errors} faux pas`,
+    `Fidélité à la ligne : ${rate} %`,
+    `+${Math.min(20,g.score)} XP d'éloquence`],g.score>=18?"#ffd59a":accent);
+ }
+}
+
+// ===================================================================== MENU, INPUT, LOOP
+function drawMenu(now){
+ ctx.fillStyle="#141b2a";ctx.fillRect(0,0,W,W);
+ ctx.fillStyle="#583345";ctx.beginPath();ctx.arc(C,C,190,Math.PI/2,Math.PI*1.5);ctx.fill();
+ ctx.fillStyle="#2d4265";ctx.beginPath();ctx.arc(C,C,190,-Math.PI/2,Math.PI/2);ctx.fill();
+ outlined("MINI-JEUX DE RUE",C,92,22,"#fff6ea");
+ drawCand(people.left[9],"run",86,150,280,now);drawCrs("idle","shield",80,316,280,now,true);
+ text("Le Cortège",150,318,"700 15px Fredoka, sans-serif","#ffd59a");text("L'Épervier",316,318,"700 15px Fredoka, sans-serif","#ffd59a");
+ text("esquive LBD et lacrymo",150,338,"500 11px Inter, sans-serif","#fff6ea");text("interpelle les manifestants",316,338,"500 11px Inter, sans-serif","#fff6ea");
+ text("Choisis en dessous ↓",C,392,"500 12px Inter, sans-serif","#b9b2c7");
+}
+function toLogical(e){const r=cv.getBoundingClientRect();return[(e.clientX-r.left)/r.width*W,(e.clientY-r.top)/r.height*W];}
+cv.addEventListener("pointerdown",e=>{
+ if(game&&game.endT&&performance.now()-game.endT>900){game=null;syncUi();return;}
+ pointer=toLogical(e);
+ if(game?.mode==="debat"){const [x,y]=pointer;for(let n=0;n<3;n++){const r=answerRect(n);if(x>=r.x&&x<=r.x+r.w&&y>=r.y&&y<=r.y+r.h)answerDebat(game,n,performance.now());}return;}
+ cv.setPointerCapture?.(e.pointerId);
+});
+cv.addEventListener("pointermove",e=>{if(e.pointerType==="mouse"||e.buttons)pointer=toLogical(e);});
+addEventListener("keydown",e=>{
+ if(e.key.startsWith("Arrow")){keys[e.key]=true;if(game)e.preventDefault();}
+ if(e.key===" "&&game){e.preventDefault();useUmbrella();}
+ if(game?.mode==="debat"&&/^[1-3]$/.test(e.key))answerDebat(game,+e.key-1,performance.now());
+ if(e.key==="Escape"&&game){if(!game.endT){game.endT=performance.now();game.why=game.mode==="cortege"?"down":"time";}else{game=null;syncUi();}}
+});
+addEventListener("keyup",e=>{keys[e.key]=false;});
+const sel=document.getElementById("cand"),umb=document.getElementById("umbrella");
+function fillSelect(side){sel.innerHTML="";people[side].forEach((p,i)=>sel.add(new Option(p.name,`${side}:${i}`)));sel.value=`${side}:9`;}
+const chosen=side=>people[side][sel.value.startsWith(side)?+sel.value.split(":")[1]:9];
+fillSelect("left");
+function syncUi(){umb.disabled=!(game&&game.mode==="cortege");}
+document.getElementById("goCortege").onclick=()=>{if(!sel.value.startsWith("left"))fillSelect("left");pointer=null;startCortege(chosen("left"));syncUi();cv.focus();};
+document.getElementById("goEpervier").onclick=()=>{if(!sel.value.startsWith("right"))fillSelect("right");pointer=null;startEpervier(chosen("right"));syncUi();cv.focus();};
+umb.onclick=()=>{useUmbrella();cv.focus();};
+document.getElementById("goDebat").onclick=()=>{const side=sel.value.split(":")[0];pointer=null;startDebat(chosen(side),side);syncUi();cv.focus();};
+// A second finger on the screen opens the umbrella too.
+cv.addEventListener("pointerdown",e=>{if(e.isPrimary===false)useUmbrella();});
+window.addEventListener("error",e=>{ctx.fillStyle="#000";ctx.fillRect(0,200,W,60);text("JS: "+e.message,C,235,"12px monospace","#f66");});
+// ?game=cortege|epervier&cand=N starts a game directly (for screenshots).
+const q=new URLSearchParams(location.search);
+if(q.get("game")==="cortege"){fillSelect("left");if(q.get("cand"))sel.value="left:"+q.get("cand");startCortege(chosen("left"));pointer=[200,360];}
+if(q.get("game")==="debat"){const side=q.get("side")==="right"?"right":"left";fillSelect(side);startDebat(chosen(side),side);}
+if(q.get("game")==="epervier"){fillSelect("right");if(q.get("cand"))sel.value="right:"+q.get("cand");startEpervier(chosen("right"));pointer=[260,260];
+ if(q.get("cops"))game.prot.forEach((m,i)=>{if(i%2===0){m.kind="infiltre";m.look=i%4?"gilet":"plain";}});}
+// &sim=ms fast-forwards the game that many milliseconds before the first frame, still steering towards the pointer.
+if(game&&q.get("sim")){const T=performance.now(),end=+q.get("sim");game.t0-=end;game.last-=end;if(game.waveT)game.waveT-=end;if(game.nextItem)game.nextItem-=end;for(let t=-end;t<0;t+=16){const now=T+t,dt=.016;game.last=now;if(game.mode==="debat"){
+ // Bot: one answer every ~0.55 s, right four times out of five.
+ if(now>=game.t0&&now-game.flashT>550){const good=game.q.answers.findIndex(a=>a.k===game.side),n=Math.random()<.8?good:(good+1)%3;answerDebat(game,n,now);}stepDebat(game,now);}
+ else if(game.mode==="cortege"){if(Math.floor(t/1500)%2)pointer=[300,330];else pointer=[170,370];stepCortege(game,now,dt);}else{const m=game.prot.find(m=>m.state==="run");if(m)pointer=[m.x,m.y];stepEpervier(game,now,dt);}}game.last=T;if(q.get("debug"))document.title=`hp=${game.hp} why=${game.why} score=${game.score??""} tracts=${game.tracts??""}`;}
+syncUi();
+function loop(now){
+ if(game){const dt=Math.min(.05,(now-game.last)/1000);game.last=now;
+  if(game.mode==="cortege"){stepCortege(game,now,dt);drawCortege(game,now);}
+  else if(game.mode==="debat"){stepDebat(game,now);drawDebat(game,now);}
+  else{stepEpervier(game,now,dt);drawEpervier(game,now);}}
+ else drawMenu(now);
+ requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
