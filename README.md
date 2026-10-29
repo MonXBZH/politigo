@@ -7,7 +7,7 @@
   <img alt="Node 24" src="https://img.shields.io/badge/node-24%20LTS-5fa04e">
   <img alt="Aucune dépendance" src="https://img.shields.io/badge/d%C3%A9pendances-0-success">
   <img alt="Docker" src="https://img.shields.io/badge/docker-compose%20%7C%20Portainer-2496ed">
-  <img alt="107 tests" src="https://img.shields.io/badge/tests-107-brightgreen">
+  <img alt="148 tests" src="https://img.shields.io/badge/tests-148-brightgreen">
   <img alt="Satire" src="https://img.shields.io/badge/genre-satire-ff9db0">
 </p>
 
@@ -96,7 +96,14 @@ de renaissance propre à chaque camp (la *primaire unitaire* à gauche, *le part
 
 - ⏰ **Le jeu suit l'heure réelle** (Paris). La nuit, de 0 h à 6 h, ton élu dort et récupère.
 - 👋 **Passe le voir** : chaque visite rapporte de l'XP, une fois toutes les 2 heures, 8 fois par jour au maximum.
-- 🎤 **Fais-le débattre** ou lance le **Pong des arguments** : 2 activités par visite, 8 par jour.
+- 🎮 **Trois mini-jeux** : 2 activités par visite, 8 par jour, chacune +30 XP plus un bonus selon le score (20 XP au plus).
+  - 🎤 **Débat chrono** : 15 secondes pour enchaîner les réponses de ta ligne, tirées dans le désordre parmi 32 questions.
+    « Programme économique ? » : à gauche on taxe les riches, à droite les pauvres, et « taxer les politiques » est hors sujet pour tout le monde.
+    Une erreur coûte une seconde.
+  - ✊ **Manif**, un jeu par camp. À gauche, **Le Cortège** : tiens le défilé de République à Nation en esquivant LBD et lacrymo,
+    avec un parapluie pour parer. À droite, **L'Épervier** : interpelle les manifestants avec ton CRS, esquive pavés et molotovs,
+    et gare aux journalistes et aux collègues infiltrés, qui coûtent des points.
+  - 🏓 **Pong des arguments** : renvoie les piques de l'adversaire pendant 20 secondes.
 - 🎲 **Quitte ou double** : juste après un débat, une revanche à pile ou face. Gagnée : moral **+12** et énergie **+12**.
   Perdue : un **stress ×2**.
 - 💼 **Frais de mandat (FM)** : la monnaie du jeu, 2 FM gagnés par heure de vie. **Aucun achat réel, jamais.**
@@ -112,7 +119,7 @@ et toutes sont recensées, avec leurs références, dans **[docs/SOURCES.md](doc
 ### Entre amis
 
 - 🏆 **Classement en direct** : score, niveau, série record, survie.
-- 📰 **Fil de la République** : les évolutions, les morts politiques et les beaux scores au Pong de chacun, en temps réel.
+- 📰 **Fil de la République** : les évolutions, les morts politiques et les beaux scores aux mini-jeux de chacun, en temps réel.
 - 🔐 **Sur invitation** : un code donné par l'organisateur, et le nombre de comptes plafonné.
 
 ---

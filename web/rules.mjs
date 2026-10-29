@@ -113,6 +113,20 @@ export const STRESS_HIT=5;
 export const DOUBLE={odds:0.5,moral:12,energy:12,window:H,stressFactor:2};
 // The Pong is played in the browser, so its result is checked: no more than ~1.5 returns a second, within 90 s.
 export const PONG_RULES={maxScore:30,minSeconds:2,timeoutSeconds:90,returnsPerSecond:1.5,bonusPerReturn:2,bonusCap:20};
+// Mini-games played in the browser (results checked like the Pong's): one per camp for the "Manif", and the
+// timed debate behind "Débattre". The bonus comes on top of the activity XP; a score is capped by duration, at a
+// human pace (the browser waits on the result screen at least 4 s before sending, which only adds margin): a
+// script can no longer claim the full bonus a few seconds after the start.
+export const MINI={
+ debate:{label:"Débat chrono",camp:null,ms:15000,maxScore:60,perSecond:2.5,bonusRate:1,bonusCap:20,great:18},
+ cortege:{label:"Le Cortège",camp:"left",ms:30000,maxScore:400,perSecond:8,bonusRate:0.2,bonusCap:20,great:100},
+ epervier:{label:"L'Épervier",camp:"right",ms:35000,maxScore:150,perSecond:2,bonusRate:2,bonusCap:20,great:15}
+};
+// A great score is announced in the public feed at most once per game hour and player.
+const greatAnnounced=S=>S.journal.some(j=>j.k==="mini"&&j.d?.great===true&&S.vclock-j.t<H);
+export const MINI_RULES={minSeconds:3,graceSeconds:75};   // expiry = ms/1000 + graceSeconds after the start
+export const manifGame=S=>S.camp==="left"?"cortege":"epervier";
+const miniExpired=(S,realNow)=>S.mini&&realNow-S.mini.t>(MINI[S.mini.k].ms/1000+MINI_RULES.graceSeconds)*1000;
 export const xpCost=L=>XP.a+XP.b*L;
 export const xpFloor=L=>XP.a*(L-1)+XP.b*(L-1)*L/2;
 export const stage=n=>Math.min(9,Math.floor(n/10));
@@ -152,7 +166,7 @@ export function freshState(camp,now){
  return {v:2,camp,vclock:now,lastReal:now,hourIdx:Math.floor(now/H),born:now,
   fm:10,sat:80,moral:80,energy:80,hyg:80,xp:0,lvl:1,best:1,streak:0,bestStreak:0,neg:0,zero:0,form:"Excellente",mult:1.25,
   lastVisit:-99,visitDay:-1,visitsToday:0,actsToday:0,actsVisit:0,actWindow:-99,breadIdx:-1,coffeeDay:-1,coffees:0,petIdx:-1,
-  sleeping:false,equipped:{},deaths:0,jn:0,journal:[],pong:null,rematchT:-1,diedAt:-1};
+  sleeping:false,equipped:{},deaths:0,jn:0,journal:[],pong:null,mini:null,rematchT:-1,diedAt:-1};
 }
 export function newGame(camp,now){
  const S=freshState(camp,now);
@@ -182,6 +196,7 @@ export function sanitize(s,now){
    if(j.d&&typeof j.d==="object"&&JSON.stringify(j.d).length<400)e.d=j.d;return e;});
  o.jn=Math.max(o.jn,...o.journal.map(j=>j.n),0);
  if(s.pong&&Number.isFinite(s.pong.t))o.pong={t:s.pong.t};
+ if(s.mini&&typeof s.mini.k==="string"&&Object.hasOwn(MINI,s.mini.k)&&Number.isFinite(s.mini.t))o.mini={k:s.mini.k,t:s.mini.t};
  o.rematchT=num(s.rematchT,-1,o.vclock,-1);
  // States saved before diedAt existed take it from their journal.
  o.diedAt=num(s.diedAt??o.journal.find(j=>j.k==="death")?.t,-1,o.vclock,-1);
@@ -292,6 +307,7 @@ export function advance(S,realNow,speed=1,random=Math.random){
   if(S.zero>=XP.deathHours){die(S,"neglect");break;}
  }
  if(S.pong&&realNow-S.pong.t>PONG_RULES.timeoutSeconds*1000)S.pong=null;
+ if(miniExpired(S,realNow))S.mini=null;
  return S.hourIdx!==h0;
 }
 // After the server was down: the game goes back on the real hour, and the downtime is skipped, not played.
@@ -302,6 +318,7 @@ export function resync(S,realNow){
  const target=Math.max(S.vclock,realNow),skipped=target-S.vclock;
  S.vclock=target;S.hourIdx=Math.max(S.hourIdx,Math.floor(target/H));S.lastReal=realNow;
  if(S.pong&&realNow-S.pong.t>PONG_RULES.timeoutSeconds*1000)S.pong=null;
+ if(miniExpired(S,realNow))S.mini=null;
  if(skipped>=15*60000)log(S,"sync",`Maintenance du serveur (${duration(skipped)}) : ce temps est sauté, l'horloge est recalée sur l'heure réelle. Jauges inchangées.`,{skipped});
  return skipped;
 }
@@ -327,13 +344,31 @@ export function act(S,a,{now,speed=1,random=Math.random}){
   const visit=registerVisit(S);spendActivity(S);
   if(type==="debate"){
    const l=pongLines[S.camp],line=l[Math.floor(random()*l.length)];
-   S.rematchT=S.vclock;
-   log(S,"act",`Débat : +${XP.activity} XP, énergie −8, moral +10${visit?`, visite +${XP.visit} XP`:""}.`,{kind:"debate",line,visit});
+   S.rematchT=S.vclock;S.mini={k:"debate",t:now};S.pong=null;
+   log(S,"act",`Débat chrono : +${XP.activity} XP, énergie −8, moral +10${visit?`, visite +${XP.visit} XP`:""}.`,{kind:"debate",line,visit});
   }else{
-   S.pong={t:now};S.rematchT=-1;
+   S.pong={t:now};S.mini=null;S.rematchT=-1;
    log(S,"act",`Pong des arguments : +${XP.activity} XP${visit?`, visite +${XP.visit} XP`:""}.`,{kind:"pong",visit});
   }
   return done({visit});
+ }
+ case "manifStart":{
+  const e=activityBlock(S);if(e)return fail(e);
+  const visit=registerVisit(S);spendActivity(S);
+  const k=manifGame(S);S.mini={k,t:now};S.pong=null;S.rematchT=-1;
+  log(S,"act",`${MINI[k].label} : +${XP.activity} XP${visit?`, visite +${XP.visit} XP`:""}.`,{kind:"manif",game:k,visit});
+  return done({visit,game:k});
+ }
+ case "miniEnd":{
+  if(!S.mini)return fail("Aucune partie en cours.");
+  const k=S.mini.k,cfg=MINI[k],secs=(now-S.mini.t)/1000,sc=a.score;S.mini=null;   // consumed even when refused: no replay
+  if(!Number.isInteger(sc)||sc<0||sc>cfg.maxScore||secs<MINI_RULES.minSeconds||sc>Math.ceil(secs*cfg.perSecond)+1)return fail("Score refusé.");
+  const bonus=Math.min(cfg.bonusCap,Math.floor(sc*cfg.bonusRate));addXp(S,bonus);
+  const text=k==="debate"?`Débat chrono : ${sc} argument${sc>1?"s":""} dans la ligne, bonus d'éloquence +${bonus} XP.`
+   :k==="cortege"?`Le Cortège : score ${sc}, bonus de terrain +${bonus} XP.`
+   :`L'Épervier : ${sc} point${sc>1?"s":""}, bonus d'ordre public +${bonus} XP.`;
+  log(S,"mini",text,{game:k,score:sc,bonus,great:sc>=cfg.great&&!greatAnnounced(S)});
+  return done({bonus,game:k});
  }
  case "rematch":{
   const e=rematchBlock(S);if(e)return fail(e);
@@ -385,3 +420,8 @@ export function act(S,a,{now,speed=1,random=Math.random}){
  default:return fail("Action inconnue.");
  }
 }
+
+// "v1.3.0", "1.3.0" and "v1.3.0-3-gabc1234" (a commit after the tag) are the same release; "dev" is none.
+export const releaseOf=v=>{const m=/^v?(\d{1,4})\.(\d{1,4})\.(\d{1,4})(?:[-+][0-9A-Za-z.+-]*)?$/.exec(String(v??""));return m?`${+m[1]}.${+m[2]}.${+m[3]}`:null;};
+// Release order, numerically ("1.10.0" after "1.9.2").
+export const cmpRelease=(a,b)=>{const x=a.split(".").map(Number),y=b.split(".").map(Number);for(let i=0;i<3;i++)if(x[i]!==y[i])return x[i]-y[i];return 0;};

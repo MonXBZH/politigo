@@ -1,14 +1,16 @@
 // PolitiGo browser client. The server owns the game: this page shows the state it sends, forwards the
 // player's actions, and plays the animations announced by the journal entries the server writes.
 import * as R from "./rules.mjs";
+import {createMini,manifLabel} from "./minigames.mjs";
+import {missedEntries,latestEntry} from "./changelog.mjs";
 const {people,personalItems,stresses,shop,pongLines,fxNames,XP,xpCost,xpFloor,stage}=R;
 const $=s=>document.querySelector(s);
 const motionQuery=matchMedia("(prefers-reduced-motion: reduce)");
 let reduced=motionQuery.matches;motionQuery.addEventListener?.("change",e=>{reduced=e.matches;});
 
 // ===================================================================== STATE (a copy of the server's)
-let S=null,me=null,SPEED=1,syncReal=0,syncV=0,busy=false,VERSION="dev";
-let anim=null,scene=null,pong=null,lvlFx=null;
+let S=null,me=null,SPEED=1,syncReal=0,syncV=0,busy=false,VERSION="dev",RELEASE=null,SEEN=null;
+let anim=null,scene=null,pong=null,mini=null,miniClock=0,lvlFx=null;
 let board=[],feed=[],journalShown=-1,journalRendered=-1,boardTab="score";
 const curIdx=()=>R.curIdx(S),hodOf=R.hodOf,isNight=()=>R.isNight(S),isAsleep=()=>R.isAsleep(S);
 const person=lvl=>R.person(S,lvl),look=()=>R.look(S),lookFor=(p,lvl)=>R.lookFor(S,p,lvl);
@@ -37,6 +39,7 @@ function applyMe(m,{replay=false}={}){
  // The action answer and the live stream race each other: an older copy of the state never replaces a newer one.
  if(!first&&m.state.lastReal<S.lastReal)return;
  me=m.name;SPEED=m.speed||1;VERSION=m.version||"dev";R.setTimeZone(m.tz||"Europe/Paris");
+ if("release" in m){RELEASE=m.release||null;SEEN=m.seenVersion||null;}
  S=m.state;syncReal=Date.now();syncV=S.vclock;
  if(first){journalShown=replay?Math.min(readSeen()||S.jn,S.jn):S.jn;journalRendered=-1;}
  playJournal(first&&replay);
@@ -56,7 +59,7 @@ function playJournal(onlyMajor){
   else if(j.k==="stress")stress=j;
   else act=j;
  }
- if(death){anim=null;pong=null;startScene("death",death.d?.camp||S.camp,death.d?.name||"");toast(death.text);return;}
+ if(death){anim=null;pong=mini=null;startScene("death",death.d?.camp||S.camp,death.d?.name||"");toast(death.text);return;}
  if(evoFirst){
   const from=evoFirst.k==="legend"?evoFirst.d.name:evoFirst.d.from,to=evoLast.k==="legend"?evoLast.d.name:evoLast.d.to;
   const legend=evoLast.k==="legend"&&from===to;
@@ -74,7 +77,7 @@ function playJournal(onlyMajor){
  if(act){
   const d=act.d||{};
   if(act.k==="buy"){const it=shop.find(i=>i.key===d.key);if(it){if(it.kind==="food")playAnim("eat",2500,{food:it.key});else playAnim(it.anim,3000);}toast(act.text);}
-  else if(act.k==="act"&&d.kind==="debate"){playAnim("debate",3200,{line:d.line});toast(`${act.text} Quitte ou double possible dans Jouer.`);}
+  else if(act.k==="act"&&(d.kind==="debate"||d.kind==="manif"))toast(act.text);   // the mini-game takes the screen
   else if(act.k==="act"&&d.kind==="rematch"){playAnim("win",2500,{line:d.line});toast(act.text);}
   else if(act.k==="nap"){if(!d.on)playAnim("win",1200);toast(d.on?"Lumière éteinte : il se réveillera seul une fois reposé.":act.text);}
   else if(act.k==="wake"){playAnim("win",1500);toast("Il se réveille tout seul, reposé !");}
@@ -96,7 +99,35 @@ async function send(action){
 // ===================================================================== PLAYER ACTIONS
 function playAnim(name,ms,extra={}){anim={name,until:performance.now()+ms,...extra};}
 function buy(it){closeSheet();send({type:"buy",key:it.key});}
-function debate(){closeSheet();send({type:"debate"});}
+// The timed debate (both camps) and the Manif (one game per camp): the server charges the activity and opens
+// the game, the browser plays it (minigames.mjs), the server checks the score.
+let miniEnding=false,miniStartReal=0;
+async function startMini(type){
+ closeSheet();
+ if(miniEnding){toast("Un instant : le résultat de la partie précédente part au serveur.");return;}
+ const r=await send({type});if(!r?.ok||!S)return;
+ closeSheet();                                      // a sheet opened while the request was on its way
+ miniStartReal=Date.now();
+ const key=type==="debate"?"debate":r.game;
+ mini=createMini(key,{p:key==="epervier"?{...look(),prop:"tonfa"}:look(),camp:S.camp,ctx,scale:()=>scale,now:miniClock,
+  drawCand:(p,state,size,cx,ground,t)=>bigSprite(p,state,size,cx,ground,t)});
+ cv.focus();
+}
+async function endMini(){
+ const key=mini.key,score=mini.score();mini=null;pongEnded=performance.now();miniEnding=true;
+ let r;
+ try{
+  // A game given up at once still waits for the server's 3-second minimum, instead of being refused.
+  const early=miniStartReal+R.MINI_RULES.minSeconds*1000+200-Date.now();if(early>0)await new Promise(ok=>setTimeout(ok,early));
+  // As for the Pong: the score must not be lost behind another request.
+  for(const end=Date.now()+20000;busy&&Date.now()<end;)await new Promise(ok=>setTimeout(ok,100));
+  r=await send({type:"miniEnd",score});
+ }finally{miniEnding=false;}
+ if(r?.ok){
+  toast(key==="debate"?`${score} argument${score>1?"s":""} · +${r.bonus} XP d'éloquence. Quitte ou double possible dans Jouer.`:`${R.MINI[key].label} : +${r.bonus} XP`);
+  if(r.bonus>=10)playAnim("win",3000);
+ }
+}
 function rematch(){closeSheet();send({type:"rematch"});}
 function toggleLight(){closeSheet();send({type:"light"});}
 async function equip(i){await send({type:"equip",i});liveSheet();}
@@ -112,7 +143,7 @@ function rect(c,x,y,w,h,color){c.fillStyle=color;c.fillRect(Math.round(x),Math.r
 function sprite(c,p,t,state,legend=false,food="soup"){
  c.clearRect(0,0,64,64);
  const phase=Math.floor(t/300)%4,sulk=state==="debate"&&phase>=2,stomp=state==="debate"&&!sulk;
- const bob=state==="sleep"?0:state==="win"?[0,-3,-5,-2][phase]:[0,-1,0,0][phase];
+ const run=state==="run",bob=state==="sleep"?0:state==="win"?[0,-3,-5,-2][phase]:run?[0,-2,0,-2][phase]:[0,-1,0,0][phase];
  c.fillStyle="#0004";c.beginPath();c.ellipse(32,59,15,3,0,0,Math.PI*2);c.fill();
  if(legend){for(let i=0;i<8;i++){const a=i*Math.PI/4+t/1300;rect(c,31+Math.cos(a)*25,29+Math.sin(a)*26,2,2,"#fbd47b");}}
  c.save();c.translate(state==="stress"?(phase%2?1:-1):0,bob);
@@ -120,7 +151,7 @@ function sprite(c,p,t,state,legend=false,food="soup"){
  if(p.style==="long")rect(c,21,15,23,26,p.hair);
  rect(c,22,body,20,18,ink);rect(c,24,body,16,16,p.coat);
  rect(c,29,body,6,9,"#f1e9da");if(p.tie)rect(c,31,body+2,2,11,p.tie);
- rect(c,24,54-(stomp&&phase===0?2:0),6,5,ink);rect(c,35,54-(stomp&&phase===1?2:0),6,5,ink);
+ rect(c,24,54-((stomp&&phase===0)||(run&&phase%2===0)?2:0),6,5,ink);rect(c,35,54-((stomp&&phase===1)||(run&&phase%2===1)?2:0),6,5,ink);
  const lift=state==="debate"?(phase===0?9:5):state==="win"?5+phase%2*2:state==="eat"?3:0;
  if(sulk){rect(c,18,body+2,5,7,p.coat);rect(c,42,body+2,5,7,p.coat);rect(c,21,body+7,23,4,p.coat);rect(c,21,body+7,23,1,ink);rect(c,22,body+8,3,3,skin);rect(c,40,body+8,3,3,skin);}
  else{rect(c,18,body+2,5,12,p.coat);rect(c,19,body+13,4,4,skin);rect(c,42,body+2-lift,5,12,p.coat);rect(c,43,body+13-lift,4,4,skin);}
@@ -179,6 +210,7 @@ function drawProp(c,type,x,y){
  case"badge":rect(c,x-4,y-5,7,7,"#da5d6e");rect(c,x-2,y-3,3,3,"#f2d879");break;
  case"bike":c.strokeStyle="#99c5ba";c.lineWidth=1;for(const dx of [-5,6]){c.beginPath();c.arc(x+dx,y+4,4,0,Math.PI*2);c.stroke();}c.beginPath();c.moveTo(x-5,y+4);c.lineTo(x,y-3);c.lineTo(x+6,y+4);c.lineTo(x-5,y+4);c.stroke();break;
  case"mic":rect(c,x,y-6,2,12,k);rect(c,x-2,y-10,6,6,"#aeb4c3");break;
+ case"tonfa":rect(c,x,y-12,3,17,k);rect(c,x-3,y-6,4,2,k);break;        // the Épervier only
  case"case":rect(c,x-1,y-8,6,3,k);rect(c,x-4,y-5,13,10,"#9c7354");rect(c,x+1,y-2,2,3,"#edcb78");break;
  case"flag":rect(c,x,y-15,1,22,paper);rect(c,x+1,y-15,4,8,"#6893dc");rect(c,x+5,y-15,4,8,paper);rect(c,x+9,y-15,4,8,"#e1777e");break;
  case"mountain":c.fillStyle="#c6d1de";c.beginPath();c.moveTo(x-5,y+3);c.lineTo(x+1,y-9);c.lineTo(x+9,y+3);c.fill();break;
@@ -268,6 +300,7 @@ function render(now){
  ctx.setTransform(scale,0,0,scale,0,0);
  if(scene&&drawScene(now))return;
  if(pong){drawPong(now);return;}
+ if(mini){mini.draw(miniClock);return;}
  const night=isAsleep(),t=reduced?0:now;
  if(anim&&now>anim.until)anim=null;
  room(isNight());
@@ -412,6 +445,7 @@ function pongServe(){Object.assign(pong,{bx:233,by:PONG.top+10,vx:(Math.random()
 // The server charges the activity at the start and checks the score at the end (rate and duration).
 async function startPong(){
  closeSheet();
+ if(miniEnding){toast("Un instant : le résultat de la partie précédente part au serveur.");return;}
  const r=await send({type:"pongStart"});if(!r?.ok||!S)return;
  pong={t0:performance.now(),last:performance.now(),score:0,missed:0,px:233,hitT:0,flashT:0,endT:0};pongServe();
  toast("Renvoie les piques : glisse le doigt ou la souris sur l'écran.");
@@ -459,6 +493,21 @@ function drawPong(now){
 }
 function pongAim(e){if(!pong)return;const r=cv.getBoundingClientRect();pong.px=Math.max(PONG.wallL+30,Math.min(PONG.wallR-30,(e.clientX-r.left)/r.width*466));}
 cv.addEventListener("pointermove",pongAim);
+// The mini-games follow the finger (or the mouse); a second finger opens the umbrella in the Cortège.
+function miniPoint(e){const r=cv.getBoundingClientRect();return[(e.clientX-r.left)/r.width*466,(e.clientY-r.top)/r.height*466];}
+cv.addEventListener("pointermove",e=>{if(mini&&!scene&&e.isPrimary&&(e.pointerType==="mouse"||e.buttons))mini.pointer(...miniPoint(e),miniClock,false);});
+cv.addEventListener("pointerdown",e=>{
+ if(!mini||scene)return;
+ miniHeld=true;
+ if(!e.isPrimary&&mini.key==="cortege")mini.second(miniClock);else mini.pointer(...miniPoint(e),miniClock,true);
+});
+document.addEventListener("keyup",e=>mini?.keyup(e.key));
+// Keys released elsewhere must not stay pressed; a hidden page (locked phone) ends the game rather than losing it
+// to the server's expiry, which keeps counting real time.
+addEventListener("blur",()=>mini?.release());
+document.addEventListener("visibilitychange",()=>{if(document.hidden&&mini){mini.release();mini.abort(miniClock);endMini();}});
+// A finger held on the screen through the end of a game lifts as a click: not a pat on the shoulder.
+let miniHeld=false;
 // A tap skips a scene (a death goes on to its rebirth), steers the Pong, or pets the companion.
 function skipScene(){
  if(!scene||performance.now()-scene.t0<600)return;
@@ -468,8 +517,8 @@ function skipScene(){
 cv.addEventListener("pointerdown",e=>{if(pong&&!scene)pongAim(e);});
 // A finger still on the screen when the Pong ends lifts as a click: that is not a pat on the shoulder.
 let pongEnded=0;
-cv.addEventListener("click",()=>{if(scene)skipScene();else if(!pong&&performance.now()-pongEnded>500)pet();});
-cv.addEventListener("keydown",e=>{if(!pong&&(e.key==="Enter"||e.key===" ")){e.preventDefault();if(scene)skipScene();else pet();}});
+cv.addEventListener("click",()=>{const held=miniHeld;miniHeld=false;if(scene)skipScene();else if(!pong&&!mini&&!held&&performance.now()-pongEnded>500)pet();});
+cv.addEventListener("keydown",e=>{if(!pong&&!mini&&(e.key==="Enter"||e.key===" ")){e.preventDefault();if(scene)skipScene();else pet();}});
 document.addEventListener("keydown",e=>{
  if(!$("#sheet").hidden){
   if(e.key==="Escape"){closeSheet();return;}
@@ -480,6 +529,11 @@ document.addEventListener("keydown",e=>{
    if(e.shiftKey&&i<=0){e.preventDefault();f[f.length-1].focus();}
    else if(!e.shiftKey&&(i===-1||i===f.length-1)){e.preventDefault();f[0].focus();}
   }
+  return;
+ }
+ if(mini){
+  if(e.ctrlKey||e.metaKey||e.altKey)return;            // browser shortcuts stay the browser's
+  if(!scene&&mini.keydown(e.key,miniClock))e.preventDefault();
   return;
  }
  if(!pong)return;
@@ -686,8 +740,28 @@ function renderSheet(kind,opener){
   const rm=rematchBlock()?[]:[itemButton("Quitte ou double !",`Revanche immédiate, 1 chance sur 2 : moral +${R.DOUBLE.moral} et énergie +${R.DOUBLE.energy}… ou un stress ×${R.DOUBLE.stressFactor} (moral −${R.STRESS_HIT*R.DOUBLE.stressFactor}).`,"50/50",false,rematch)];
   body.append(list(...rm,
    itemButton("Pong des arguments",err||"Renvoie les piques de l'adversaire pendant 20 s (doigt, souris ou flèches). +2 XP par renvoi.",`+${XP.activity} XP`,!!err,startPong),
-   itemButton("Débattre",err||"Une colère, un caprice, et l'éloquence progresse. Énergie −8, moral +10.",`+${XP.activity} XP`,!!err,debate)
+   itemButton("Débattre",err||`Débat chrono : ${R.MINI.debate.ms/1000} s pour enchaîner les réponses de ta ligne (doigt, souris ou 1-2-3). Énergie −8, moral +10, +1 XP par bonne réponse (20 max).`,`+${XP.activity} XP`,!!err,()=>startMini("debate")),
+   itemButton(`Manif : ${manifLabel(S.camp)}`,err||(S.camp==="left"
+    ?"Tiens le cortège jusqu'à Nation en 30 s : esquive LBD et lacrymo, ramasse les tracts. Doigt, souris ou flèches ; parapluie avec un deuxième doigt ou Espace."
+    :"Joue l'épervier 35 s avec un CRS : interpelle les manifestants, esquive pavés et molotovs. Gare aux journalistes et aux collègues infiltrés."),`+${XP.activity} XP`,!!err,()=>startMini("manifStart"))
   ));
+ }
+ if(kind==="news"){
+  const one=newsList.length===1;
+  set(one?`Quoi de neuf dans PolitiGo ${newsList[0].version}`:"Quoi de neuf dans PolitiGo",one?`Mise à jour du ${newsDate(newsList[0].date)}`:`${newsList.length} mises à jour depuis ta dernière visite`);
+  for(const e of newsList){
+   if(!one)body.append(blockTitle(`Version ${e.version} · ${newsDate(e.date)}`));
+   for(const [title,items] of [["Nouveautés",e.added],["Corrections",e.fixed]]){
+    if(!items?.length)continue;
+    const h=document.createElement("p");h.className="news-head";h.textContent=title;
+    const ul=document.createElement("ul");ul.className="news";
+    for(const t of items){const li=document.createElement("li");li.textContent=t;ul.append(li);}
+    body.append(h,ul);
+   }
+  }
+  const row=document.createElement("div");row.className="btn-row";
+  const ok=Object.assign(document.createElement("button"),{type:"button",className:"btn",textContent:"C'est noté"});ok.addEventListener("click",()=>closeSheet());
+  row.append(ok);body.append(row);
  }
  if(kind==="more"){
   set(p.name,`Niveau ${S.lvl}/100 · ${p.detail}`);
@@ -743,21 +817,47 @@ function renderSheet(kind,opener){
   // The version the server was built from (git describe), without the tag's leading "v".
   const ver=document.createElement("p");ver.className="fine";
   ver.textContent=VERSION==="dev"?"PolitiGo, version de développement":`PolitiGo ${VERSION.replace(/^v(?=\d)/,"")}`;
-  body.append(who,acc,ver);
+  const news=Object.assign(document.createElement("button"),{type:"button",className:"btn",textContent:"Nouveautés de la version"});
+  news.addEventListener("click",()=>showNews([latestEntry(RELEASE)],false));
+  const nrow=document.createElement("div");nrow.className="btn-row";nrow.append(news);
+  body.append(who,acc,ver,nrow);
   const about=document.createElement("p");about.className="fine";
   about.textContent="PolitiGo est une satire. Personnages caricaturés et répliques inventées ; les faits rappelés sont publics, avec le stade de chaque procédure, et la présomption d'innocence s'applique. Aucun achat réel : la seule monnaie est le frais de mandat, gagné en restant en vie. Seuls ton pseudo et ta partie sont enregistrés.";
   body.append(about);
  }
 }
+// ---------- what's new ----------
+// After an update, each player sees what changed once (on any device: the server keeps the last release read);
+// closing the sheet, however it is closed, marks it read. The Dossier button shows it again on demand.
+let newsList=[],newsAuto=false,newsPending=false;
+const newsDate=d=>{const t=Date.parse(d+"T12:00:00Z");return Number.isFinite(t)?new Date(t).toLocaleDateString("fr-FR",{day:"numeric",month:"long",year:"numeric"}):d;};
+function showNews(list,auto){
+ if(!list.length||!list[0])return;
+ newsList=list;newsAuto=auto;
+ if(auto)sheetOpener=null;                         // nothing was tapped: focus goes back to the screen
+ openSheet("news",auto?null:$("[data-sheet=more]"));
+}
+// A scene replayed at sign-in (a death while away) plays first: the news waits for its end (see tickFrame).
+function maybeShowNews(){
+ if(!S||!RELEASE||newsAuto||sheetKind)return;
+ if(scene){newsPending=true;return;}
+ const list=missedEntries(SEEN,RELEASE);
+ if(list.length)showNews(list,true);
+}
+async function markNewsSeen(){
+ const r=await api("POST","/api/changelog/seen",{});
+ if(r.ok&&"seenVersion" in r)SEEN=r.seenVersion||null;
+}
 function closeSheet(fromBack=false){
  if($("#sheet").hidden)return;
+ if(sheetKind==="news"&&newsAuto){newsAuto=false;SEEN=RELEASE;markNewsSeen();}
  if(!fromBack&&sheetInHistory){sheetInHistory=false;pendingBack=true;history.back();}
  $("#sheet").hidden=true;sheetKind=null;setBackgroundInert(false);
- if(sheetOpener&&authEl.hidden)sheetOpener.focus();
+ if(authEl.hidden)(sheetOpener||cv).focus();
 }
 document.querySelectorAll("[data-sheet]").forEach(b=>b.addEventListener("click",()=>{
  if(!S)return;
- if(pong){toast("Termine d'abord le débat (Échap pour abandonner).");return;}
+ if(pong||mini){toast("Termine d'abord la partie (Échap pour abandonner).");return;}
  skipScene();openSheet(b.dataset.sheet,b);
 }));
 $("#sheet-close").addEventListener("click",()=>closeSheet());
@@ -767,7 +867,7 @@ $("#sheet").addEventListener("click",e=>{if(e.target.id==="sheet")closeSheet();}
 const authEl=$("#auth");
 let regCamp="left";
 function showAuth(message=""){
- closeSheet();es?.close();es=null;S=null;anim=pong=scene=null;setNet(true);$("#tips").hidden=true;
+ closeSheet();es?.close();es=null;S=null;anim=pong=mini=scene=null;newsPending=false;setNet(true);$("#tips").hidden=true;
  authEl.hidden=false;setBackgroundInert(true);
  $("#auth-error").textContent=message;
  document.querySelectorAll(".camp").forEach(b=>{
@@ -801,7 +901,7 @@ async function submitAuth(e,path,extra){
  applyMe(r,{replay:path==="/api/login"});connectLive();showTips();
  cv.focus();                          // the focused button just disappeared with the sign-in screen
  if(path==="/api/register"){startScene(S.camp,S.camp,"");toast("Bienvenue ! Touche l'écran pour passer l'animation.");}
- else toast(`Bon retour, ${me} !`);
+ else{toast(`Bon retour, ${me} !`);maybeShowNews();}
 }
 // The first steps card shows until it is dismissed once on this device.
 function showTips(){let seen=false;try{seen=!!localStorage.getItem("politigo.tips");}catch{}$("#tips").hidden=seen;}
@@ -820,14 +920,17 @@ function frame(now){
 }
 function tickFrame(now){
  const fdt=lastFrame?now-lastFrame:0;lastFrame=now;
- if(playing!==!!pong){playing=!!pong;document.body.classList.toggle("playing",playing);}
+ if(playing!==!!(pong||mini)){playing=!!(pong||mini);document.body.classList.toggle("playing",playing);}
  if(S&&authEl.hidden){
   S.vclock=vnow();       // the displayed clock moves on; hour ticks themselves always come from the server
   // A scene (an evolution earned mid-game) freezes the Pong clock instead of eating its 20 seconds.
   if(pong){if(scene){pong.t0+=fdt;pong.last=now;if(pong.endT)pong.endT+=fdt;}else stepPong(now);}
+  // The mini-games run on their own clock, which a scene stops and a hidden tab pauses (one frame is 100 ms at most).
+  if(mini&&!scene){const d=Math.min(100,fdt);miniClock+=d;mini.step(miniClock,Math.min(0.05,d/1000));if(mini.over(miniClock))endMini();}
   // Full frame rate only while something moves fast; the idle screen is fine at ~8 fps and saves battery.
-  if(pong||scene||anim||lvlFx||now-lastDraw>=120){lastDraw=now;render(now);}
+  if(pong||mini||scene||anim||lvlFx||now-lastDraw>=120){lastDraw=now;render(now);}
   if(now-lastHud>500){lastHud=now;refresh();liveSheet();}
+  if(newsPending&&!scene){newsPending=false;maybeShowNews();}
  }
 }
 
@@ -837,7 +940,7 @@ fitCanvas();
 async function boot(delay=5000){
  const r=await api("GET","/api/me");
  if(S)return;                                   // signed in through the form meanwhile
- if(r.ok&&r.state){hideAuth();applyMe(r,{replay:true});connectLive();showTips();return;}
+ if(r.ok&&r.state){hideAuth();applyMe(r,{replay:true});connectLive();showTips();maybeShowNews();return;}
  if(r.status===401){if(authEl.hidden)showAuth();else $("#auth-error").textContent="";return;}
  const msg=`${r.error} Nouvel essai automatique…`;
  if(authEl.hidden)showAuth(msg);else $("#auth-error").textContent=msg;

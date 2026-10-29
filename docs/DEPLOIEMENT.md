@@ -129,6 +129,21 @@ Si l'un de ses `location` utilise `add_header`, recopier la ligne HSTS dedans : 
 - **Fermer les inscriptions** : `POLITIGO_INVITE=off` puis `docker compose up -d`. Les comptes existants continuent de jouer.
 - **Nouveau code généré** (après une fuite) : `docker compose exec api rm /data/invite.txt && docker compose restart api`
   (dans Portainer : conteneur `api` → Console → `rm /data/invite.txt`, puis Restart), et lire le nouveau code dans les logs.
+- **Mot de passe perdu, compte bloqué** : l'outil `admin.mjs` de l'image `api`, à lancer *dans* le conteneur
+  (`docker compose exec api node admin.mjs …`, ou dans Portainer : conteneur `api` → Console → `/bin/sh` → Connect, puis `node admin.mjs …`) :
+
+  | Commande | Effet |
+  |---|---|
+  | `node admin.mjs list` | liste les joueurs (pseudo, inscription, dernière activité) |
+  | `node admin.mjs reset-password <pseudo>` | génère un mot de passe fort et l'affiche **une seule fois** |
+  | `node admin.mjs reset-password <pseudo> --stdin` | le mot de passe est tapé (masqué, deux fois) ou envoyé sur l'entrée standard |
+  | `node admin.mjs unlock <pseudo>` | efface les essais de connexion ratés sur ce pseudo (et des adresses qui l'ont essayé) |
+
+  Le pseudo se trouve comme au login, sans tenir compte des majuscules ni des accents (`"Mon Pseudo"` entre guillemets s'il a un espace).
+  Une réinitialisation ferme toutes les sessions du joueur sur tous ses appareils et efface ses essais ratés : il se reconnecte
+  aussitôt avec le nouveau mot de passe, et retrouve son compagnon intact. Aucun redémarrage.
+  Le mot de passe n'est **jamais** accepté en argument (il resterait dans l'historique du shell et de Docker) : transmets celui
+  qui est généré par un canal privé.
 
 ## 4. Sécurité en bref
 
@@ -138,7 +153,11 @@ Si l'un de ses `location` utilise `add_header`, recopier la ligne HSTS dedans : 
 - **Requêtes** : écritures refusées hors JSON et hors origine du site ; limitation des tentatives par adresse, par adresse et pseudo,
   et par pseudo, si bien qu'un inconnu ne peut pas bloquer le compte d'un ami ; 5 essais de suppression de compte par quart d'heure ;
   3 flux en direct par joueur ; une démission par heure.
-- **Jeu** : le serveur fait foi ; score du mini-jeu vérifié (durée, cadence, pas de rejeu) ; états relus et bornés au démarrage.
+- **Administration** : aucune route web. `admin.mjs` passe par un socket Unix (`/tmp/politigo-admin.sock`, mode 0600, utilisateur `node`)
+  qui n'existe qu'à l'intérieur du conteneur : il faut déjà pouvoir y lancer une commande (accès Docker ou Portainer) pour s'en servir.
+  Le serveur fait lui-même le travail (hachage, révocation des sessions, effacement des compteurs), avec une requête bornée en taille
+  et en durée. `POLITIGO_ADMIN_SOCKET=off` le désactive.
+- **Jeu** : le serveur fait foi ; score des quatre mini-jeux vérifié (durée, cadence, pas de rejeu, bonus plafonné) ; états relus et bornés au démarrage.
 - **Robustesse** :
   - un joueur ou une connexion en erreur est ignoré sans arrêter le serveur ;
   - une écriture ratée (disque plein) annule l'action au lieu de désynchroniser mémoire et base ;
@@ -163,7 +182,12 @@ On ne pousse jamais directement sur `main` : tout passe par `dev`, et `main` ne 
 2. **Mise en production** : pull request `dev` → `main`, fusionnée quand le statut `tests` est vert, en
    « Create a merge commit » (pas de squash ni de rebase, sinon les historiques de `dev` et `main` divergent).
    La fusion sur `main` relance les tests, puis publie les images `latest` et `sha-xxxxxxx`.
-3. **Version** : sur `main` à jour, `git tag -a v1.2.1 -m "…" && git push origin v1.2.1` → images `1.2.1`, puis la release GitHub.
+3. **Version** : d'abord, sur `dev`, ajouter l'entrée de la version en tête de `web/changelog.mjs` (numéro sans le « v »,
+   date, nouveautés et corrections en français : c'est ce que les joueurs liront). Puis, sur `main` à jour après la fusion,
+   `git tag -a v1.3.0 -m "…" && git push origin v1.3.0` → images `1.3.0`, puis la release GitHub (le même texte peut y servir).
+   À leur connexion suivante, les joueurs voient une fois « Quoi de neuf dans PolitiGo 1.3.0 » (toutes les versions manquées
+   s'ils ont sauté des mises à jour), sur n'importe quel appareil, et le revoient à volonté dans Dossier → Compte.
+   Un nouvel inscrit ne le voit pas, une version de développement non plus.
    La version est lue par `git describe` au build et affichée dans le jeu (Dossier → Compte) : « PolitiGo 1.2.1 »,
    ou « 1.2.1-3-gabc1234 » pour un commit de `main` postérieur au tag. Un build local affiche « version de développement »
    (`POLITIGO_VERSION=v1.2.1 docker compose build` pour la fixer).
@@ -178,9 +202,9 @@ interdire la suppression et le force push, exiger une pull request (0 approbatio
 ## 6. Tests
 
 ```bash
-bash tests/run-server.sh                       # 107 tests : règles (dont l'équilibrage J15) + API, dans l'image Node de production
+bash tests/run-server.sh                       # 148 tests : règles (dont l'équilibrage J15) + mini-jeux + changelog + API + outil d'admin, dans l'image Node de production
 docker compose restart api                     # remet à zéro les limites d'inscription avant l'e2e
-powershell -File tests\e2e.ps1                 # parcours complet dans Chrome (crée deux joueurs de test)
+powershell -ExecutionPolicy Bypass -File tests\e2e.ps1   # parcours complet dans Chrome (crée deux joueurs de test)
 ```
 
 ## 7. Captures et sources du README

@@ -2,7 +2,7 @@
 FROM node:24-alpine
 ENV NODE_ENV=production NODE_NO_WARNINGS=1 TZ=Europe/Paris PORT=3000 DB_PATH=/data/politigo.db
 WORKDIR /app
-COPY web/rules.mjs server/server.mjs ./
+COPY web/rules.mjs server/server.mjs server/admin.mjs ./
 # The volume inherits this ownership the first time it is created.
 RUN mkdir -p /data && chown node:node /data
 USER node
