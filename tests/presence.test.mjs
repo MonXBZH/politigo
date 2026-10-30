@@ -48,14 +48,15 @@ function stream(c){
 const rowOf=(rows,name)=>rows.find(r=>r.name===name);
 const boardRow=async(c,name)=>rowOf((await c.call("GET","/api/board")).json.board,name);
 
-test("presence: an open stream is online on the board and in the opponents; closing it goes offline live",async()=>{
+test("presence: an open stream is online on the board and in the opponents; closing it goes offline live",async t=>{
  const a=await player(PORT,"Présent A"),w=await player(PORT,"Témoin W");
+ const open=[];t.after(()=>{for(const s of open)s.close();});   // even on a failure: no stream leaks into the next test
  const row=await boardRow(w,"Présent A");
  assert.equal(row.online,false,"no stream yet");
  assert.equal(rowOf((await w.call("GET","/api/duels")).json.opponents,"Présent A").online,false);
- const sw=stream(w);await until(()=>sw.events.some(e=>e.ev==="board"));
+ const sw=stream(w);open.push(sw);await until(()=>sw.events.some(e=>e.ev==="board"));
  assert.equal(rowOf(sw.events.find(e=>e.ev==="board").data,"Témoin W").online,true,"one's own first board shows oneself online");
- const sa=stream(a);
+ const sa=stream(a);open.push(sa);
  assert.ok(await until(()=>sw.events.some(e=>e.ev==="board"&&rowOf(e.data,"Présent A")?.online===true)),"the others see A come online");
  assert.equal((await boardRow(w,"Présent A")).online,true);
  const opp=rowOf((await w.call("GET","/api/duels")).json.opponents,"Présent A");
@@ -63,23 +64,27 @@ test("presence: an open stream is online on the board and in the opponents; clos
  // Only a boolean: no time of any kind.
  assert.deepEqual(Object.keys(row).filter(k=>/seen|last|time|at$/i.test(k)),[]);
  // A second tab is no news; closing one of two keeps A online.
- const n=sw.events.length,sa2=stream(a);await until(()=>sa2.events.some(e=>e.ev==="board"));
+ const n=sw.events.length,sa2=stream(a);open.push(sa2);await until(()=>sa2.events.some(e=>e.ev==="board"));
  sa.close();await sleep(300);
  assert.equal((await boardRow(w,"Présent A")).online,true,"still one stream open");
  assert.ok(!sw.events.slice(n).some(e=>e.ev==="board"&&rowOf(e.data,"Présent A")?.online===false));
- sa2.close();
- assert.ok(await until(()=>sw.events.some(e=>e.ev==="board"&&rowOf(e.data,"Présent A")?.online===false)),"the last stream closed: offline for everyone");
+ // Only the boards sent after the close: the very first one, from before A came online, also shows A offline.
+ const m=sw.events.length;sa2.close();
+ assert.ok(await until(()=>sw.events.slice(m).some(e=>e.ev==="board"&&rowOf(e.data,"Présent A")?.online===false)),"the last stream closed: offline for everyone");
  assert.equal((await boardRow(w,"Présent A")).online,false);
  assert.equal(rowOf((await w.call("GET","/api/duels")).json.opponents,"Présent A").online,false);
- sw.close();
 });
 
 test("opponents: online first, by name inside each group",async()=>{
  const me=await player(PORT,"Trieur"),names=["Zoé En Ligne","Albert Absent","Bruno En Ligne","Yves Absent"];
  const cs=[];for(const n of names)cs.push(await player(PORT,n));
  const ss=[stream(cs[0]),stream(cs[2])];
- await until(async()=>(await me.call("GET","/api/duels")).json.opponents.filter(o=>o.online).length===2);
- const opp=(await me.call("GET","/api/duels")).json.opponents;
+ // The order is checked on this test's own players only: a stream from another test may still be closing.
+ const mine=async()=>(await me.call("GET","/api/duels")).json.opponents.filter(o=>names.includes(o.name));
+ await until(async()=>(await mine()).filter(o=>o.online).length===2);
+ const all=(await me.call("GET","/api/duels")).json.opponents,fo=all.findIndex(o=>!o.online);
+ assert.ok(fo<0||all.slice(fo).every(o=>!o.online),"online first: "+all.map(o=>o.name+":"+o.online).join(", "));
+ const opp=await mine();
  const on=opp.filter(o=>o.online).map(o=>o.name),first=opp.findIndex(o=>!o.online);
  assert.deepEqual(on,["Bruno En Ligne","Zoé En Ligne"]);
  assert.ok(opp.slice(0,first).every(o=>o.online)&&opp.slice(first).every(o=>!o.online),"online first: "+opp.map(o=>o.name+":"+o.online).join(", "));
