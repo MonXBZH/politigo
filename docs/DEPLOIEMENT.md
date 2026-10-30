@@ -1,6 +1,7 @@
 # PolitiGo — déploiement, exploitation et développement
 
-Guide technique de PolitiGo (présentation du jeu : [README](../README.md)). Un site statique (nginx) et une API de jeu (Node 24, SQLite), dans deux conteneurs.
+Guide technique de PolitiGo (présentation du jeu : [README](../README.md)). Un site statique (nginx) et une API de jeu (Node 24, SQLite),
+dans deux conteneurs, plus une interface d'administration facultative dans un troisième.
 Le serveur fait foi : il détient les parties, fait tourner l'horloge et vérifie chaque action.
 
 ```
@@ -8,6 +9,7 @@ Internet ─HTTPS─> reverse proxy (TLS, domaine) ─HTTP─> web:8080 (nginx) 
                                                                           ├─ /api/*  ─> api:3000 (Node)
                                                                           └─ /events ─> api:3000 (flux temps réel)
                                                                                            └─ volume SQLite
+LAN ─HTTP─> admin:8090 (facultatif) ─socket Unix (volume partagé)─> api   (aucun port réseau d'administration sur l'API)
 ```
 
 ## 1. Sur le serveur Docker
@@ -30,7 +32,13 @@ docker compose up -d --build
 | `POLITIGO_SPEED` | `1` (temps réel ; plus grand uniquement sur un serveur de test) |
 | `POLITIGO_PUSH` | facultatif. Vide : notifications de duel activées ; **`off`** : désactivées (voir « Duels et notifications ») |
 | `POLITIGO_PUSH_CONTACT` | facultatif. Adresse `mailto:` ou `https:` transmise aux services de notification ; vide : la page GitHub du projet |
-| `POLITIGO_EVENT` | facultatif. Vide : événements saisonniers automatiques ; **`off`** : désactivés ; `halloween` : forcé (tests) — voir « Événements saisonniers (Halloween) » |
+| `POLITIGO_EVENT` | facultatif. Vide : événements saisonniers automatiques ; **`off`** : désactivés ; `halloween` : forcé (tests) — voir « Événements saisonniers (Halloween) ». L'interface d'administration peut le changer à chaud |
+| `POLITIGO_SERVER_NAME` | facultatif. Nom de cette partie dans l'interface d'administration (utile quand elle en gère plusieurs) ; vide : « PolitiGo » |
+| `POLITIGO_ADMIN_PASSWORD` | interface d'administration : mot de passe, 12 caractères minimum. **Vide** : un mot de passe est généré au premier démarrage et affiché **une seule fois** dans les logs du conteneur `admin` (seule son empreinte est gardée, dans le volume `politigo-admin-data`) |
+| `POLITIGO_ADMIN_BIND` / `POLITIGO_ADMIN_PORT` | adresse et port de l'interface d'administration (`0.0.0.0` / `8090` par défaut, pour un usage sur le réseau local). Derrière Nginx Proxy Manager : `127.0.0.1` (ou filtrer le port 8090) |
+| `POLITIGO_ADMIN_PROXY_HOPS` | `0` en accès direct ; `1` derrière un reverse proxy (Nginx Proxy Manager…), pour que les limites de connexion voient la vraie adresse |
+| `POLITIGO_ADMIN_COOKIE_SECURE` | `1` si l'interface d'administration est servie en HTTPS (sinon déduit de `X-Forwarded-Proto`) |
+| `POLITIGO_ADMIN_SERVERS` | facultatif. Plusieurs parties sur ce même hôte Docker : `"Prod=/run/politigo/admin.sock;Test=/run/politigo-test/admin.sock"` (voir « Interface d'administration ») ; vide : cette pile seulement |
 
 **Pare-feu** : n'autoriser le port 8080 qu'à l'adresse du reverse proxy. Attention, les ports publiés par Docker
 contournent UFW et firewalld : la règle se pose dans la chaîne `DOCKER-USER` (à rendre persistante, par exemple avec `iptables-persistent`) :
@@ -48,7 +56,7 @@ Portainer déploie mieux une stack qui **tire** des images qu'une stack qui les 
 construites par GitHub et publiées sur son registre (ghcr.io) :
 
 1. Pousser le projet sur GitHub (le `.gitignore` exclut `.env`). À chaque push sur `main`, le workflow
-   `.github/workflows/images.yml` lance les tests puis publie `ghcr.io/<compte>/politigo-web` et `politigo-api`
+   `.github/workflows/images.yml` lance les tests puis publie `ghcr.io/<compte>/politigo-web`, `politigo-api` et `politigo-admin`
    (tags `latest`, `sha-xxxxxxx`, et `1.2.0` pour un tag git `v1.2.0`), pour amd64 et arm64.
 2. Si le dépôt est privé, les images le sont aussi : créer un jeton GitHub avec le droit `read:packages`, puis dans
    Portainer → Registries → Add registry → Custom : URL `ghcr.io`, identifiant GitHub, le jeton comme mot de passe.
@@ -59,10 +67,12 @@ construites par GitHub et publiées sur son registre (ghcr.io) :
    |---|---|
    | `POLITIGO_IMAGES` | `ghcr.io/<compte>/politigo` |
    | `POLITIGO_TAG` | `latest`, ou une version figée (`1.2.0`, `sha-xxxxxxx`) pour maîtriser les mises à jour |
-   | `POLITIGO_INVITE`, `POLITIGO_BIND`, `POLITIGO_PORT`, `COOKIE_SECURE`, `PROXY_HOPS`, `MAX_PLAYERS`, `POLITIGO_PUSH`, `POLITIGO_PUSH_CONTACT`, `POLITIGO_EVENT` | comme dans le tableau ci-dessus |
+   | `POLITIGO_INVITE`, `POLITIGO_BIND`, `POLITIGO_PORT`, `COOKIE_SECURE`, `PROXY_HOPS`, `MAX_PLAYERS`, `POLITIGO_PUSH`, `POLITIGO_PUSH_CONTACT`, `POLITIGO_EVENT`, `POLITIGO_SERVER_NAME` | comme dans le tableau ci-dessus |
+   | `POLITIGO_ADMIN_PASSWORD`, `POLITIGO_ADMIN_BIND`, `POLITIGO_ADMIN_PORT`, `POLITIGO_ADMIN_PROXY_HOPS`, `POLITIGO_ADMIN_COOKIE_SECURE`, `POLITIGO_ADMIN_SERVERS` | interface d'administration (service `admin`, activé par défaut ; supprimer son bloc et ses deux volumes pour s'en passer) |
 
 4. **Mise à jour** : dans la stack, « Update the stack » en cochant « Re-pull image ». Le volume (les parties) est conservé.
-   Portainer préfixe le volume du nom de la stack : `<stack>_politigo-data`, à sauvegarder.
+   Portainer préfixe les volumes du nom de la stack : `<stack>_politigo-data` (à sauvegarder), `<stack>_politigo-admin-sock`
+   (le socket d'administration, rien à sauvegarder) et `<stack>_politigo-admin-data` (l'empreinte du mot de passe d'administration).
 
 Sans GitHub, on peut aussi construire sur le serveur (`docker compose build`, qui crée `politigo-web` et `politigo-api`),
 puis déclarer dans Portainer `POLITIGO_IMAGES=politigo` et `POLITIGO_TAG=latest` : la stack utilise alors ces images locales.
@@ -100,6 +110,16 @@ server {
         # $remote_addr et non $proxy_add_x_forwarded_for : une adresse inventée par le visiteur est écrasée.
         proxy_set_header X-Forwarded-For $remote_addr;
     }
+    # Envoi d'images dans le chat (2 Mo au plus) : la seule requête plus grosse que 8 Ko.
+    location = /api/chat/media {
+        client_max_body_size 2200k;
+        proxy_pass http://IP_DU_SERVEUR_DOCKER:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $remote_addr;
+    }
     # Classement et fil en direct : flux ouvert, jamais mis en tampon.
     location /events {
         limit_conn pg_conn 4;
@@ -118,10 +138,15 @@ server {
 Le reverse proxy ne doit pas réécrire les en-têtes de sécurité envoyés par la pile (CSP, X-Frame-Options…), seulement ajouter HSTS.
 Si l'un de ses `location` utilise `add_header`, recopier la ligne HSTS dedans : nginx n'hérite alors plus de celle du `server`.
 
+**Nginx Proxy Manager** : la même chose dans l'onglet *Advanced* de l'hôte. Sans la `location = /api/chat/media` (ou un
+`client_max_body_size` d'au moins 2200k), l'envoi d'images dans le chat échoue avec une erreur 413 ; le texte, lui, passe.
+
 ## 3. Exploitation
 
-- **Sauvegarde** : le volume `politigo_politigo-data` contient `politigo.db` (comptes, parties, duels, fil) et `vapid.json`
-  (la clé des notifications : à sauvegarder avec la base, sinon les téléphones abonnés ne reçoivent plus rien). Exemple :
+- **Sauvegarde** : le volume `politigo_politigo-data` contient `politigo.db` (comptes, parties, duels, fil, chat), `vapid.json`
+  (la clé des notifications : à sauvegarder avec la base, sinon les téléphones abonnés ne reçoivent plus rien) et `chat-media/`
+  (les images du chat, effacées au bout de 7 jours). L'interface d'administration télécharge aussi une copie cohérente de la base
+  (page Sauvegarde). Exemple en ligne de commande :
   `docker run --rm -v politigo_politigo-data:/d -v "$PWD":/b alpine tar czf /b/politigo-$(date +%F).tgz -C /d .`
   Les fichiers du volume sont privés (mode 0600, propriétaire `node`) : lis-les en root, comme dans cet exemple.
 - **Mise à jour** : `docker compose build --pull && docker compose up -d` (récupère aussi les correctifs de sécurité de nginx et Node). Les parties sont conservées. Pendant un arrêt, même de plusieurs jours, rien ne se joue : au redémarrage, chaque partie
@@ -131,9 +156,12 @@ Si l'un de ses `location` utilise `add_header`, recopier la ligne HSTS dedans : 
   ou en avance de plus d'un an, l'API refuse de démarrer sans toucher aux parties, et Docker la relance jusqu'à ce que l'heure
   soit bonne. Si la date affichée dans le log est pourtant la bonne : `POLITIGO_TRUST_CLOCK=1`.
 - **Logs** : `docker compose logs -f api`.
-- **Fermer les inscriptions** : `POLITIGO_INVITE=off` puis `docker compose up -d`. Les comptes existants continuent de jouer.
-- **Nouveau code généré** (après une fuite) : `docker compose exec api rm /data/invite.txt && docker compose restart api`
-  (dans Portainer : conteneur `api` → Console → `rm /data/invite.txt`, puis Restart), et lire le nouveau code dans les logs.
+- **Fermer les inscriptions** : interface d'administration → Réglages (à chaud), ou `POLITIGO_INVITE=off` puis `docker compose up -d`.
+  Les comptes existants continuent de jouer.
+- **Retrouver le code d'invitation** : interface d'administration (tableau de bord, bouton Copier), ou `node admin.mjs invite`.
+- **Nouveau code** (après une fuite) : interface d'administration → Réglages → Régénérer (il remplace alors celui de `.env`
+  et de `/data/invite.txt`). Sans l'interface : `docker compose exec api rm /data/invite.txt && docker compose restart api`
+  (code généré seulement : `POLITIGO_INVITE` vide), et lire le nouveau code dans les logs.
 - **Mot de passe perdu, compte bloqué** : l'outil `admin.mjs` de l'image `api`, à lancer *dans* le conteneur
   (`docker compose exec api node admin.mjs …`, ou dans Portainer : conteneur `api` → Console → `/bin/sh` → Connect, puis `node admin.mjs …`) :
 
@@ -145,6 +173,9 @@ Si l'un de ses `location` utilise `add_header`, recopier la ligne HSTS dedans : 
   | `node admin.mjs unlock <pseudo>` | efface les essais de connexion ratés sur ce pseudo (et des adresses qui l'ont essayé) |
   | `node admin.mjs announce "<texte>"` | annonce à tous : bandeau dans le jeu, notification aux abonnés, ligne « Annonce officielle » dans le fil de la République |
   | `node admin.mjs announce "<texte>" --to <pseudo>` | message à un seul joueur : bandeau et notification, rien dans le fil public |
+  | `node admin.mjs announce "<texte>" --camp gauche` | message à un camp (`gauche` ou `droite`) : bandeau et notification, rien dans le fil public |
+  | `node admin.mjs invite` | affiche le code d'invitation en vigueur (ou « Inscriptions fermées ») |
+  | `node admin.mjs stats` | joueurs, connectés, actifs, version |
 
   Une annonce : texte brut de 240 caractères au plus, entre guillemets. Elle n'apparaît jamais en pleine partie (bandeau et
   notification arrivent à la fin du mini-jeu) ; un joueur ni connecté ni abonné aux notifications ne la voit pas, sauf l'annonce
@@ -154,6 +185,50 @@ Si l'un de ses `location` utilise `add_header`, recopier la ligne HSTS dedans : 
   aussitôt avec le nouveau mot de passe, et retrouve son compagnon intact. Aucun redémarrage.
   Le mot de passe n'est **jamais** accepté en argument (il resterait dans l'historique du shell et de Docker) : transmets celui
   qui est généré par un canal privé.
+
+### Interface d'administration (conteneur `admin`, facultatif)
+
+Une page web pour tout ce que fait `admin.mjs`, et plus : `http://IP_DU_SERVEUR_DOCKER:8090`, mot de passe
+`POLITIGO_ADMIN_PASSWORD` (ou celui affiché une fois dans les logs du conteneur `admin`). Activée par défaut dans les deux
+compose ; supprimer le bloc `admin` et ses volumes pour s'en passer, le jeu n'en dépend pas.
+
+- **Tableau de bord** : joueurs, connectés, actifs sur 24 h et 7 jours, abonnés aux notifications, chat, version,
+  taille de la base, et le code d'invitation (masqué, bouton Copier).
+- **Joueurs** : fiche complète (camp, niveau, jauges, duels, activité), déconnexion de tous les appareils, nouveau mot de passe
+  (affiché une fois), déblocage, renommage, suspension (connexion refusée, compagnon figé, caché du classement ; à la levée, le
+  temps suspendu est sauté et non joué), privation de chat pour une durée.
+- **Annonces** : tout de suite ou planifiées (une fois, chaque jour, certains jours de la semaine, avec date de fin), à tous, à
+  un camp ou à un joueur ; aperçu, historique. Une annonce planifiée part même si le conteneur `admin` est arrêté (c'est
+  l'API qui les envoie) ; une annonce manquée de plus de 30 min (serveur arrêté) est sautée, pas envoyée en retard.
+- **Chat** : messages signalés (avec l'image), suppression, privation de chat de l'auteur. **Fil** : supprimer une ligne.
+  **Duels** : annuler un duel bloqué.
+- **Réglages** : code d'invitation (copier, régénérer), inscriptions ouvertes ou fermées, événement saisonnier (auto, désactivé,
+  forcé), à chaud. Ces réglages sont gardés dans la base et l'emportent ensuite sur `.env`.
+- **Sauvegarde** : télécharge une copie cohérente de la base (`VACUUM INTO`), et à part `vapid.json`. Fichiers sensibles
+  (empreintes des mots de passe, clé des notifications) : à garder hors d'Internet.
+- **Détection de bots** : sur 14 jours, pour chaque joueur, ses actions heure par heure, la part faite sans le jeu ouvert,
+  depuis autre chose qu'un navigateur, la nuit, et la régularité de son rythme, résumées en un score et des raisons.
+  Aucune adresse IP n'est enregistrée.
+- **Journal d'admin** : chaque action d'administration (web, ligne de commande, annonce planifiée), sans mot de passe.
+
+**Plusieurs parties sur le même hôte Docker** : chaque pile a son propre socket d'administration. Monter le volume du socket
+de l'autre pile dans le conteneur `admin` (volume externe `<autre-stack>_politigo-admin-sock`, exemple commenté dans le compose),
+puis `POLITIGO_ADMIN_SERVERS="Prod=/run/politigo/admin.sock;Test=/run/politigo-test/admin.sock"`. L'interface ouvre alors sur une
+vue d'ensemble (une carte par partie), le sélecteur en haut change de partie, et chaque confirmation nomme la partie visée.
+Des parties sur d'autres machines ne sont pas prises en charge : le socket ne passe jamais par le réseau.
+
+**Sécurité** : mot de passe haché (scrypt), session de 12 h en cookie `HttpOnly` `SameSite=Strict`, 5 essais ratés par
+adresse et 30 au total par quart d'heure (sous attaque, cela peut aussi te bloquer 15 min), protection CSRF, CSP stricte.
+L'interface ne parle qu'au socket, avec une liste fermée de commandes. Elle n'a pas de filtre d'adresses : à garder sur le
+réseau local, ou derrière Nginx Proxy Manager en HTTPS (`POLITIGO_ADMIN_BIND=127.0.0.1` et `POLITIGO_ADMIN_PROXY_HOPS=1`).
+
+### Chat
+
+- Un salon pour tous et un salon par camp (un joueur voit celui de son camp actuel). Texte de 500 caractères, emojis,
+  images GIF, PNG, JPEG ou WebP de 2 Mo au plus (type vérifié sur le contenu, jamais sur le nom).
+- Messages et images effacés au bout de **7 jours** ; un joueur peut effacer les siens et signaler ceux des autres.
+- Limites : 8 messages par 20 s, 20 images par heure, 3 images en attente par joueur, 300 Mo d'images en tout.
+- Pas de notification ni de son : une pastille compte les non-lus, et rien ne s'affiche pendant un mini-jeu.
 
 ### Duels et notifications
 
@@ -188,8 +263,9 @@ Si l'un de ses `location` utilise `add_header`, recopier la ligne HSTS dedans : 
 - **Requêtes** : écritures refusées hors JSON et hors origine du site ; limitation des tentatives par adresse, par adresse et pseudo,
   et par pseudo, si bien qu'un inconnu ne peut pas bloquer le compte d'un ami ; 5 essais de suppression de compte par quart d'heure ;
   3 flux en direct par joueur ; une démission par heure.
-- **Administration** : aucune route web. `admin.mjs` passe par un socket Unix (`/tmp/politigo-admin.sock`, mode 0600, utilisateur `node`)
-  qui n'existe qu'à l'intérieur du conteneur : il faut déjà pouvoir y lancer une commande (accès Docker ou Portainer) pour s'en servir.
+- **Administration** : aucune route web dans l'API. `admin.mjs` et le conteneur `admin` passent par un socket Unix
+  (`/run/politigo/admin.sock` dans le volume partagé `politigo-admin-sock`, mode 0600, utilisateur `node`) : il faut déjà pouvoir
+  lancer une commande dans un de ces conteneurs, ou ouvrir l'interface avec son mot de passe, pour s'en servir.
   Le serveur fait lui-même le travail (hachage, révocation des sessions, effacement des compteurs), avec une requête bornée en taille
   et en durée. `POLITIGO_ADMIN_SOCKET=off` le désactive.
 - **Jeu** : le serveur fait foi ; score des quatre mini-jeux vérifié (durée, cadence, pas de rejeu, bonus plafonné) ;
@@ -238,7 +314,8 @@ interdire la suppression et le force push, exiger une pull request (0 approbatio
 ## 6. Tests
 
 ```bash
-bash tests/run-server.sh                       # 252 tests : règles (dont l'équilibrage J15) + mini-jeux + test politique + changelog + API + duels + notifications + migrations + outil d'admin, dans l'image Node de production
+bash tests/run-server.sh                       # 300 tests : règles (dont l'équilibrage J15) + mini-jeux + test politique + changelog + API + duels + notifications + chat + migrations + outils et interface d'admin, dans l'image Node de production
+bash tests/run-server.sh tests/chat.test.mjs   # un seul fichier
 docker compose restart api                     # remet à zéro les limites d'inscription avant l'e2e
 powershell -ExecutionPolicy Bypass -File tests\e2e.ps1   # parcours complet dans Chrome (crée deux joueurs de test)
 ```
@@ -246,8 +323,11 @@ powershell -ExecutionPolicy Bypass -File tests\e2e.ps1   # parcours complet dans
 ## 7. Captures et sources du README
 
 ```bash
-# Captures d'écran (docs/images/*.png) : pile locale VIDE et lancée, en journée (heure de Paris)
-powershell -ExecutionPolicy Bypass -File tools\screenshots.ps1
+# Captures d'écran (docs/images/*.png) : pile locale VIDE et lancée, en journée (heure de Paris), sans événement saisonnier
+powershell -ExecutionPolicy Bypass -File tools\screenshots.ps1 -AdminUrl http://localhost:8090/ -AdminPassword <mot de passe admin>
+# Sans toucher à sa pile locale : une pile jetable à part (PowerShell), puis docker compose -p politigo-shots down -v
+#   $env:COMPOSE_PROJECT_NAME="politigo-shots"; $env:POLITIGO_PORT="8081"; $env:POLITIGO_ADMIN_PORT="8091"; $env:POLITIGO_EVENT="off"
+#   docker compose up -d --build, puis le script avec -Url http://localhost:8081/ -AdminUrl http://localhost:8091/
 # Page des sources (docs/SOURCES.md), à régénérer après toute modification d'un personnage ou d'une casserole
 docker run --rm -v "$PWD:/w" -w /w node:24-alpine node tools/make-sources.mjs
 ```
