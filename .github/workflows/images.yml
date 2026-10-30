@@ -1,4 +1,4 @@
-# Builds the two PolitiGo images and publishes them to GitHub's registry (ghcr.io/<owner>/politigo-web|api).
+# Builds the three PolitiGo images and publishes them to GitHub's registry (ghcr.io/<owner>/politigo-web|api|admin).
 # Runs on every push to main (a merged pull request from dev), on version tags (v1.2.0 -> image tag 1.2.0) and
 # on demand. Day-to-day work happens on dev, where ci.yml only runs the tests.
 name: images
@@ -14,7 +14,7 @@ concurrency:
   group: images-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  # Last guard before publishing, for both images: the tests pass, and a version tag sits on main.
+  # Last guard before publishing, for every image: the tests pass, and a version tag sits on main.
   tests:
     # Not "tests": that name is the pull request check required by main's ruleset (ci.yml).
     name: tests before publishing
@@ -43,6 +43,8 @@ jobs:
         include:
           - {name: web, dockerfile: Dockerfile}
           - {name: api, dockerfile: server/Dockerfile}
+          # The optional admin interface.
+          - {name: admin, dockerfile: admin/Dockerfile}
     steps:
       # The full history and tags: git describe names the version shown in the game ("v1.2.1", "v1.2.1-3-gabc1234").
       - uses: actions/checkout@v7
