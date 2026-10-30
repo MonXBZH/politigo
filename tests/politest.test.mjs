@@ -11,6 +11,7 @@ const kinds=(l,r,n)=>[...Array(l).fill("left"),...Array(r).fill("right"),...Arra
 
 test("every question has a question and three non-empty answers short enough for a button",()=>{
  assert.ok(TEST_QUESTIONS.length>=TEST_SIZE);
+ assert.equal(TEST_QUESTIONS.length,20,"a pool of 20, so that tests rarely repeat");
  for(const q of TEST_QUESTIONS){
   assert.equal(q.length,4,q[0]);
   for(const s of q)assert.ok(typeof s==="string"&&s.trim().length>0,q[0]);

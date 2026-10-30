@@ -18,7 +18,13 @@ export const TEST_QUESTIONS=[
  ["Des manifestants cassent la vitrine d'une banque.","La vraie violence, c'est le système","Comparution immédiate et prison ferme","Je récupère les stylos de l'agence"],
  ["Le service militaire ?","Un service civique, et sans fusil","Obligatoire, en rangers et au garde-à-vous","Seulement pour les pigeons"],
  ["Les fonctionnaires ?","On en embauche 500 000","On en supprime 500 000","On les clone, pour voir"],
- ["La fraude ?","Traquer l'évasion fiscale des riches","Traquer la fraude aux allocations","Tricher au Monopoly"]
+ ["La fraude ?","Traquer l'évasion fiscale des riches","Traquer la fraude aux allocations","Tricher au Monopoly"],
+ ["Un jet privé pour aller voir Roland-Garros ?","On interdit les jets privés, point","Chacun dépense son argent comme il veut","Seulement s'il me dépose au passage"],
+ ["Le SMIC à 2 000 € net ?","Tout de suite, et indexé sur l'inflation","Et pourquoi pas la faillite de toutes les PME ?","Payé en tickets de manège"],
+ ["La police municipale armée ?","Plutôt des éducateurs de rue","Armée, équipée, et en nombre","Armée de pistolets à eau"],
+ ["Un fast-food remplace la boulangerie du village.","Malbouffe et multinationale : boycott !","Le marché a parlé, c'est ça la liberté","Je commande un menu baguette"],
+ ["La chasse ?","Interdite le week-end, et puis tout court","Tradition française : touche pas à ma chasse","Seulement la chasse aux œufs de Pâques"],
+ ["Une réforme des retraites passée au 49.3 ?","Déni de démocratie : grève générale !","Il fallait bien que quelqu'un ait du courage","Je prends ma retraite tout de suite, par précaution"]
 ];
 export const TEST_SIZE=5;
 // What each answer of a question is, in TEST_QUESTIONS order.
