@@ -439,9 +439,16 @@ function drawScene(now){
 }
 
 // ===================================================================== MINI-GAME: PONG OF ARGUMENTS
-const PONG={ms:20000,misses:3,speed:190,accel:1.06,maxSpeed:480,bubbleW:50,top:150,hitY:292,lost:390,wallL:80,wallR:386};
+const PONG={ms:20000,misses:3,speed:190,accel:1.06,maxSpeed:480,bubbleW:50,top:150,hitY:292,lost:390,wallL:80,wallR:386,dodge:0.75,dodgeGap:70,step:40};
 function pongText(mine){const side=mine?S.camp:S.camp==="left"?"right":"left",l=pongLines[side];return l[Math.floor(Math.random()*l.length)];}
-function pongServe(){Object.assign(pong,{bx:233,by:PONG.top+10,vx:(Math.random()<0.5?-1:1)*(50+Math.random()*60),vy:PONG.speed,text:pongText(false),mine:false});}
+// The opponent aims each pique at a random spot, three times out of four away from the candidate: standing still
+// in the middle no longer returns anything (tuned by simulation: a still candidate makes ~2 returns, not ~6).
+function pongShoot(){
+ const lo=PONG.wallL+PONG.bubbleW,hi=PONG.wallR-PONG.bubbleW,pick=()=>lo+Math.random()*(hi-lo);
+ let x=pick();if(Math.random()<PONG.dodge)for(let k=0;k<20&&Math.abs(x-pong.px)<PONG.dodgeGap;k++)x=pick();
+ pong.vx=(x-pong.bx)*pong.vy/(PONG.hitY+12-pong.by);
+}
+function pongServe(){Object.assign(pong,{bx:233,by:PONG.top+10,vy:PONG.speed,text:pongText(false),mine:false});pongShoot();}
 // The server charges the activity at the start and checks the score at the end (rate and duration).
 async function startPong(){
  closeSheet();
@@ -464,7 +471,7 @@ function stepPong(now){
  pong.bx+=pong.vx*dt;pong.by+=pong.vy*dt;
  if(pong.bx-PONG.bubbleW<PONG.wallL){pong.bx=PONG.wallL+PONG.bubbleW;pong.vx=Math.abs(pong.vx);}
  if(pong.bx+PONG.bubbleW>PONG.wallR){pong.bx=PONG.wallR-PONG.bubbleW;pong.vx=-Math.abs(pong.vx);}
- if(pong.vy<0&&pong.by<=PONG.top){pong.by=PONG.top;pong.vy=Math.abs(pong.vy);pong.text=pongText(false);pong.mine=false;}
+ if(pong.vy<0&&pong.by<=PONG.top){pong.by=PONG.top;pong.vy=Math.abs(pong.vy);pong.text=pongText(false);pong.mine=false;pongShoot();}
  if(pong.vy>0&&pong.by>=PONG.hitY&&pong.by<=PONG.hitY+24&&Math.abs(pong.bx-pong.px)<62){
   pong.vy=-Math.min(PONG.maxSpeed,Math.abs(pong.vy)*PONG.accel);pong.vx=pong.vx*0.6+(pong.bx-pong.px)*4;
   pong.text=pongText(true);pong.mine=true;pong.score++;pong.hitT=now;
@@ -537,7 +544,7 @@ document.addEventListener("keydown",e=>{
   return;
  }
  if(!pong)return;
- if(e.key==="ArrowLeft"||e.key==="ArrowRight"){pong.px=Math.max(PONG.wallL+30,Math.min(PONG.wallR-30,pong.px+(e.key==="ArrowLeft"?-28:28)));e.preventDefault();}
+ if(e.key==="ArrowLeft"||e.key==="ArrowRight"){pong.px=Math.max(PONG.wallL+30,Math.min(PONG.wallR-30,pong.px+(e.key==="ArrowLeft"?-PONG.step:PONG.step)));e.preventDefault();}
  if(e.key==="Escape"&&!pong.endT)pong.endT=performance.now();
 });
 

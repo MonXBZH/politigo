@@ -5,8 +5,11 @@ import {cmpRelease} from "./rules.mjs";
 
 export const CHANGELOG=[
  {version:"1.3.1",date:"2026-10-30",
-  added:[],
+  added:[
+   "Pong des arguments : 28 nouvelles piques, de « Rendez l'ISF ! » à « Gauche caviar ! »."
+  ],
   fixed:[
+   "Pong des arguments : l'adversaire vise maintenant à droite et à gauche. Rester immobile au centre ne suffit plus pour renvoyer ses piques.",
    "Le compteur « Jour » suit maintenant le calendrier : il passe au jour suivant à minuit, en même temps que les visites, les activités et les cafés, au lieu d'attendre 24 heures après le début du mandat."
   ]},
  {version:"1.3.0",date:"2026-10-30",

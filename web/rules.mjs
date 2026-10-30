@@ -93,8 +93,12 @@ export const shop=[
  {key:"garden",kind:"care",anim:"win",price:4,left:"Jardin partagé",right:"Promenade au jardin municipal",fx:{moral:30}}
 ];
 export const pongLines={
- left:["Et les riches ?","Réac !","Et le climat ?","Cadeaux fiscaux !","Et vos affaires ?","Les patrons d'abord ?"],
- right:["Et la dette ?","Utopiste !","Et l'insécurité ?","Assistanat !","Bobo !","Vous taxez tout !"]
+ left:["Et les riches ?","Réac !","Et le climat ?","Cadeaux fiscaux !","Et vos affaires ?","Les patrons d'abord ?",
+  "Rendez l'ISF !","Ultralibéral !","Et les profs ?","Et les retraites ?","Valet du CAC 40 !","Paradis fiscaux !","Droite rance !",
+  "Ruisselle ? Où ça ?","Et l'hôpital ?","Privatiseur !","Encore un 49.3 ?","Et les superprofits ?","Climatosceptique !","Et les mal-logés ?"],
+ right:["Et la dette ?","Utopiste !","Et l'insécurité ?","Assistanat !","Bobo !","Vous taxez tout !",
+  "Wokiste !","Et les impôts ?","Allez bosser !","Comme au Venezuela !","Laxiste !","Khmer vert !","Et l'autorité ?",
+  "Zadiste !","Et la valeur travail ?","Gréviste !","Bisounours !","Gauche caviar !","Planche à billets !","Et nos frontières ?"]
 };
 export const fxNames={sat:"satiété",moral:"moral",energy:"énergie",hyg:"hygiène"};
 
