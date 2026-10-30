@@ -103,3 +103,7 @@ test("D11 the debate rules the duel replays stay those of the game",()=>{
  assert.ok(DUEL.maxPicks>=Math.ceil(MINI.debate.ms/DEBATE.flash));
  assert.ok(H>0);
 });
+
+test("an account can duel 12 h after signing up (anti-alt delay)",()=>{
+ assert.equal(R.DUEL.minAgeMs,12*R.H);
+});

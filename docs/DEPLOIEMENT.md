@@ -155,7 +155,7 @@ Si l'un de ses `location` utilise `add_header`, recopier la ligne HSTS dedans : 
 - **Duels** (Débat chrono, en différé) : le joueur qui défie joue d'abord ; l'adversaire a 24 h pour relever le défi
   sur le même débat, ou le refuser. Le serveur rejoue les réponses des deux joueurs : aucun score n'est cru sur parole
   (un score impossible annule le défi, ou fait perdre l'adversaire qui l'envoie). Limites : niveau 5 et compte d'au moins
-  24 h pour les deux joueurs, 3 défis envoyés par jour, un seul duel ouvert par paire, et pas de nouveau duel entre deux
+  12 h pour les deux joueurs, 3 défis envoyés par jour, un seul duel ouvert par paire, et pas de nouveau duel entre deux
   joueurs moins de 24 h après le précédent. Une victoire rapporte de l'XP 3 fois par jour au plus ; une défaite ne fait
   jamais perdre de niveau ni descendre le moral ou l'énergie sous 25. Un tour non fini (plus de 91 s) ou un défi sans
   réponse en 24 h est clos tout seul.
@@ -233,7 +233,7 @@ interdire la suppression et le force push, exiger une pull request (0 approbatio
 ## 6. Tests
 
 ```bash
-bash tests/run-server.sh                       # 239 tests : règles (dont l'équilibrage J15) + mini-jeux + test politique + changelog + API + duels + notifications + migrations + outil d'admin, dans l'image Node de production
+bash tests/run-server.sh                       # 240 tests : règles (dont l'équilibrage J15) + mini-jeux + test politique + changelog + API + duels + notifications + migrations + outil d'admin, dans l'image Node de production
 docker compose restart api                     # remet à zéro les limites d'inscription avant l'e2e
 powershell -ExecutionPolicy Bypass -File tests\e2e.ps1   # parcours complet dans Chrome (crée deux joueurs de test)
 ```

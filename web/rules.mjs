@@ -231,7 +231,7 @@ export const DEBATE={intro:1300,penalty:1000,flash:260};
 // server draws, and the server replays each player's picks. A duel score is computed, never taken on trust.
 // A win pays at most paidWins times a day; a lost duel never costs a level nor pushes a gauge under "floor".
 export const DUEL={game:"debate",win:{xp:40,moral:10,energy:5},loss:{xp:-15,moral:-10,energy:-5},tie:{moral:5},chicken:{moral:3},
- floor:25,perDay:3,paidWins:3,minLevel:5,minAgeMs:864e5,window:864e5,maxPicks:80,minGap:250};
+ floor:25,perDay:3,paidWins:3,minLevel:5,minAgeMs:432e5,window:864e5,maxPicks:80,minGap:250};
 // A great score is announced in the public feed at most once per game hour and player.
 const greatAnnounced=S=>S.journal.some(j=>j.k==="mini"&&j.d?.great===true&&S.vclock-j.t<H);
 export const MINI_RULES={minSeconds:3,graceSeconds:75};   // expiry = ms/1000 + graceSeconds after the start
