@@ -143,7 +143,12 @@ Si l'un de ses `location` utilise `add_header`, recopier la ligne HSTS dedans : 
   | `node admin.mjs reset-password <pseudo>` | génère un mot de passe fort et l'affiche **une seule fois** |
   | `node admin.mjs reset-password <pseudo> --stdin` | le mot de passe est tapé (masqué, deux fois) ou envoyé sur l'entrée standard |
   | `node admin.mjs unlock <pseudo>` | efface les essais de connexion ratés sur ce pseudo (et des adresses qui l'ont essayé) |
+  | `node admin.mjs announce "<texte>"` | annonce à tous : bandeau dans le jeu, notification aux abonnés, ligne « Annonce officielle » dans le fil de la République |
+  | `node admin.mjs announce "<texte>" --to <pseudo>` | message à un seul joueur : bandeau et notification, rien dans le fil public |
 
+  Une annonce : texte brut de 240 caractères au plus, entre guillemets. Elle n'apparaît jamais en pleine partie (bandeau et
+  notification arrivent à la fin du mini-jeu) ; un joueur ni connecté ni abonné aux notifications ne la voit pas, sauf l'annonce
+  à tous, qui reste dans le fil. L'outil dit combien de joueurs l'ont reçue.
   Le pseudo se trouve comme au login, sans tenir compte des majuscules ni des accents (`"Mon Pseudo"` entre guillemets s'il a un espace).
   Une réinitialisation ferme toutes les sessions du joueur sur tous ses appareils et efface ses essais ratés : il se reconnecte
   aussitôt avec le nouveau mot de passe, et retrouve son compagnon intact. Aucun redémarrage.
@@ -233,7 +238,7 @@ interdire la suppression et le force push, exiger une pull request (0 approbatio
 ## 6. Tests
 
 ```bash
-bash tests/run-server.sh                       # 247 tests : règles (dont l'équilibrage J15) + mini-jeux + test politique + changelog + API + duels + notifications + migrations + outil d'admin, dans l'image Node de production
+bash tests/run-server.sh                       # 252 tests : règles (dont l'équilibrage J15) + mini-jeux + test politique + changelog + API + duels + notifications + migrations + outil d'admin, dans l'image Node de production
 docker compose restart api                     # remet à zéro les limites d'inscription avant l'e2e
 powershell -ExecutionPolicy Bypass -File tests\e2e.ps1   # parcours complet dans Chrome (crée deux joueurs de test)
 ```

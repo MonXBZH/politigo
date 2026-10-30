@@ -3,13 +3,14 @@
 //   node admin.mjs reset-password <pseudo>         a strong password is generated and printed once
 //   node admin.mjs reset-password <pseudo> --stdin the password is typed (hidden) or piped in
 //   node admin.mjs unlock <pseudo>                 forgets the failed login attempts on that name
+//   node admin.mjs announce "<texte>" [--to <pseudo>]  a message to everyone (or one player): banner, push, feed
 // It talks to the running server over its admin socket (POLITIGO_ADMIN_SOCKET), so the server itself hashes the
 // password, signs the player out everywhere and clears the login counters: no restart, no second database writer.
 import net from "node:net";
 import crypto from "node:crypto";
 
 const SOCKET=process.env.POLITIGO_ADMIN_SOCKET||"/tmp/politigo-admin.sock";
-const USAGE="Usage : node admin.mjs list | reset-password <pseudo> [--stdin] | unlock <pseudo>";
+const USAGE="Usage : node admin.mjs list | reset-password <pseudo> [--stdin] | unlock <pseudo> | announce \"<texte>\" [--to <pseudo>]";
 const fail=(msg,code=1)=>{console.error(msg);process.exit(code);};
 const check=r=>{if(!r?.ok)fail(r?.error||"Échec.");return r;};
 
@@ -51,12 +52,24 @@ async function readStdin(){
 const day=t=>t?new Date(t).toLocaleDateString("fr-FR"):"?";
 
 const [cmd,name,...rest]=process.argv.slice(2);
-if(name?.startsWith("--"))fail(USAGE,2);   // "reset-password --stdin Alice": the pseudo comes first
+if(cmd!=="announce"&&name?.startsWith("--"))fail(USAGE,2);   // "reset-password --stdin Alice": the pseudo comes first (an announcement may start with "--")
 try{
  if(cmd==="list"&&name===undefined){
   const {players}=check(await call({cmd}));
   if(!players.length)console.log("Aucun joueur.");
   for(const p of players)console.log(`${p.name}  (inscrit le ${day(p.created)}, vu le ${day(p.updated)})`);
+ }
+ else if(cmd==="announce"&&name){
+  // The text is one argument: unquoted words would each become one, and only the first would be sent.
+  if(rest.length&&!(rest.length===2&&rest[0]==="--to"&&rest[1]))
+   fail("Mets le texte entre guillemets : node admin.mjs announce \"Ton message\" [--to <pseudo>]",2);
+  const r=check(await call({cmd,text:name,to:rest[1]}));
+  const pushNote=r.push?`${r.pushed} par notification`:"notifications désactivées sur ce serveur";
+  if(r.name){
+   console.log(`Annonce envoyée à ${r.name} : ${r.live?"à l'écran maintenant":"pas connecté"}, ${r.pushed?"notification envoyée":"pas de notification"}.`);
+   if(!r.live&&!r.pushed)console.log("Attention : ni connecté ni abonné aux notifications, il ne verra pas ce message.");
+  }
+  else console.log(`Annonce envoyée à tous : ${r.live} joueur(s) à l'écran, ${pushNote}, et ajoutée au fil de la République.`);
  }
  else if(cmd==="unlock"&&name&&!rest.length){
   const r=check(await call({cmd,name}));
