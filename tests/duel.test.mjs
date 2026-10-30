@@ -83,7 +83,7 @@ test("a full duel: challenge, play, the defender answers blind, both candidates 
  assert.equal(list.status,200);assert.equal(list.json.ok,true);assert.equal(list.json.perDay,3);assert.equal(list.json.sent,0);
  assert.equal(typeof list.json.pushKey,"string");assert.equal(Buffer.from(list.json.pushKey,"base64url").length,65);
  const rowB=list.json.opponents.find(o=>o.name==="Duelliste B");
- assert.deepEqual(Object.keys(rowB).sort(),["camp","candidate","lvl","name","ok","why"]);
+ assert.deepEqual(Object.keys(rowB).sort(),["camp","candidate","lvl","name","ok","online","why"]);
  assert.equal(rowB.ok,true);assert.equal(rowB.why,"");assert.equal(rowB.camp,"right");assert.equal(rowB.candidate,R.people.right[0].name);
  assert.ok(!list.json.opponents.some(o=>o.name==="Duelliste A"),"never oneself");
 

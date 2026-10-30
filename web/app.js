@@ -58,6 +58,9 @@ function applyMe(m,{replay=false}={}){
 function playJournal(onlyMajor){
  // Entries whose animation needs details ("d") are only animated when those details survived the save.
  const fresh=S.journal.filter(j=>j.n>journalShown&&(j.d||!["evolve","legend","level","stress"].includes(j.k))).sort((a,b)=>a.n-b.n);
+ // Nothing pops up during a game but a death (the game is lost anyway): the rest waits for its end (see tickFrame).
+ // Once it is over, the answer carrying its score plays them, its toasts queued behind the game's own result.
+ if((pong||mini)&&!fresh.some(j=>j.k==="death"))return;
  journalShown=S.jn;writeSeen(S.jn);
  if(!fresh.length)return;
  let death=null,evoFirst=null,evoLast=null,level=null,stress=null,act=null;
@@ -69,7 +72,7 @@ function playJournal(onlyMajor){
   else act=j;
  }
  // A duel cut short by a death still sends what was played, like a game given up.
- if(death){anim=null;if(mini?.duel){mini.abort(miniClock);endMini();}pong=mini=null;startScene("death",death.d?.camp||S.camp,death.d?.name||"");toast(death.text);return;}
+ if(death){anim=null;if(mini?.duel){mini.abort(miniClock);endMini();}pong=mini=null;startScene("death",death.d?.camp||S.camp,death.d?.name||"");toast(death.text,true);return;}
  if(evoFirst){
   const from=evoFirst.k==="legend"?evoFirst.d.name:evoFirst.d.from,to=evoLast.k==="legend"?evoLast.d.name:evoLast.d.to;
   const legend=evoLast.k==="legend"&&from===to;
@@ -100,12 +103,12 @@ function playJournal(onlyMajor){
 }
 // Every game request goes through here (the player's actions, and the duels on /api/duel): one at a time.
 async function send(action,path="/api/action"){
- if(busy){toast("Une action est déjà en cours…");return null;}busy=true;
+ if(busy){toast("Une action est déjà en cours…",true);return null;}busy=true;
  const who=me;let r;
  try{r=await api("POST",path,action);}finally{busy=false;}
  if(!S||me!==who)return null;          // signed out meanwhile: a late answer must not bring the game back
  if(r.me)applyMe(r.me);
- if(!r.ok&&r.error)toast(r.error);
+ if(!r.ok&&r.error)toast(r.error,true);           // the player's own request: said even mid-game
  return r;
 }
 
@@ -114,11 +117,13 @@ function playAnim(name,ms,extra={}){anim={name,until:performance.now()+ms,...ext
 function buy(it){closeSheet();send({type:"buy",key:it.key});}
 // The timed debate (both camps) and the Manif (one game per camp): the server charges the activity and opens
 // the game, the browser plays it (minigames.mjs), the server checks the score.
-let miniEnding=false,miniStartReal=0;
+let miniEnding=false,miniStartReal=0,pongEnding=false;
+// "Playing": a game on screen, or its score on its way to the server. Toasts, news and scenes wait meanwhile.
+const quiet=()=>!!(pong||mini)||miniEnding||pongEnding;
 const drawCand=(p,state,size,cx,ground,t)=>bigSprite(p,state,size,cx,ground,t);
 async function startMini(type){
  closeSheet();
- if(miniEnding){toast("Un instant : le résultat de la partie précédente part au serveur.");return;}
+ if(miniEnding){toast("Un instant : le résultat de la partie précédente part au serveur.",true);return;}
  const r=await send({type});if(!r?.ok||!S)return;
  closeSheet();                                      // a sheet opened while the request was on its way
  miniStartReal=Date.now();
@@ -131,30 +136,32 @@ async function startMini(type){
 // itself. No activity is charged and no S.mini is opened: the same game machinery, another referee.
 async function startDuel(body,vs,role){
  closeSheet();
- if(miniEnding){toast("Un instant : le résultat de la partie précédente part au serveur.");return;}
- const why=R.duelBlock(S,duelData?.minLevel??R.DUEL.minLevel);if(why){toast(why);return;}
- if(pong||mini||scene){toast("Termine d'abord la partie en cours.");return;}
+ if(miniEnding){toast("Un instant : le résultat de la partie précédente part au serveur.",true);return;}
+ const why=R.duelBlock(S,duelData?.minLevel??R.DUEL.minLevel);if(why){toast(why,true);return;}
+ if(pong||mini||scene){toast("Termine d'abord la partie en cours.",true);return;}
  const r=await send(body,"/api/duel");
  duelsLoad();
  if(!r?.ok||!S)return;
- if(!Number.isFinite(r.duel?.seed)){toast("Duel introuvable : réessaie dans un instant.");return;}
+ if(!Number.isFinite(r.duel?.seed)){toast("Duel introuvable : réessaie dans un instant.",true);return;}
  closeSheet();                                      // a sheet opened while the request was on its way
  if(pong||mini)return;
  mini=createMini("debate",{p:look(),camp:S.camp,ctx,scale:()=>scale,now:miniClock,seed:r.duel.seed,season:season(),drawCand});
  mini.duel={id:r.duel.id,vs,role};
- toast(role==="challenger"?`Défi lancé à ${vs} : mêmes questions pour vous deux, le meilleur score gagne.`:`Défi relevé : mêmes questions que ${vs}, à toi de faire mieux !`);
+ toast(role==="challenger"?`Défi lancé à ${vs} : mêmes questions pour vous deux, le meilleur score gagne.`:`Défi relevé : mêmes questions que ${vs}, à toi de faire mieux !`,true);
  cv.focus();
 }
 const challenge=name=>startDuel({op:"challenge",name},name,"challenger");
 const acceptDuel=x=>startDuel({op:"accept",id:x.id},x.vs,"defender");
-async function refuseDuel(x){const r=await send({op:"refuse",id:x.id},"/api/duel");if(r?.ok)toast(`Défi de ${x.vs} refusé : ça ne te coûte rien.`);duelsLoad();}
+async function refuseDuel(x){const r=await send({op:"refuse",id:x.id},"/api/duel");if(r?.ok)toast(`Défi de ${x.vs} refusé : ça ne te coûte rien.`,true);duelsLoad();}
 // The challenger only learns his score (the rival has a day to answer); the defender gets the verdict at once.
 function duelDone(d,r){
  const [a,b]=[r.mine,r.theirs].map(v=>Number.isFinite(v)?v:0);
  if(d.role==="challenger"||!["win","loss","tie"].includes(r.res)){
   toast(`Score de ${Number.isFinite(r.score)?r.score:a} envoyé : ${d.vs} a ${Math.round(R.DUEL.window/R.H)} h pour répondre.`);return;
  }
- if(Date.now()-duelJournalT>2000)toast(r.res==="win"?`Duel gagné ${a} à ${b} contre ${d.vs} !`:r.res==="loss"?`Duel perdu ${a} à ${b} contre ${d.vs}.`:`Match nul contre ${d.vs}, ${a} partout.`);
+ const q=toastQ.findIndex(t=>/^(Duel gagné|Duel perdu|Match nul) contre /.test(t));
+ if(q>=0)toast(toastQ.splice(q,1)[0],true);
+ else if(Date.now()-duelJournalT>2000)toast(r.res==="win"?`Duel gagné ${a} à ${b} contre ${d.vs} !`:r.res==="loss"?`Duel perdu ${a} à ${b} contre ${d.vs}.`:`Match nul contre ${d.vs}, ${a} partout.`,true);
  if(r.res==="win")playAnim("win",3000);
 }
 async function endMini(){
@@ -635,16 +642,19 @@ function pongServe(){Object.assign(pong,{bx:233,by:PONG.top+10,vy:PONG.speed,tex
 // The server charges the activity at the start and checks the score at the end (rate and duration).
 async function startPong(){
  closeSheet();
- if(miniEnding){toast("Un instant : le résultat de la partie précédente part au serveur.");return;}
+ if(miniEnding){toast("Un instant : le résultat de la partie précédente part au serveur.",true);return;}
  const r=await send({type:"pongStart"});if(!r?.ok||!S)return;
  pong={t0:performance.now(),last:performance.now(),score:0,missed:0,px:233,hitT:0,flashT:0,endT:0};pongServe();
- toast("Renvoie les piques : glisse le doigt ou la souris sur l'écran.");
+ toast("Renvoie les piques : glisse le doigt ou la souris sur l'écran.",true);
 }
 async function endPong(){
- const score=pong.score;pong=null;pongEnded=performance.now();
- // The score must not be lost behind another request (which itself gives up after 15 s).
- for(const end=Date.now()+20000;busy&&Date.now()<end;)await new Promise(ok=>setTimeout(ok,100));
- const r=await send({type:"pongEnd",score});
+ const score=pong.score;pong=null;pongEnded=performance.now();pongEnding=true;
+ let r;
+ try{
+  // The score must not be lost behind another request (which itself gives up after 15 s).
+  for(const end=Date.now()+20000;busy&&Date.now()<end;)await new Promise(ok=>setTimeout(ok,100));
+  r=await send({type:"pongEnd",score});
+ }finally{pongEnding=false;}
  if(r?.ok){toast(`${score} renvoi${score>1?"s":""} · +${r.bonus} XP d'éloquence`);if(r.bonus>=10)playAnim("win",3000);}
 }
 function stepPong(now){
@@ -739,7 +749,11 @@ document.addEventListener("keydown",e=>{
 // ===================================================================== HTML INTERFACE
 let toastTimer=0;
 let toastAt=0;
-function toast(text){toastAt=Date.now();const el=$("#toast");el.textContent=text;el.classList.add("show");clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove("show"),3800);}
+// During a game a toast waits in a short queue (newest kept, no repeats); now: the player's own doing, said at once.
+const toastQ=[];
+function toast(text,now=false){
+ if(!now&&quiet()){const i=toastQ.indexOf(text);if(i>=0)toastQ.splice(i,1);toastQ.push(text);if(toastQ.length>4)toastQ.shift();return;}
+ toastAt=Date.now();const el=$("#toast");el.textContent=text;el.classList.add("show");clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove("show"),3800);}
 const pad2=n=>String(n).padStart(2,"0");
 function clockLabel(){const v=vnow(),c=R.clockOf(v);return `Jour ${R.mandateDay(S,v)} · ${pad2(c.hour)}:${pad2(c.minute)}`;}
 const when=t=>new Date(t).toLocaleString("fr-FR",{timeZone:R.timeZone(),weekday:"short",hour:"2-digit",minute:"2-digit"});
@@ -780,7 +794,7 @@ function refresh(){
  // easily missed.
  const rm=!rematchBlock(),dn=incoming().length,playBtn=$(".pad-btn[data-sheet=play]"),sig=`${rm}|${dn}`;
  if(playBtn.dataset.sig!==sig){
-  playBtn.dataset.sig=sig;playBtn.classList.toggle("alert",rm||dn>0);
+  playBtn.dataset.sig=sig;playBtn.classList.toggle("alert",rm||dn>0);playBtn.classList.toggle("clash",dn>0);   // a challenge waits: the icon wiggles
   if(dn)playBtn.dataset.count=String(Math.min(dn,9));else delete playBtn.dataset.count;
   const why=[dn&&`${dn} défi${dn>1?"s":""} en attente`,rm&&"quitte ou double disponible"].filter(Boolean).join(", ");
   if(why)playBtn.setAttribute("aria-label",`Jouer (${why})`);else playBtn.removeAttribute("aria-label");
@@ -797,6 +811,19 @@ const TABS={
  deaths:{label:"Survie",sort:(a,b)=>a.deaths-b.deaths||b.score-a.score,show:r=>`${r.deaths} mort${r.deaths>1?"s":""}`}
 };
 const ordinal=n=>n===1?"1er":`${n}e`;
+// Presence after a name: green and glowing online, orange offline, nothing from a server that does not say.
+function presenceDot(on){
+ if(typeof on!=="boolean")return null;
+ const d=document.createElement("span");d.className=`presence ${on?"on":"off"}`;
+ d.setAttribute("role","img");d.setAttribute("aria-label",on?"en ligne":"hors ligne");return d;
+}
+// A name followed by its dot: a long name is cut with "…", the dot always stays in sight.
+function nameWithDot(el,text,on){
+ const nm=document.createElement("span"),dot=presenceDot(on);nm.className="nm";nm.textContent=text;
+ el.classList.add("nameline");el.replaceChildren(nm);if(dot)el.append(dot);
+ if(text.length>12)el.title=text;                   // the whole name on hover
+ return el;
+}
 function renderBoard(){
  const tabs=$("#board-tabs");
  if(!tabs.childElementCount)for(const [k,t] of Object.entries(TABS)){
@@ -809,7 +836,7 @@ function renderBoard(){
   const li=document.createElement("li");li.className=`row ${r.camp}${r.name===me?" me":""}`;
   const rank=document.createElement("span");rank.className="rank";rank.textContent=ordinal(i+1);
   const who=document.createElement("span");who.className="who";
-  const n=document.createElement("b");n.textContent=r.name+(r.name===me?" (toi)":"");
+  const n=nameWithDot(document.createElement("b"),r.name+(r.name===me?" (toi)":""),r.online);
   const c=document.createElement("small");c.textContent=`${r.candidate} · niv. ${r.lvl}${r.asleep?" · zzz":""}${r.form==="Négligée"||r.form==="Abandonnée"?" · en danger":""}`;
   who.append(n,c);
   const v=document.createElement("span");v.className="val";v.textContent=TABS[boardTab].show(r);
@@ -852,14 +879,18 @@ setInterval(()=>{if(S&&es&&Date.now()-lastLive>70000){es.close();es=null;setNet(
 // Retries with a growing pause (5 s up to 1 min) until the server answers again; a 401 shows the login instead.
 function retryLive(delay=5000){
  setTimeout(async()=>{
-  if(!S||es)return;
+  if(!S||es||document.hidden)return;         // a hidden page reconnects when it is shown again
   const r=await api("GET","/api/me");
-  if(!S||es)return;
+  if(!S||es||document.hidden)return;
   if(r.ok){applyMe(r);connectLive();}else if(r.status!==401)retryLive(Math.min(delay*2,60000));
  },delay);
 }
+// A page hidden for 2 minutes lets go of the live stream: its player shows offline to the others.
+let hideTimer=0;
 document.addEventListener("visibilitychange",async()=>{
- if(document.hidden||!S)return;
+ clearTimeout(hideTimer);
+ if(document.hidden){hideTimer=setTimeout(()=>{if(document.hidden&&es){es.close();es=null;}},120000);return;}
+ if(!S)return;
  const r=await api("GET","/api/me");if(!S)return;     // logged out meanwhile
  if(r.ok)applyMe(r);
  if(!es)connectLive();
@@ -891,7 +922,7 @@ function armedButton(label,armedLabel,cls,onConfirm){
  b.setAttribute("aria-live","polite");        // the new label ("tap again") is read out
  b.addEventListener("click",()=>{
   if(!armed){armed=setTimeout(()=>{armed=0;b.classList.remove("armed");b.textContent=label;},8000);b.classList.add("armed");b.textContent=armedLabel;return;}
-  clearTimeout(armed);armed=0;onConfirm();
+  clearTimeout(armed);armed=0;b.classList.remove("armed");b.textContent=label;onConfirm();   // disarmed first: the sheet may redraw again
  });
  return b;
 }
@@ -1063,7 +1094,7 @@ function showNews(list,auto){
 // A scene replayed at sign-in (a death while away) plays first: the news waits for its end (see tickFrame).
 function maybeShowNews(){
  if(!S||!RELEASE||newsAuto||sheetKind)return;
- if(scene){newsPending=true;return;}
+ if(scene||quiet()){newsPending=true;return;}
  const list=missedEntries(SEEN,RELEASE);
  if(list.length)showNews(list,true);
 }
@@ -1080,7 +1111,7 @@ function closeSheet(fromBack=false){
 }
 document.querySelectorAll("[data-sheet]").forEach(b=>b.addEventListener("click",()=>{
  if(!S)return;
- if(pong||mini){toast("Termine d'abord la partie (Échap pour abandonner).");return;}
+ if(pong||mini){toast("Termine d'abord la partie (Échap pour abandonner).",true);return;}
  skipScene();openSheet(b.dataset.sheet,b);
 }));
 $("#sheet-close").addEventListener("click",()=>closeSheet());
@@ -1141,7 +1172,9 @@ function renderDuels(body,set){
  if(inc.length){
   body.append(blockTitle("Défis reçus"));
   for(const x of inc)body.append(duelCard(`${x.vs} te défie`,`Débat chrono · reste ${remain(x)} pour répondre`,
-   smallButton("Relever le défi","go",()=>acceptDuel(x),!!why),smallButton("Refuser","",()=>refuseDuel(x))));
+   // Two taps each: a stray tap must neither throw him into a game nor turn a rival down.
+   why?smallButton("Relever le défi","go",()=>{},true):armedButton("Relever le défi","Prêt ? Touche encore pour jouer","go",()=>acceptDuel(x)),
+   armedButton("Refuser","Confirmer le refus","",()=>refuseDuel(x))));
   body.append(fine(`Refuser ne coûte rien : ${inc.length>1?"tes rivaux gagnent":"ton rival gagne"} juste un peu de moral (+${D.chicken.moral}).`));
  }
  if(out.length){
@@ -1154,6 +1187,7 @@ function renderDuels(body,set){
  else body.append(list(...opps.map(o=>{
   const sub=`${o.candidate||"?"} · niv. ${o.lvl??"?"}${o.ok===false&&o.why?` · ${o.why}`:""}`;
   const b=itemButton(o.name,sub,"Défier",o.ok===false||!!why,()=>challenge(o.name));
+  nameWithDot(b.querySelector("b"),o.name,o.online);
   b.classList.add("opp",o.camp==="right"?"right":"left");return b;
  })));
  const done=all.filter(x=>x.status!=="pending").map(x=>({x,text:duelResult(x)})).filter(e=>e.text);
@@ -1252,7 +1286,7 @@ function pushRow(){
 // A challenge while the page is open but hidden, on a device that asked for notifications: shown locally, under
 // the tag the push uses ("duel-<id>"), so that the two replace each other instead of stacking.
 function notifyHidden(body,id){
- if(!document.hidden||!pushable()||Notification.permission!=="granted")return;
+ if(!document.hidden||quiet()||!pushable()||Notification.permission!=="granted")return;
  navigator.serviceWorker.getRegistration("/").then(async reg=>{
   if(reg&&await reg.pushManager.getSubscription())await reg.showNotification("PolitiGo",{body,tag:`duel-${String(id).slice(0,40)}`,data:{url:"/"}});
  }).catch(()=>{});
@@ -1319,7 +1353,7 @@ function armRestart(camp,text){
 const authEl=$("#auth");
 let regCamp="left";
 function showAuth(message=""){
- closeSheet();es?.close();es=null;S=null;anim=pong=mini=scene=null;newsPending=false;duelData=null;duelErr="";duelSeq++;pushOn=null;pushSynced=false;setNet(true);$("#tips").hidden=true;
+ closeSheet();es?.close();es=null;S=null;anim=pong=mini=scene=null;newsPending=false;toastQ.length=0;duelData=null;duelErr="";duelSeq++;pushOn=null;pushSynced=false;setNet(true);$("#tips").hidden=true;
  authEl.hidden=false;setBackgroundInert(true);
  $("#auth-error").textContent=message;regQuizShow(false);$("#camp-note").textContent="";document.body.dataset.camp=regCamp;
  document.querySelectorAll(".camp").forEach(b=>{
@@ -1411,15 +1445,21 @@ function tickFrame(now){
  if(playing!==!!(pong||mini)){playing=!!(pong||mini);document.body.classList.toggle("playing",playing);}
  if(S&&authEl.hidden){
   S.vclock=vnow();       // the displayed clock moves on; hour ticks themselves always come from the server
-  // A scene (an evolution earned mid-game) freezes the Pong clock instead of eating its 20 seconds.
+  // A scene mid-game (only a death now: the others wait for the end) freezes the Pong clock instead of eating it.
   if(pong){if(scene){pong.t0+=fdt;pong.last=now;if(pong.endT)pong.endT+=fdt;}else stepPong(now);}
   // The mini-games run on their own clock, which a scene stops and a hidden tab pauses (one frame is 100 ms at most).
   if(mini&&!scene){const d=Math.min(100,fdt);miniClock+=d;mini.step(miniClock,Math.min(0.05,d/1000));if(mini.over(miniClock))endMini();}
   // Full frame rate only while something moves fast; the idle screen is fine at ~8 fps and saves battery.
   if(pong||mini||scene||anim||lvlFx||now-lastDraw>=120){lastDraw=now;render(now);}
   if(now-lastHud>500){lastHud=now;refresh();liveSheet();}
-  if(newsPending&&!scene){newsPending=false;maybeShowNews();}
-  if(hw()&&!hwHello&&!scene&&!pong&&!mini&&sheetKind!=="news"&&Date.now()-toastAt>4000)halloweenHello();
+  // After a game, in order: what the journal kept back (once the game's own result has been read), the news,
+  // then the queued toasts one at a time.
+  if(!scene&&!quiet()&&!busy){
+   if(journalShown<S.jn){if(Date.now()-toastAt>3800)playJournal(false);}
+   else if(newsPending){newsPending=false;maybeShowNews();}
+   else if(toastQ.length&&Date.now()-toastAt>=4000)toast(toastQ.shift());
+  }
+  if(hw()&&!hwHello&&!scene&&!quiet()&&!toastQ.length&&sheetKind!=="news"&&Date.now()-toastAt>4000)halloweenHello();
  }
 }
 

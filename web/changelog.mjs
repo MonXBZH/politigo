@@ -4,6 +4,17 @@
 import {cmpRelease} from "./rules.mjs";
 
 export const CHANGELOG=[
+ {version:"1.4.1",date:"2026-10-31",
+  added:[
+   "Qui est là ? Un point vert qui pulse à droite du pseudo des joueurs en train de jouer, un point orange pour les autres, au classement comme dans les Duels. Les rivaux en ligne passent en tête de liste : idéal pour défier quelqu'un qui répondra tout de suite.",
+   "Un défi t'attend ? Le bouton Jouer s'agite de temps en temps pour te le rappeler."
+  ],
+  changed:[
+   "Duels ouverts plus tôt : il suffit d'un compte de 12 h au lieu de 24 h.",
+   "Concentration pendant les mini-jeux : plus aucune notification, nouveauté ni annonce ne s'affiche en pleine partie. Tout arrive à la fin, y compris les notifications du téléphone.",
+   "Fini les erreurs de doigt : relever ou refuser un défi demande maintenant une confirmation. Un défi sans réponse reste 24 h dans Jouer → Duels."
+  ],
+  fixed:[]},
  {version:"1.4.0",date:"2026-10-30",
   added:[
    "Duels : défie un autre élu au Débat chrono, dans Jouer → Duels. Mêmes questions pour les deux, le meilleur score l'emporte. Tu joues d'abord, ton rival a 24 h pour relever le défi.",

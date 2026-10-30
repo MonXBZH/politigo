@@ -18,7 +18,7 @@ export const yesterday=(now=Date.now())=>R.dayKey(Math.floor(now/R.H)-24);
 export const DUEL_TURN_MS=R.MINI.debate.ms+R.DEBATE.intro+R.MINI_RULES.graceSeconds*1000;
 
 export function boot(port,dir,extra={},db="t.db"){
- const env={...process.env,PORT:String(port),DB_PATH:join(dir,db),POLITIGO_INVITE:INVITE,COOKIE_SECURE:"0",PROXY_HOPS:"1",SWEEP_MS:"200",
+ const env={...process.env,PORT:String(port),DB_PATH:join(dir,db),POLITIGO_INVITE:INVITE,COOKIE_SECURE:"0",PROXY_HOPS:"1",SWEEP_MS:"200",PRESENCE_MS:"50",
   POLITIGO_SPEED:"1",POLITIGO_TZ:DAY_TZ,POLITIGO_ADMIN_SOCKET:"off",POLITIGO_DUEL_MIN_LEVEL:"1",POLITIGO_DUEL_MIN_AGE_H:"0",MAX_PLAYERS:"500",...extra};
  for(const k of Object.keys(env))if(env[k]===undefined)delete env[k];
  const p=spawn("node",[process.env.SERVER||"/app/server.mjs"],{env,stdio:["ignore","pipe","pipe"]});
