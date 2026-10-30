@@ -41,6 +41,9 @@ const COOKIE_SECURE=env.COOKIE_SECURE!=="0";
 // Proxies in front of us that append to X-Forwarded-For: the site's reverse proxy + this stack's nginx.
 const PROXY_HOPS=Math.max(0,Number(env.PROXY_HOPS??2));
 const SWEEP_MS=Number(env.SWEEP_MS||30000);
+// Presence changes reach the board at most once per PRESENCE_MS: a refresh or a reconnect does not flicker, and a
+// client opening and closing streams in a loop cannot make the server rebroadcast the board to everyone.
+const PRESENCE_MS=Math.max(0,Number(env.PRESENCE_MS??8000));
 const MAX_PLAYERS=Math.max(1,Number(env.MAX_PLAYERS)||50);   // a leaked invite code cannot flood the database
 const SESSION_DAYS=90,BODY_LIMIT=4096,FEED_KEEP=200,SESSIONS_PER_PLAYER=10,SSE_PER_PLAYER=3,SSE_TOTAL=300;
 // The __Host- prefix makes the browser refuse the cookie unless it is Secure, host-only and Path=/.
@@ -128,6 +131,8 @@ const q={
  trimSubs:db.prepare("DELETE FROM push_subs WHERE player_id=? AND id NOT IN (SELECT id FROM push_subs WHERE player_id=? ORDER BY created DESC,id DESC LIMIT ?)"),
  deleteSub:db.prepare("DELETE FROM push_subs WHERE endpoint=? AND player_id=?"),
  deleteSubId:db.prepare("DELETE FROM push_subs WHERE id=?"),
+ // The player whose own duel turn is running (not yet closed by the clock).
+ playingDuel:db.prepare("SELECT 1 FROM duels WHERE (challenger=? AND status='c_play' AND c_started>=?) OR (defender=? AND status='d_play' AND d_started>=?) LIMIT 1"),
  subsOf:db.prepare("SELECT id,endpoint,p256dh,auth FROM push_subs WHERE player_id=?"),
 };
 
@@ -287,10 +292,14 @@ function newFeedEntries(p,jnBefore){
  if(out.length)q.trimFeed.run(FEED_KEEP);
  return out;
 }
+// Online = at least one open live stream. Only this boolean is shown: no last-seen time.
+const onlineIds=()=>new Set([...clients].map(c=>c.playerId));
+const isOnline=id=>[...clients].some(c=>c.playerId===id);
 function boardRows(){
+ const on=onlineIds();
  return [...players.values()].map(p=>{const S=p.state;return {
   name:p.name,camp:S.camp,candidate:R.person(S).name,lvl:S.lvl,score:R.score(S),form:S.form,
-  streak:S.streak,bestStreak:S.bestStreak,deaths:S.deaths,asleep:R.isAsleep(S)};})
+  streak:S.streak,bestStreak:S.bestStreak,deaths:S.deaths,asleep:R.isAsleep(S),online:on.has(p.id)};})
  .sort((a,b)=>b.score-a.score||b.lvl-a.lvl||a.name.localeCompare(b.name,"fr"));
 }
 const clients=new Set();         // live SSE connections: {res, playerId}
@@ -300,12 +309,25 @@ function sse(res,event,data){
  if(res.writableEnded||res.destroyed)return;
  try{res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);}catch{res.destroy();}
 }
-function closeStream(c){clearInterval(c.ping);clients.delete(c);if(!c.res.writableEnded)c.res.end();}
+// A player's last stream closing takes them offline on everyone's board ("quiet": the caller handles it, or nobody cares).
+function closeStream(c,quiet=false){
+ clearInterval(c.ping);const was=clients.delete(c);if(!c.res.writableEnded)c.res.end();
+ if(was&&!quiet&&!isOnline(c.playerId))presenceChanged();
+}
+// One trailing board publish for every presence change within PRESENCE_MS; nothing goes out if it all cancelled out.
+let presenceTimer=null;
+function presenceChanged(){
+ if(presenceTimer)return;
+ presenceTimer=setTimeout(()=>{presenceTimer=null;try{publishBoard();}catch(e){console.error("board on presence change:",e);}},PRESENCE_MS);
+ presenceTimer.unref?.();
+}
 function broadcast(event,data){for(const c of clients)sse(c.res,event,data);}
 function pushMe(p){const data=mePayload(p);for(const c of clients)if(c.playerId===p.id)sse(c.res,"me",data);}
+// True when the board was sent to every stream.
 function publishBoard(force=false){
  const rows=boardRows(),json=JSON.stringify(rows);
- if(force||json!==lastBoard){lastBoard=json;broadcast("board",rows);}
+ if(force||json!==lastBoard){lastBoard=json;broadcast("board",rows);return true;}
+ return false;
 }
 function mePayload(p){return {name:p.name,state:p.state,speed:SPEED,tz:R.timeZone(),serverNow:Date.now(),event:EVENT_MODE,version:VERSION,release:RELEASE,seenVersion:p.seen??null};}
 // The clock runs for everyone, connected or not: needs drain and deaths happen while the page is closed.
@@ -317,6 +339,7 @@ setInterval(()=>{
   catch(e){console.error(`sweep, player ${p.id}:`,e);}
  }
  try{sweepDuels(now);}catch(e){console.error("sweep, duels:",e);}
+ try{flushDeferred();}catch(e){console.error("sweep, deferred pushes:",e);}   // games that expired or were closed above
  lastSweep=now;
 },SWEEP_MS).unref();
 let lastSweep=Date.now();
@@ -326,9 +349,32 @@ let lastSweep=Date.now();
 const VAPID_FILE=join(dirname(DB_PATH),"vapid.json");
 let VAPID=null;
 if(PUSH_ON){try{VAPID=P.loadVapid(VAPID_FILE);}catch(e){console.error(`notifications disabled: ${e.message}`);}}
-// Fire and forget: a slow, failing or vanished push service never delays nor breaks a request.
+// Nothing pops up in the middle of a game: a player in a Pong, a mini-game or their own duel turn gets their
+// pushes once it is over (after their next action or duel request, or the sweep once the game expired).
+// Kept in memory only: a restart loses at most the few pushes held during a game (a minute or two).
+const DEFER_MAX=5,deferred=new Map();   // playerId -> [payload], one per tag, oldest first
+function inGame(p,now=Date.now()){
+ if(p.state.pong||p.state.mini)return true;
+ const cut=now-DUEL_TURN_MS;return !!q.playingDuel.get(p.id,cut,p.id,cut);
+}
 function notify(playerId,payload){
  if(!VAPID)return;
+ const p=players.get(playerId);if(!p)return;
+ let busy=false;try{busy=inGame(p);}catch(e){console.error(`push, player ${playerId}: ${e.message}`);}
+ if(!busy)return pushNow(playerId,payload);
+ const list=(deferred.get(playerId)??[]).filter(x=>!payload.tag||x.tag!==payload.tag);
+ list.push(payload);if(list.length>DEFER_MAX)list.shift();deferred.set(playerId,list);
+}
+// Sends what was held for every player who is out of their game (or gone: dropped).
+function flushDeferred(){
+ for(const [id,list] of [...deferred]){
+  const p=players.get(id);if(!p){deferred.delete(id);continue;}
+  try{if(inGame(p))continue;}catch(e){console.error(`push, player ${id}: ${e.message}`);continue;}
+  deferred.delete(id);for(const x of list)pushNow(id,x);
+ }
+}
+// Fire and forget: a slow, failing or vanished push service never delays nor breaks a request.
+function pushNow(playerId,payload){
  let subs=[];try{subs=q.subsOf.all(playerId);}catch(e){console.error(`push, player ${playerId}: ${e.message}`);return;}
  for(const s of subs){
   P.sendPush(s,payload,{vapid:VAPID,contact:PUSH_CONTACT})
@@ -376,9 +422,10 @@ function targetWhy(o,ties,now){
  return "";
 }
 function duelOpponents(p,now){
- const self=selfWhy(p,now),ties=duelTies(p,now);
+ const self=selfWhy(p,now),ties=duelTies(p,now),on=onlineIds();
  return [...players.values()].filter(o=>o.id!==p.id).map(o=>{const S=o.state,why=self||targetWhy(o,ties,now);
-  return {name:o.name,camp:S.camp,lvl:S.lvl,candidate:R.person(S).name,ok:!why,why};}).sort((a,b)=>a.name.localeCompare(b.name,"fr"));
+  return {name:o.name,camp:S.camp,lvl:S.lvl,candidate:R.person(S).name,ok:!why,why,online:on.has(o.id)};})
+  .sort((a,b)=>b.online-a.online||a.name.localeCompare(b.name,"fr"));   // online first
 }
 // One duel as its player sees it. The challenger's score stays hidden from the defender until the end.
 function duelView(d,me){
@@ -557,6 +604,7 @@ async function route(req,res){
   const b=await readJson(req);
   if(!players.has(p.id))throw new HttpError(401,"Connexion requise.");   // deleted while the body was arriving
   const r=update(p,S=>R.act(S,b,{now:Date.now(),speed:SPEED,random:Math.random,event:eventNow()}));
+  if(deferred.size)flushDeferred();
   return send(res,r.ok?200:422,{...r,me:mePayload(p)});
  }
  if(path==="/api/duels"&&method==="GET"){
@@ -564,7 +612,7 @@ async function route(req,res){
   return send(res,200,{ok:true,duels:q.duelsOf.all(p.id,p.id).sort((a,b)=>b.id-a.id).map(d=>duelView(d,p.id)),opponents:duelOpponents(p,now),
    sent:q.sentOn.get(p.id,dayNow(now)).n,perDay:R.DUEL.perDay,minLevel:DUEL_MIN_LEVEL,pushKey:VAPID?.publicKey??null});
  }
- if(path==="/api/duel"&&method==="POST")return duelRoute(req,res);
+ if(path==="/api/duel"&&method==="POST")return duelRoute(req,res).finally(()=>{if(deferred.size)flushDeferred();});
  if((path==="/api/push/subscribe"||path==="/api/push/unsubscribe")&&method==="POST")return pushRoute(req,res,path);
  if(path==="/api/board"&&method==="GET"){
   auth(req);return send(res,200,{board:boardRows(),feed:q.recentFeed.all(40)});
@@ -575,23 +623,24 @@ async function route(req,res){
   const b=await readJson(req);
   const row=q.playerByKey.get(nameKey(p.name));
   if(!row||!await checkPassword(typeof b.password==="string"?b.password.slice(0,200):"",row.pass))throw new HttpError(401,"Mot de passe incorrect.");
-  q.deletePlayer.run(p.id);players.delete(p.id);
-  for(const c of [...clients])if(c.playerId===p.id)closeStream(c);
+  q.deletePlayer.run(p.id);players.delete(p.id);deferred.delete(p.id);
+  for(const c of [...clients])if(c.playerId===p.id)closeStream(c,true);
   publishBoard();
   return send(res,200,{ok:true},{"Set-Cookie":sessionCookie("",0)});
  }
  if(path==="/events"&&method==="GET"){
-  const p=auth(req);
+  const p=auth(req);if(limited("sse:"+p.id,30,60e3))throw new HttpError(429,"Doucement : trop de reconnexions.");
   if(clients.size>=SSE_TOTAL)throw new HttpError(503,"Serveur plein, réessaie dans un instant.");
   // A few tabs or devices per player; one more pushes out that player's oldest stream, which is told to stay
   // closed (a plain end would make the browser reconnect and push out the next one, forever).
   const mine=[...clients].filter(c=>c.playerId===p.id);
-  if(mine.length>=SSE_PER_PLAYER){sse(mine[0].res,"bye",0);closeStream(mine[0]);}
+  if(mine.length>=SSE_PER_PLAYER){sse(mine[0].res,"bye",0);closeStream(mine[0],true);}   // still online through the new one
   res.writeHead(200,{"Content-Type":"text/event-stream; charset=utf-8","Cache-Control":"no-store","X-Accel-Buffering":"no"});
   res.on("error",()=>{});
   res.write("retry: 5000\n\n");
   const c={res,playerId:p.id,ping:null};clients.add(c);
-  sse(res,"me",mePayload(p));sse(res,"board",boardRows());sse(res,"feedInit",q.recentFeed.all(40));   // newest first
+  // The first stream brings the player online for everyone (this one included); otherwise only this one needs the board.
+  sse(res,"me",mePayload(p));sse(res,"board",boardRows());if(!mine.length)presenceChanged();sse(res,"feedInit",q.recentFeed.all(40));   // newest first
   c.ping=setInterval(()=>sse(res,"ping",0),25000);
   req.on("close",()=>closeStream(c));
   return;
@@ -704,7 +753,7 @@ for(const ev of ["unhandledRejection","uncaughtException"])process.on(ev,e=>{con
 function shutdown(code){try{db.close();}catch(e){console.error("closing the database:",e);}process.exit(code);}
 for(const sig of ["SIGTERM","SIGINT"])process.on(sig,()=>{
  stopAdmin();
- for(const c of [...clients])closeStream(c);
+ for(const c of [...clients])closeStream(c,true);
  saveAll();
  server.close(()=>shutdown(0));
  setTimeout(()=>{console.error("shutdown: connections still open after 3 s, forcing exit");shutdown(0);},3000).unref();

@@ -64,6 +64,9 @@ body.playing #screen{touch-action:none}
 .pad-btn.alert .knob::after{content:"";position:absolute;top:2px;right:2px;width:14px;height:14px;border-radius:50%;background:var(--danger);box-shadow:0 0 0 2px var(--bg1)}
 /* Challenges waiting: the dot carries their count. */
 .pad-btn.alert[data-count] .knob::after{content:attr(data-count);top:-2px;right:-2px;width:20px;height:20px;font:700 12px/20px Inter,sans-serif;color:#fff;text-align:center}
+/* A challenge waits (app.js refresh): the "Jouer" icon gives a short clash wiggle every 4 s, still the rest of the time. */
+.pad-btn.clash .knob svg{animation:clash 4s ease-in-out infinite}
+@keyframes clash{0%,85%,100%{transform:none}88%{transform:rotate(-14deg) scale(1.1)}91%{transform:rotate(12deg) scale(1.1)}94%{transform:rotate(-8deg)}97%{transform:rotate(4deg)}}
 /* Pinned to the viewport, above sheets and the sign-in screen: always seen, wherever the page is scrolled. */
 .toast,.net{position:fixed;left:50%;z-index:40;margin:0;padding:11px 16px;border-radius:16px;border:1px solid var(--line);backdrop-filter:blur(10px);
  font-size:14px;text-align:center;width:min(92vw,440px);transform:translateX(-50%)}
@@ -148,6 +151,15 @@ select option{background:#1d1a2a}
 .btn:disabled{opacity:.55;cursor:not-allowed}
 .fine.warn{color:#ffd4d9}
 .item.opp.left small::before{content:"● ";color:#ff9db0}.item.opp.right small::before{content:"● ";color:#9cc0ff}
+/* Presence after a name (app.js presenceDot): green with a soft glow online, a still orange dot offline. */
+.presence{display:inline-block;width:9px;height:9px;margin-left:7px;border-radius:50%;vertical-align:middle;flex:none}
+/* A long name is cut with an ellipsis; its presence dot (and the dot's glow) always stays in sight. */
+.nameline,.item b.nameline,.board .who b.nameline{display:flex;align-items:center;min-width:0;overflow:visible;padding-right:7px}
+.nameline .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.item>span:first-child{min-width:0}
+.presence.on{background:#4ade80;box-shadow:0 0 5px 1px #4ade8099;animation:presence 2.4s ease-in-out infinite}
+.presence.off{background:#f59e0b}
+@keyframes presence{50%{box-shadow:0 0 10px 3px #4ade80dd}}
 .duel-log{max-height:none}
 .duel-log li.win{color:#d9ffe6}.duel-log li.loss{color:#ffd4d9}
 
@@ -230,4 +242,4 @@ footer{max-width:1120px;margin:0 auto;padding:0 max(16px,env(safe-area-inset-rig
 .quiz-camp canvas{flex:none;width:72px;height:72px;image-rendering:pixelated}
 .quiz-camp b{display:block;font:600 19px Fredoka,sans-serif}
 .quiz-camp small{display:block;color:var(--muted);font-size:13px}
-@media(prefers-reduced-motion:reduce){.blob{animation:none}.sheet-card{animation:none}*{transition:none!important}}
+@media(prefers-reduced-motion:reduce){.blob{animation:none}.sheet-card{animation:none}.presence.on,.pad-btn.clash .knob svg{animation:none}*{transition:none!important}}
