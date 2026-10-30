@@ -8,6 +8,7 @@ import {DatabaseSync} from "node:sqlite";
 import {readFileSync,writeFileSync,lstatSync,unlinkSync,chmodSync} from "node:fs";
 import {dirname,join} from "node:path";
 import * as R from "./rules.mjs";
+import * as P from "./push.mjs";
 
 const env=process.env;
 const PORT=Number(env.PORT||3000);
@@ -44,6 +45,17 @@ const SESSION_DAYS=90,BODY_LIMIT=4096,FEED_KEEP=200,SESSIONS_PER_PLAYER=10,SSE_P
 // The __Host- prefix makes the browser refuse the cookie unless it is Secure, host-only and Path=/.
 const COOKIE=COOKIE_SECURE?"__Host-pg_session":"pg_session";
 R.setTimeZone(env.POLITIGO_TZ||"Europe/Paris");
+// Duel eligibility. The two knobs exist for tests (fresh level-1 accounts) and can only LOWER the rules' values.
+const knob=(v,def)=>{const n=Number(v);return v!==undefined&&v!==""&&Number.isFinite(n)&&n>=0?Math.min(def,n):def;};
+const DUEL_MIN_LEVEL=knob(env.POLITIGO_DUEL_MIN_LEVEL,R.DUEL.minLevel),DUEL_MIN_AGE=knob(env.POLITIGO_DUEL_MIN_AGE_H,R.DUEL.minAgeMs/R.H)*R.H;
+// Said at every start: a test setting left on a real server opens duels to fresh accounts (and to alts).
+if(DUEL_MIN_LEVEL!==R.DUEL.minLevel||DUEL_MIN_AGE!==R.DUEL.minAgeMs)console.warn(`Duel test settings active: level ${DUEL_MIN_LEVEL}+, accounts ${DUEL_MIN_AGE/R.H} h old+ (normal: ${R.DUEL.minLevel}, ${R.DUEL.minAgeMs/R.H} h).`);
+// A turn is void past the debate, its countdown and the same grace as the solo mini-games.
+const DUEL_TURN_MS=R.MINI.debate.ms+R.DEBATE.intro+R.MINI_RULES.graceSeconds*1000;
+// Web Push: on unless POLITIGO_PUSH=off. The contact goes into every VAPID token, so a push service can reach the admin.
+const PUSH_ON=env.POLITIGO_PUSH!=="off",PUSH_DEFAULT_CONTACT="https://github.com/MonXBZH/politigo";
+let PUSH_CONTACT=(env.POLITIGO_PUSH_CONTACT||"").trim()||PUSH_DEFAULT_CONTACT;
+if(!/^(mailto:|https:\/\/)[^\s]{3,200}$/.test(PUSH_CONTACT)){console.error("POLITIGO_PUSH_CONTACT must be a mailto: or https:// URL: using the default.");PUSH_CONTACT=PUSH_DEFAULT_CONTACT;}
 
 // ===================================================================== STORAGE
 // A short wait rather than an immediate "database is locked" when another process (a backup, a maintenance
@@ -53,7 +65,17 @@ db.exec(`PRAGMA journal_mode=WAL;PRAGMA foreign_keys=ON;
 CREATE TABLE IF NOT EXISTS players(id INTEGER PRIMARY KEY,name TEXT NOT NULL,name_key TEXT NOT NULL UNIQUE,pass TEXT NOT NULL,
  created INTEGER NOT NULL,state TEXT NOT NULL,score INTEGER NOT NULL DEFAULT 0,updated INTEGER NOT NULL,seen_version TEXT);
 CREATE TABLE IF NOT EXISTS sessions(token_hash TEXT PRIMARY KEY,player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,expires INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS feed(id INTEGER PRIMARY KEY,t INTEGER NOT NULL,player TEXT NOT NULL,kind TEXT NOT NULL,text TEXT NOT NULL);`);
+CREATE TABLE IF NOT EXISTS feed(id INTEGER PRIMARY KEY,t INTEGER NOT NULL,player TEXT NOT NULL,kind TEXT NOT NULL,text TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS duels(id INTEGER PRIMARY KEY,game TEXT NOT NULL,
+ challenger INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,defender INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+ seed INTEGER NOT NULL,status TEXT NOT NULL,created INTEGER NOT NULL,c_started INTEGER,c_score INTEGER,d_started INTEGER,d_score INTEGER,
+ expires INTEGER,resolved INTEGER,winner INTEGER,paid INTEGER NOT NULL DEFAULT 0,sday INTEGER,rday INTEGER);
+CREATE INDEX IF NOT EXISTS duels_challenger ON duels(challenger);
+CREATE INDEX IF NOT EXISTS duels_defender ON duels(defender);
+CREATE INDEX IF NOT EXISTS duels_status ON duels(status);
+CREATE TABLE IF NOT EXISTS push_subs(id INTEGER PRIMARY KEY,player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+ endpoint TEXT NOT NULL UNIQUE,p256dh TEXT NOT NULL,auth TEXT NOT NULL,created INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS push_subs_player ON push_subs(player_id);`);
 // Databases from before the changelog lack the column: NULL means "has read nothing yet".
 // Another process starting on the same file at the same moment may have added it first: that is fine too.
 if(!db.prepare("PRAGMA table_info(players)").all().some(c=>c.name==="seen_version")){
@@ -65,7 +87,7 @@ const q={
  savePlayer:db.prepare("UPDATE players SET state=?,score=?,updated=? WHERE id=?"),
  playerByKey:db.prepare("SELECT id,pass FROM players WHERE name_key=?"),
  deletePlayer:db.prepare("DELETE FROM players WHERE id=?"),
- allPlayers:db.prepare("SELECT id,name,state,seen_version FROM players"),
+ allPlayers:db.prepare("SELECT id,name,created,state,seen_version FROM players"),
  insertSession:db.prepare("INSERT INTO sessions(token_hash,player_id,expires) VALUES(?,?,?)"),
  session:db.prepare("SELECT player_id FROM sessions WHERE token_hash=? AND expires>?"),
  deleteSession:db.prepare("DELETE FROM sessions WHERE token_hash=?"),
@@ -80,6 +102,25 @@ const q={
  insertFeed:db.prepare("INSERT INTO feed(t,player,kind,text) VALUES(?,?,?,?)"),
  recentFeed:db.prepare("SELECT t,player,kind,text FROM feed ORDER BY id DESC LIMIT ?"),
  trimFeed:db.prepare("DELETE FROM feed WHERE id<=(SELECT id FROM feed ORDER BY id DESC LIMIT 1 OFFSET ?)"),
+ insertDuel:db.prepare("INSERT INTO duels(game,challenger,defender,seed,status,created,c_started,sday) VALUES(?,?,?,?,'c_play',?,?,?)"),
+ duel:db.prepare("SELECT * FROM duels WHERE id=?"),
+ // Open ones first, then the newest: the list never hides a duel waiting for an answer. The defender only hears of
+ // a duel once the challenger has a score (one still being played, or voided, was never sent).
+ duelsOf:db.prepare("SELECT * FROM duels WHERE challenger=? OR (defender=? AND status NOT IN ('c_play','void')) ORDER BY status IN ('c_play','pending','d_play') DESC,id DESC LIMIT 20"),
+ // What limits a new challenge: open duels and those created within the window, in either direction.
+ recentDuelsOf:db.prepare("SELECT challenger,defender,status FROM duels WHERE (challenger=? OR defender=?) AND (status IN ('c_play','pending','d_play') OR created>?)"),
+ sentOn:db.prepare("SELECT COUNT(*) AS n FROM duels WHERE challenger=? AND sday=?"),
+ paidWinsOn:db.prepare("SELECT COUNT(*) AS n FROM duels WHERE winner=? AND paid=1 AND rday=?"),
+ duelPending:db.prepare("UPDATE duels SET status='pending',c_score=?,expires=? WHERE id=? AND status='c_play'"),
+ duelAccept:db.prepare("UPDATE duels SET status='d_play',d_started=? WHERE id=? AND status='pending'"),
+ duelClose:db.prepare("UPDATE duels SET status=?,resolved=?,rday=? WHERE id=? AND status=?"),
+ duelDone:db.prepare("UPDATE duels SET status='done',d_score=?,resolved=?,winner=?,paid=?,rday=? WHERE id=? AND status='d_play'"),
+ staleDuels:db.prepare("SELECT * FROM duels WHERE (status='c_play' AND c_started<?) OR (status='d_play' AND d_started<?) OR (status='pending' AND expires<=?)"),
+ upsertSub:db.prepare("INSERT INTO push_subs(player_id,endpoint,p256dh,auth,created) VALUES(?,?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET player_id=excluded.player_id,p256dh=excluded.p256dh,auth=excluded.auth,created=excluded.created"),
+ trimSubs:db.prepare("DELETE FROM push_subs WHERE player_id=? AND id NOT IN (SELECT id FROM push_subs WHERE player_id=? ORDER BY created DESC,id DESC LIMIT ?)"),
+ deleteSub:db.prepare("DELETE FROM push_subs WHERE endpoint=? AND player_id=?"),
+ deleteSubId:db.prepare("DELETE FROM push_subs WHERE id=?"),
+ subsOf:db.prepare("SELECT id,endpoint,p256dh,auth FROM push_subs WHERE player_id=?"),
 };
 
 // Players live in memory (a group of friends, not a nation); every change is written through.
@@ -115,7 +156,7 @@ const players=new Map();
    // Ahead of real time on a real-time server: left as is (no replay), but said, since it should not happen.
    if(SPEED===1&&state.vclock-now>10*60e3)console.error(`player ${row.id}: game clock ${Math.round((state.vclock-now)/60e3)} min ahead of real time`);
   }catch(e){console.error(`player ${row.id}: clock not resynced`,e);state.lastReal=now;}
-  players.set(row.id,{id:row.id,name:row.name,state,seen:row.seen_version??null});
+  players.set(row.id,{id:row.id,name:row.name,created:row.created,state,seen:row.seen_version??null});
  }
  if(longest>=60000)console.log(`Clocks back on the real hour: ${resynced} player(s), up to ${Math.round(longest/60000)} min skipped, gauges untouched.`);
 }
@@ -264,9 +305,171 @@ setInterval(()=>{
   try{update(p,S=>R.advance(S,now,SPEED,Math.random));}
   catch(e){console.error(`sweep, player ${p.id}:`,e);}
  }
+ try{sweepDuels(now);}catch(e){console.error("sweep, duels:",e);}
  lastSweep=now;
 },SWEEP_MS).unref();
 let lastSweep=Date.now();
+
+// ===================================================================== DUELS AND NOTIFICATIONS
+// The key is made once and kept next to the database: browsers subscribed with it keep working across restarts.
+const VAPID_FILE=join(dirname(DB_PATH),"vapid.json");
+let VAPID=null;
+if(PUSH_ON){try{VAPID=P.loadVapid(VAPID_FILE);}catch(e){console.error(`notifications disabled: ${e.message}`);}}
+// Fire and forget: a slow, failing or vanished push service never delays nor breaks a request.
+function notify(playerId,payload){
+ if(!VAPID)return;
+ let subs=[];try{subs=q.subsOf.all(playerId);}catch(e){console.error(`push, player ${playerId}: ${e.message}`);return;}
+ for(const s of subs){
+  P.sendPush(s,payload,{vapid:VAPID,contact:PUSH_CONTACT})
+   .then(st=>{if([401,403,404,410].includes(st))q.deleteSubId.run(s.id);else if(st>=400)console.error(`push, player ${playerId}: status ${st}`);})
+   .catch(e=>console.error(`push, player ${playerId}: ${e.message}`));
+ }
+}
+const OPEN_DUEL=new Set(["c_play","pending","d_play"]);
+const dayNow=now=>R.dayKey(Math.floor(now/R.H));
+const nameOf=id=>players.get(id)?.name??"?";
+// Only the two players hear about their duel; each is told the other's name and their own role.
+function duelEvent(d,kind,to){
+ for(const id of to){const mine=id===d.challenger,data={id:d.id,kind,role:mine?"challenger":"defender",vs:nameOf(mine?d.defender:d.challenger)};for(const c of clients)if(c.playerId===id)sse(c.res,"duel",data);}
+}
+// Duel news goes straight to the public feed (the journal's "duel" entries are private: they show the gauges).
+function duelFeed(player,text){
+ try{const e={t:Date.now(),player,kind:"duel",text};q.insertFeed.run(e.t,e.player,e.kind,e.text);q.trimFeed.run(FEED_KEEP);broadcast("feed",[e]);}
+ catch(e){console.error("duel feed:",e);}
+}
+// An outcome lands like any other change: clock brought up to date, written, pushed to the player's screens.
+// A player who deleted their account in the meantime is simply skipped.
+function duelFx(id,res,opts,now){
+ const pl=players.get(id);if(!pl)return;
+ try{update(pl,S=>{R.advance(S,now,SPEED,Math.random);return R.duelApply(S,res,opts);});}catch(e){console.error(`duel, player ${id}:`,e);}
+}
+// The rules' own check (asleep, level), at the level this server is configured for.
+const playBlock=S=>R.duelBlock(S,DUEL_MIN_LEVEL);
+// Why this player cannot challenge anybody right now ("" when they can).
+function selfWhy(p,now){
+ return playBlock(p.state)||(now-p.created<DUEL_MIN_AGE?"Ton compte est trop récent pour les duels":"")
+  ||(q.sentOn.get(p.id,dayNow(now)).n>=R.DUEL.perDay?"Plus de défis aujourd'hui":"");
+}
+// The players p is already tied to: an open duel, or one started within the window, in either direction.
+function duelTies(p,now){
+ const open=new Set(),recent=new Set();
+ for(const d of q.recentDuelsOf.all(p.id,p.id,now-R.DUEL.window)){const o=d.challenger===p.id?d.defender:d.challenger;(OPEN_DUEL.has(d.status)?open:recent).add(o);}
+ return {open,recent};
+}
+function targetWhy(o,ties,now){
+ if(o.state.lvl<DUEL_MIN_LEVEL)return `Niveau ${DUEL_MIN_LEVEL} minimum`;
+ if(now-o.created<DUEL_MIN_AGE)return "Compte trop récent";
+ if(ties.open.has(o.id))return "Duel déjà en cours";
+ if(ties.recent.has(o.id))return "Déjà un duel entre vous il y a moins de 24 h";
+ return "";
+}
+function duelOpponents(p,now){
+ const self=selfWhy(p,now),ties=duelTies(p,now);
+ return [...players.values()].filter(o=>o.id!==p.id).map(o=>{const S=o.state,why=self||targetWhy(o,ties,now);
+  return {name:o.name,camp:S.camp,lvl:S.lvl,candidate:R.person(S).name,ok:!why,why};}).sort((a,b)=>a.name.localeCompare(b.name,"fr"));
+}
+// One duel as its player sees it. The challenger's score stays hidden from the defender until the end.
+function duelView(d,me){
+ const mineC=d.challenger===me,done=d.status==="done";
+ const res=done?(d.winner===null?"tie":d.winner===me?"win":"loss"):mineC&&(d.status==="refused"||d.status==="expired")?"chicken":null;
+ return {id:d.id,role:mineC?"challenger":"defender",vs:nameOf(mineC?d.defender:d.challenger),status:d.status,
+  mine:(mineC?d.c_score:d.d_score)??null,theirs:done?(mineC?d.d_score:d.c_score)??null:null,res,created:d.created,expires:d.expires??null};
+}
+// The defender has played (or forfeited with 0): scores compared, both candidates changed, the feed told.
+// Returns the result from the defender's view, or null when the duel was already over.
+function resolveDuel(d,dScore,now){
+ const c=d.c_score??0,w=c>dScore?d.challenger:dScore>c?d.defender:null,day=dayNow(now);
+ const paid=w!==null&&q.paidWinsOn.get(w,day).n<R.DUEL.paidWins?1:0;
+ if(!q.duelDone.run(dScore,now,w,paid,day,d.id).changes)return null;
+ const cn=nameOf(d.challenger),dn=nameOf(d.defender),view=id=>w===null?"tie":w===id?"win":"loss";
+ duelFx(d.challenger,view(d.challenger),{vs:dn,mine:c,theirs:dScore,paid:!!paid},now);
+ duelFx(d.defender,view(d.defender),{vs:cn,mine:dScore,theirs:c,paid:!!paid},now);
+ duelFeed(w===d.defender?dn:cn,w===null?`Match nul entre ${cn} et ${dn} au Débat chrono, ${c} partout.`
+  :w===d.challenger?`${cn} bat ${dn} au Débat chrono, ${c} à ${dScore}.`:`${dn} bat ${cn} au Débat chrono, ${dScore} à ${c}.`);
+ duelEvent(d,"resolved",[d.challenger,d.defender]);
+ notify(d.challenger,{title:"Duel terminé",tag:`duel-${d.id}`,url:"/",body:w===null?`${dn} a relevé ton défi : match nul, ${c} partout.`
+  :w===d.challenger?`${dn} a relevé ton défi : tu gagnes ${c} à ${dScore} !`:`${dn} a relevé ton défi : tu perds ${c} à ${dScore}.`});
+ return view(d.defender);
+}
+// Refused or left to expire: the challenger keeps a small consolation, the defender's game is untouched.
+function closeDuel(d,status,now){
+ if(!q.duelClose.run(status,now,dayNow(now),d.id,"pending").changes)return false;
+ duelFx(d.challenger,"chicken",{vs:nameOf(d.defender)},now);
+ duelEvent(d,status,[d.challenger,d.defender]);
+ notify(d.challenger,{title:"Duel terminé",tag:`duel-${d.id}`,url:"/",body:`${nameOf(d.defender)} ${status==="refused"?"a esquivé":"n'a pas répondu à"} ton défi : moral +${R.DUEL.chicken.moral}.`});
+ return true;
+}
+// Turns nobody finished and challenges nobody answered are closed by the clock.
+function sweepDuels(now){
+ const cut=now-DUEL_TURN_MS;
+ for(const d of q.staleDuels.all(cut,cut,now)){
+  try{
+   if(d.status==="c_play"){if(q.duelClose.run("void",now,dayNow(now),d.id,"c_play").changes)duelEvent(d,"void",[d.challenger]);}
+   else if(d.status==="d_play")resolveDuel(d,0,now);
+   else closeDuel(d,"expired",now);
+  }catch(e){console.error(`sweep, duel ${d.id}:`,e);}
+ }
+}
+async function duelRoute(req,res){
+ const p=auth(req);if(limited("duel:"+p.id,30,60e3))throw new HttpError(429,"Doucement : trop de duels d'un coup.");
+ const b=await readJson(req);
+ if(!players.has(p.id))throw new HttpError(401,"Connexion requise.");   // deleted while the body was arriving
+ const now=Date.now(),refuse=m=>new HttpError(422,m.endsWith(".")?m:m+".");
+ if(b.op==="challenge"){
+  update(p,S=>R.advance(S,now,SPEED,Math.random));
+  const row=typeof b.name==="string"&&q.playerByKey.get(nameKey(cleanName(b.name).slice(0,40))),o=row&&players.get(row.id);
+  if(!o||o.id===p.id)throw refuse("Adversaire introuvable.");
+  const why=selfWhy(p,now)||targetWhy(o,duelTies(p,now),now);if(why)throw refuse(why);
+  const seed=crypto.randomInt(0,2**32),{lastInsertRowid}=q.insertDuel.run(R.DUEL.game,p.id,o.id,seed,now,now,dayNow(now));
+  return send(res,200,{ok:true,duel:{id:Number(lastInsertRowid),seed},me:mePayload(p)});
+ }
+ if(!["accept","refuse","submit"].includes(b.op))throw new HttpError(400,"Opération inconnue.");
+ const d=Number.isSafeInteger(b.id)&&q.duel.get(b.id);
+ if(!d||(d.challenger!==p.id&&d.defender!==p.id))throw refuse("Duel introuvable.");
+ if(b.op==="accept"||b.op==="refuse"){
+  if(d.defender!==p.id||d.status!=="pending")throw refuse("Ce défi n'attend pas ta réponse.");
+  if(b.op==="refuse"){closeDuel(d,"refused",now);return send(res,200,{ok:true,me:mePayload(p)});}
+  if(now>=d.expires){closeDuel(d,"expired",now);throw refuse("Ce défi a expiré.");}
+  update(p,S=>R.advance(S,now,SPEED,Math.random));
+  const e=playBlock(p.state);if(e)throw refuse(e);
+  q.duelAccept.run(now,d.id);
+  return send(res,200,{ok:true,duel:{id:d.id,seed:d.seed},me:mePayload(p)});
+ }
+ // Submit: the picks are replayed on the server's own deal, for the camp the player is in now.
+ const mineC=d.challenger===p.id;
+ if(d.status!==(mineC?"c_play":"d_play"))throw refuse("Ce n'est pas ton tour de jouer.");
+ const el=now-(mineC?d.c_started:d.d_started),r=R.replayDebate(d.seed,p.state.camp,b.picks);
+ // Play starts after the countdown: the last pick cannot land sooner. The human-pace cap counts the 15 s of play at
+ // most: waiting before sending must not raise it.
+ const play=el-R.DEBATE.intro,valid=!!r&&play>=r.last&&el<=DUEL_TURN_MS&&r.points<=Math.ceil(Math.max(0,Math.min(play,R.MINI.debate.ms))/1000*R.MINI.debate.perSecond)+1;
+ if(mineC){
+  // A refused score voids the challenge: nobody was told yet, and nothing changes for anyone.
+  if(!valid){if(q.duelClose.run("void",now,dayNow(now),d.id,"c_play").changes)duelEvent(d,"void",[p.id]);throw refuse("Score refusé.");}
+  q.duelPending.run(r.points,now+R.DUEL.window,d.id);
+  const dn=nameOf(d.defender);
+  duelFeed(p.name,`${p.name} défie ${dn} au Débat chrono.`);
+  duelEvent(d,"challenged",[d.defender]);
+  notify(d.defender,{title:"Défi reçu !",body:`${p.name} te défie au Débat chrono. Tu as 24 h pour relever le défi.`,tag:`duel-${d.id}`,url:"/"});
+  return send(res,200,{ok:true,score:r.points,errors:r.errors,status:"pending",mine:r.points,theirs:null,res:null,me:mePayload(p)});
+ }
+ // The defender's refused score counts as 0: a broken or forged answer forfeits instead of stalling the duel.
+ const out=resolveDuel(d,valid?r.points:0,now);
+ if(!valid)throw refuse("Score refusé.");
+ return send(res,200,{ok:true,score:r.points,errors:r.errors,status:"done",mine:r.points,theirs:d.c_score??0,res:out,me:mePayload(p)});
+}
+async function pushRoute(req,res,path){
+ const p=auth(req);if(limited("push:"+p.id,20,600e3))throw new HttpError(429,"Doucement : réessaie dans un instant.");
+ const b=await readJson(req);
+ if(!players.has(p.id))throw new HttpError(401,"Connexion requise.");   // deleted while the body was arriving
+ // Unsubscribing always works (even with notifications turned off since): only the caller's own row goes.
+ if(path==="/api/push/unsubscribe"){if(typeof b.endpoint==="string"&&b.endpoint.length<=1000)q.deleteSub.run(b.endpoint,p.id);return send(res,200,{ok:true});}
+ if(!VAPID)throw new HttpError(404,"Notifications désactivées sur ce serveur.");
+ const keys=P.validKeys(b.keys);
+ if(!P.validEndpoint(b.endpoint)||!keys)throw new HttpError(400,"Abonnement refusé.");
+ // An endpoint belongs to one browser: signed in as someone else, it follows the new player. Five devices at most.
+ q.upsertSub.run(p.id,b.endpoint,keys.p256dh,keys.auth,Date.now());q.trimSubs.run(p.id,p.id,5);
+ return send(res,200,{ok:true});
+}
 
 // ===================================================================== ROUTES
 async function route(req,res){
@@ -297,7 +500,7 @@ async function route(req,res){
   if(q.countPlayers.get().n>=MAX_PLAYERS)throw new HttpError(403,"La partie est complète.");
   const now=Date.now(),state=R.newGame(b.camp,now);
   const {lastInsertRowid}=q.insertPlayer.run(name,nameKey(name),pass,now,JSON.stringify(state),R.score(state),now,RELEASE);
-  const p={id:Number(lastInsertRowid),name,state,seen:RELEASE};players.set(p.id,p);   // a new player has nothing to catch up on
+  const p={id:Number(lastInsertRowid),name,created:now,state,seen:RELEASE};players.set(p.id,p);   // a new player has nothing to catch up on
   // The account exists from here on: a failed announcement must not turn the sign-up into an error.
   try{const feed=newFeedEntries(p,0);if(feed.length)broadcast("feed",feed);publishBoard();}catch(e){console.error("register: announce failed",e);}
   return send(res,201,mePayload(p),{"Set-Cookie":startSession(p.id)});
@@ -340,6 +543,13 @@ async function route(req,res){
   const r=update(p,S=>R.act(S,b,{now:Date.now(),speed:SPEED,random:Math.random}));
   return send(res,r.ok?200:422,{...r,me:mePayload(p)});
  }
+ if(path==="/api/duels"&&method==="GET"){
+  const p=auth(req),now=Date.now();
+  return send(res,200,{ok:true,duels:q.duelsOf.all(p.id,p.id).sort((a,b)=>b.id-a.id).map(d=>duelView(d,p.id)),opponents:duelOpponents(p,now),
+   sent:q.sentOn.get(p.id,dayNow(now)).n,perDay:R.DUEL.perDay,minLevel:DUEL_MIN_LEVEL,pushKey:VAPID?.publicKey??null});
+ }
+ if(path==="/api/duel"&&method==="POST")return duelRoute(req,res);
+ if((path==="/api/push/subscribe"||path==="/api/push/unsubscribe")&&method==="POST")return pushRoute(req,res,path);
  if(path==="/api/board"&&method==="GET"){
   auth(req);return send(res,200,{board:boardRows(),feed:q.recentFeed.all(40)});
  }

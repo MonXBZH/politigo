@@ -28,6 +28,8 @@ docker compose up -d --build
 | `COOKIE_SECURE` | `1` (cookies de session HTTPS uniquement) |
 | `PROXY_HOPS` | `2` (le reverse proxy + le nginx de la pile) |
 | `POLITIGO_SPEED` | `1` (temps réel ; plus grand uniquement sur un serveur de test) |
+| `POLITIGO_PUSH` | facultatif. Vide : notifications de duel activées ; **`off`** : désactivées (voir « Duels et notifications ») |
+| `POLITIGO_PUSH_CONTACT` | facultatif. Adresse `mailto:` ou `https:` transmise aux services de notification ; vide : la page GitHub du projet |
 
 **Pare-feu** : n'autoriser le port 8080 qu'à l'adresse du reverse proxy. Attention, les ports publiés par Docker
 contournent UFW et firewalld : la règle se pose dans la chaîne `DOCKER-USER` (à rendre persistante, par exemple avec `iptables-persistent`) :
@@ -56,7 +58,7 @@ construites par GitHub et publiées sur son registre (ghcr.io) :
    |---|---|
    | `POLITIGO_IMAGES` | `ghcr.io/<compte>/politigo` |
    | `POLITIGO_TAG` | `latest`, ou une version figée (`1.2.0`, `sha-xxxxxxx`) pour maîtriser les mises à jour |
-   | `POLITIGO_INVITE`, `POLITIGO_BIND`, `POLITIGO_PORT`, `COOKIE_SECURE`, `PROXY_HOPS`, `MAX_PLAYERS` | comme dans le tableau ci-dessus |
+   | `POLITIGO_INVITE`, `POLITIGO_BIND`, `POLITIGO_PORT`, `COOKIE_SECURE`, `PROXY_HOPS`, `MAX_PLAYERS`, `POLITIGO_PUSH`, `POLITIGO_PUSH_CONTACT` | comme dans le tableau ci-dessus |
 
 4. **Mise à jour** : dans la stack, « Update the stack » en cochant « Re-pull image ». Le volume (les parties) est conservé.
    Portainer préfixe le volume du nom de la stack : `<stack>_politigo-data`, à sauvegarder.
@@ -117,7 +119,8 @@ Si l'un de ses `location` utilise `add_header`, recopier la ligne HSTS dedans : 
 
 ## 3. Exploitation
 
-- **Sauvegarde** : le volume `politigo_politigo-data` contient `politigo.db` (comptes, parties, fil). Exemple :
+- **Sauvegarde** : le volume `politigo_politigo-data` contient `politigo.db` (comptes, parties, duels, fil) et `vapid.json`
+  (la clé des notifications : à sauvegarder avec la base, sinon les téléphones abonnés ne reçoivent plus rien). Exemple :
   `docker run --rm -v politigo_politigo-data:/d -v "$PWD":/b alpine tar czf /b/politigo-$(date +%F).tgz -C /d .`
 - **Mise à jour** : `docker compose build --pull && docker compose up -d` (récupère aussi les correctifs de sécurité de nginx et Node). Les parties sont conservées. Pendant un arrêt, même de plusieurs jours, rien ne se joue : au redémarrage, chaque partie
   revient sur l'heure réelle (jour et nuit restent justes), et ses jauges sont inchangées (personne ne meurt ni n'a faim parce que
@@ -145,6 +148,26 @@ Si l'un de ses `location` utilise `add_header`, recopier la ligne HSTS dedans : 
   Le mot de passe n'est **jamais** accepté en argument (il resterait dans l'historique du shell et de Docker) : transmets celui
   qui est généré par un canal privé.
 
+### Duels et notifications
+
+- **Duels** (Débat chrono, en différé) : le joueur qui défie joue d'abord ; l'adversaire a 24 h pour relever le défi
+  sur le même débat, ou le refuser. Le serveur rejoue les réponses des deux joueurs : aucun score n'est cru sur parole
+  (un score impossible annule le défi, ou fait perdre l'adversaire qui l'envoie). Limites : niveau 5 et compte d'au moins
+  24 h pour les deux joueurs, 3 défis envoyés par jour, un seul duel ouvert par paire, et pas de nouveau duel entre deux
+  joueurs moins de 24 h après le précédent. Une victoire rapporte de l'XP 3 fois par jour au plus ; une défaite ne fait
+  jamais perdre de niveau ni descendre le moral ou l'énergie sous 25. Un tour non fini (plus de 91 s) ou un défi sans
+  réponse en 24 h est clos tout seul.
+- **Notifications** (Web Push, standard des navigateurs, sans compte tiers) : un joueur défié reçoit « Défi reçu ! »
+  sur les appareils où il les a acceptées (5 au plus). La clé du serveur est créée au premier démarrage dans
+  `/data/vapid.json` (mode 0600) : la sauvegarder avec la base. Si le volume n'est pas inscriptible, le serveur démarre
+  quand même avec une clé en mémoire (et le dit dans ses logs) : les abonnements cessent alors de marcher au redémarrage suivant.
+  Le conteneur `api` doit pouvoir sortir en HTTPS vers les services de notification des navigateurs
+  (`fcm.googleapis.com`, `updates.push.services.mozilla.com`, `*.push.apple.com`, `*.notify.windows.com`) : ce sont les
+  seules adresses acceptées pour un abonnement. `POLITIGO_PUSH=off` désactive tout ; `POLITIGO_PUSH_CONTACT` fixe le contact
+  transmis à ces services.
+- **Réglages de test** (jamais en production) : `POLITIGO_DUEL_MIN_LEVEL` et `POLITIGO_DUEL_MIN_AGE_H` abaissent le niveau
+  et l'ancienneté du compte exigés pour les duels (ils ne peuvent que les baisser), pour tester avec des comptes neufs.
+
 ## 4. Sécurité en bref
 
 - **Comptes** : mots de passe hachés (scrypt, sans bloquer le serveur), code d'invitation exigé (16 caractères minimum), nombre de comptes plafonné.
@@ -157,7 +180,8 @@ Si l'un de ses `location` utilise `add_header`, recopier la ligne HSTS dedans : 
   qui n'existe qu'à l'intérieur du conteneur : il faut déjà pouvoir y lancer une commande (accès Docker ou Portainer) pour s'en servir.
   Le serveur fait lui-même le travail (hachage, révocation des sessions, effacement des compteurs), avec une requête bornée en taille
   et en durée. `POLITIGO_ADMIN_SOCKET=off` le désactive.
-- **Jeu** : le serveur fait foi ; score des quatre mini-jeux vérifié (durée, cadence, pas de rejeu, bonus plafonné) ; états relus et bornés au démarrage.
+- **Jeu** : le serveur fait foi ; score des quatre mini-jeux vérifié (durée, cadence, pas de rejeu, bonus plafonné) ;
+  duels rejoués par le serveur sur son propre tirage ; notifications envoyées aux seuls services des navigateurs (pas de requête vers une adresse choisie par un joueur) ; états relus et bornés au démarrage.
 - **Robustesse** :
   - un joueur ou une connexion en erreur est ignoré sans arrêter le serveur ;
   - une écriture ratée (disque plein) annule l'action au lieu de désynchroniser mémoire et base ;
@@ -202,7 +226,7 @@ interdire la suppression et le force push, exiger une pull request (0 approbatio
 ## 6. Tests
 
 ```bash
-bash tests/run-server.sh                       # 148 tests : règles (dont l'équilibrage J15) + mini-jeux + changelog + API + outil d'admin, dans l'image Node de production
+bash tests/run-server.sh                       # 184 tests : règles (dont l'équilibrage J15) + mini-jeux + changelog + API + duels + notifications + outil d'admin, dans l'image Node de production
 docker compose restart api                     # remet à zéro les limites d'inscription avant l'e2e
 powershell -ExecutionPolicy Bypass -File tests\e2e.ps1   # parcours complet dans Chrome (crée deux joueurs de test)
 ```

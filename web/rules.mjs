@@ -101,6 +101,45 @@ export const pongLines={
   "Zadiste !","Et la valeur travail ?","Gréviste !","Bisounours !","Gauche caviar !","Planche à billets !","Et nos frontières ?"]
 };
 export const fxNames={sat:"satiété",moral:"moral",energy:"énergie",hyg:"hygiène"};
+// The timed debate's questions, here because the server deals and replays duels: the left answer, the right
+// answer, and a decoy that is wrong for everyone.
+export const QUESTIONS=[
+ ["Programme économique ?","Taxer les riches","Taxer les pauvres","Taxer les politiques"],
+ ["Le chômage ?","Partager le temps de travail","Supprimer les allocs","Interdire les lundis"],
+ ["La retraite ?","À 60 ans, en fanfare","À 70 ans, en forme","À 18 ans, puis on verra"],
+ ["L'école ?","Plus de profs","Plus d'uniformes","Plus de récré"],
+ ["Les frontières ?","Ouvertes à tous","Fermées à double tour","Une frontière avec la Lune"],
+ ["La sécurité ?","Plus de prévention","Plus de police","Un vigile par habitant"],
+ ["L'écologie ?","Vélo pour tous","Nucléaire pour tous","Trottinette pour les ministres"],
+ ["Les services publics ?","Tout nationaliser","Tout privatiser","Tout vendre aux enchères"],
+ ["La cantine ?","Menu végé","Entrecôte obligatoire","Menu tofu-merguez"],
+ ["Le SMIC ?","Augmenter le SMIC","Baisser les charges","Payer en tickets resto"],
+ ["La voiture ?","Transports gratuits","Autoroute à 150","Voitures à pédales"],
+ ["L'impôt sur la fortune ?","Rétablir l'ISF","Supprimer l'ISF","Impôt sur la moustache"],
+ ["Le temps de travail ?","Semaine de 32 h","Travailler plus","Semaine de 8 jours"],
+ ["Les banques ?","Les nationaliser","Les rassurer","Sous le matelas"],
+ ["L'Europe ?","Europe sociale","Europe des nations","Europe en karaoké"],
+ ["Le logement ?","Encadrer les loyers","Défiscaliser les proprios","Tous en camping-car"],
+ ["La culture ?","Subventionner les artistes","Défendre le patrimoine","Remplacer l'opéra par du karting"],
+ ["Les grèves ?","Soutien total","Service minimum","Grève de la grève"],
+ ["L'héritage ?","Taxer l'héritage","Protéger l'héritage","Hériter de ses voisins"],
+ ["La santé ?","Hôpital public","Mutuelles privées","Tisane remboursée"],
+ ["La justice ?","Réinsertion","Tolérance zéro","Pierre-feuille-ciseaux"],
+ ["Le budget ?","Dépenser pour relancer","Couper dans les dépenses","Imprimer des billets à la cave"],
+ // The rawer ones: café-du-commerce caricatures, as unfair to both sides.
+ ["Les patrons ?","Tous des voleurs","Tous des héros","Tous en slip"],
+ ["Les fonctionnaires ?","Des héros sous-payés","Une armée de planqués","Des robots en kit"],
+ ["Les riches ?","Qu'ils crachent au bassinet !","Qu'on leur fiche la paix !","Qu'ils adoptent un député"],
+ ["Les syndicats ?","Le sel de la terre","Une bande de feignants","Un club de pétanque"],
+ ["Les flics ?","Désarmer la police","Ils ont toujours raison","Les remplacer par des mimes"],
+ ["Le cannabis ?","Légaliser le joint","Prison au premier pétard","Remboursé par la Sécu"],
+ ["Les assistés ?","Ça n'existe pas","Au boulot, les fainéants !","Assistés par ordinateur"],
+ ["Les bobos ?","Notre électorat","Des rebelles en trottinette","Un pansement et ça passe"],
+ ["Le service militaire ?","Jamais de la vie","Obligatoire, en rangers","En pyjama, le dimanche"],
+ ["La fraude ?","La fraude fiscale d'abord","La fraude aux allocs d'abord","Frauder au loto"]
+];
+// What each answer of a question is, in QUESTIONS order.
+export const ANSWER_KINDS=["left","right","decoy"];
 
 // ===================================================================== RULES
 // Everything below takes the companion state S as an argument. The server is the only one that MUTATES
@@ -126,6 +165,14 @@ export const MINI={
  cortege:{label:"Le Cortège",camp:"left",ms:30000,maxScore:400,perSecond:8,bonusRate:0.2,bonusCap:20,great:100},
  epervier:{label:"L'Épervier",camp:"right",ms:35000,maxScore:150,perSecond:2,bonusRate:2,bonusCap:20,great:15}
 };
+// The debate's clock: a 1.3 s countdown, then 15 s of play; a wrong answer costs a second, and a pick shows for
+// 260 ms before the next one counts.
+export const DEBATE={intro:1300,penalty:1000,flash:260};
+// Duels (PvP, played one after the other within 24 h): both players get the same debate, dealt from a seed the
+// server draws, and the server replays each player's picks. A duel score is computed, never taken on trust.
+// A win pays at most paidWins times a day; a lost duel never costs a level nor pushes a gauge under "floor".
+export const DUEL={game:"debate",win:{xp:40,moral:10,energy:5},loss:{xp:-15,moral:-10,energy:-5},tie:{moral:5},chicken:{moral:3},
+ floor:25,perDay:3,paidWins:3,minLevel:5,minAgeMs:864e5,window:864e5,maxPicks:80,minGap:250};
 // A great score is announced in the public feed at most once per game hour and player.
 const greatAnnounced=S=>S.journal.some(j=>j.k==="mini"&&j.d?.great===true&&S.vclock-j.t<H);
 export const MINI_RULES={minSeconds:3,graceSeconds:75};   // expiry = ms/1000 + graceSeconds after the start
@@ -427,6 +474,69 @@ export function act(S,a,{now,speed=1,random=Math.random}){
  }
  default:return fail("Action inconnue.");
  }
+}
+
+// ===================================================================== DUELS
+// A small seeded generator (mulberry32): the same seed deals the same debate in the browser and on the server.
+export function seeded(seed){
+ let a=seed>>>0;
+ return ()=>{a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return ((t^t>>>14)>>>0)/4294967296;};
+}
+// The rounds of a debate: question i, and the order its answers show in (indexes into ANSWER_KINDS). Dealt like a
+// deck: every question once before any comes back, and never the same one twice running across a reshuffle.
+export function debateRounds(random,n=DUEL.maxPicks+1){
+ const shuffle=a=>{for(let i=a.length-1;i>0;i--){const j=Math.floor(random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;};
+ const out=[];let deck=[],last=-1;
+ while(out.length<n){
+  if(!deck.length)deck=shuffle(QUESTIONS.map((_,i)=>i).filter(i=>i!==last));
+  last=deck.pop();out.push({i:last,order:shuffle([0,1,2])});
+ }
+ return out;
+}
+// Replays a duel debate: picks = [[answer shown 0-2, ms since play started], ...], as the browser recorded them.
+// Picks after the final whistle are not counted. Returns null when the picks cannot come from the game (bad shape,
+// faster than the screen allows, too many).
+export function replayDebate(seed,camp,picks){
+ if(!Array.isArray(picks)||picks.length>DUEL.maxPicks)return null;
+ const rounds=debateRounds(seeded(seed),picks.length);
+ let lost=0,prev=-Infinity,points=0,errors=0,last=0;
+ for(let k=0;k<picks.length;k++){
+  const p=picks[k];
+  if(!Array.isArray(p)||p.length!==2)return null;
+  const [n,t]=p;
+  if(!Number.isInteger(n)||n<0||n>2||!Number.isInteger(t)||t<0||t-prev<DUEL.minGap)return null;
+  prev=t;
+  if(MINI.debate.ms-lost-t<=0)continue;
+  last=t;
+  if(ANSWER_KINDS[rounds[k].order[n]]===camp)points++;else{errors++;lost+=DEBATE.penalty;}
+ }
+ return {points,errors,last};
+}
+// Why this candidate cannot play a duel right now ("" when he can).
+export function duelBlock(S,minLevel=DUEL.minLevel){
+ if(isNight(S))return "Chut, il dort.";
+ if(S.sleeping)return "Il fait la sieste : rallume la lumière d'abord.";
+ if(S.lvl<minLevel)return `Les duels s'ouvrent au niveau ${minLevel}.`;
+ return "";
+}
+// A duel's outcome on one candidate: "win" (its XP only when paid), "loss", "tie", or "chicken" (the challenged
+// player refused or let it expire). The text says what really changed, after the level and gauge floors.
+export function duelApply(S,res,{vs="?",mine=0,theirs=0,paid=true}={}){
+ const before={xp:S.xp,moral:S.moral,energy:S.energy};
+ const lower=(k,v)=>{if(S[k]>DUEL.floor)S[k]=Math.max(DUEL.floor,S[k]+v);};
+ if(res==="win"){addXp(S,paid?DUEL.win.xp:0);S.moral=clamp(S.moral+DUEL.win.moral);S.energy=clamp(S.energy+DUEL.win.energy);}
+ else if(res==="loss"){addXp(S,DUEL.loss.xp);lower("moral",DUEL.loss.moral);lower("energy",DUEL.loss.energy);}
+ else if(res==="tie")S.moral=clamp(S.moral+DUEL.tie.moral);
+ else if(res==="chicken")S.moral=clamp(S.moral+DUEL.chicken.moral);
+ else return false;
+ const dxp=Math.round(S.xp-before.xp),fx={moral:Math.round(S.moral-before.moral),energy:Math.round(S.energy-before.energy)};
+ const parts=[dxp&&`${dxp>0?"+":"−"}${Math.abs(dxp)} XP`,fxText(Object.fromEntries(Object.entries(fx).filter(([,v])=>v)))].filter(Boolean).join(", ")||"rien ne bouge";
+ const text=res==="win"?`Duel gagné contre ${vs} au Débat chrono, ${mine} à ${theirs} : ${parts}.`
+  :res==="loss"?`Duel perdu contre ${vs} au Débat chrono, ${mine} à ${theirs} : ${parts}.`
+  :res==="tie"?`Match nul contre ${vs} au Débat chrono, ${mine} partout : ${parts}.`
+  :`${vs} a esquivé ton défi : ${parts}.`;
+ log(S,"duel",text,{res,vs,mine,theirs});
+ return true;
 }
 
 // "v1.3.0", "1.3.0" and "v1.3.0-3-gabc1234" (a commit after the tag) are the same release; "dev" is none.

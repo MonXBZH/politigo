@@ -59,7 +59,8 @@ function playJournal(onlyMajor){
   else if(j.k==="stress")stress=j;
   else act=j;
  }
- if(death){anim=null;pong=mini=null;startScene("death",death.d?.camp||S.camp,death.d?.name||"");toast(death.text);return;}
+ // A duel cut short by a death still sends what was played, like a game given up.
+ if(death){anim=null;if(mini?.duel){mini.abort(miniClock);endMini();}pong=mini=null;startScene("death",death.d?.camp||S.camp,death.d?.name||"");toast(death.text);return;}
  if(evoFirst){
   const from=evoFirst.k==="legend"?evoFirst.d.name:evoFirst.d.from,to=evoLast.k==="legend"?evoLast.d.name:evoLast.d.to;
   const legend=evoLast.k==="legend"&&from===to;
@@ -83,13 +84,15 @@ function playJournal(onlyMajor){
   else if(act.k==="wake"){playAnim("win",1500);toast("Il se réveille tout seul, reposé !");}
   else if(act.k==="equip")playAnim("win",1500);
   else if(act.k==="sync")toast(act.text);              // back from a maintenance: said once, nothing to animate
+  else if(act.k==="duel"){if(d.res==="win")playAnim("win",2500);toast(act.text);duelJournalT=Date.now();}
   else if(level)toast(level.text);
  }else if(level)toast(level.text);
 }
-async function send(action){
+// Every game request goes through here (the player's actions, and the duels on /api/duel): one at a time.
+async function send(action,path="/api/action"){
  if(busy){toast("Une action est déjà en cours…");return null;}busy=true;
  const who=me;let r;
- try{r=await api("POST","/api/action",action);}finally{busy=false;}
+ try{r=await api("POST",path,action);}finally{busy=false;}
  if(!S||me!==who)return null;          // signed out meanwhile: a late answer must not bring the game back
  if(r.me)applyMe(r.me);
  if(!r.ok&&r.error)toast(r.error);
@@ -102,6 +105,7 @@ function buy(it){closeSheet();send({type:"buy",key:it.key});}
 // The timed debate (both camps) and the Manif (one game per camp): the server charges the activity and opens
 // the game, the browser plays it (minigames.mjs), the server checks the score.
 let miniEnding=false,miniStartReal=0;
+const drawCand=(p,state,size,cx,ground,t)=>bigSprite(p,state,size,cx,ground,t);
 async function startMini(type){
  closeSheet();
  if(miniEnding){toast("Un instant : le résultat de la partie précédente part au serveur.");return;}
@@ -110,19 +114,51 @@ async function startMini(type){
  miniStartReal=Date.now();
  const key=type==="debate"?"debate":r.game;
  mini=createMini(key,{p:key==="epervier"?{...look(),prop:"tonfa"}:look(),camp:S.camp,ctx,scale:()=>scale,now:miniClock,
-  drawCand:(p,state,size,cx,ground,t)=>bigSprite(p,state,size,cx,ground,t)});
+  drawCand});
  cv.focus();
 }
+// Duels: the server deals a seed and both players play the same debate, one after the other; it replays the picks
+// itself. No activity is charged and no S.mini is opened: the same game machinery, another referee.
+async function startDuel(body,vs,role){
+ closeSheet();
+ if(miniEnding){toast("Un instant : le résultat de la partie précédente part au serveur.");return;}
+ const why=R.duelBlock(S,duelData?.minLevel??R.DUEL.minLevel);if(why){toast(why);return;}
+ if(pong||mini||scene){toast("Termine d'abord la partie en cours.");return;}
+ const r=await send(body,"/api/duel");
+ duelsLoad();
+ if(!r?.ok||!S)return;
+ if(!Number.isFinite(r.duel?.seed)){toast("Duel introuvable : réessaie dans un instant.");return;}
+ closeSheet();                                      // a sheet opened while the request was on its way
+ if(pong||mini)return;
+ mini=createMini("debate",{p:look(),camp:S.camp,ctx,scale:()=>scale,now:miniClock,seed:r.duel.seed,drawCand});
+ mini.duel={id:r.duel.id,vs,role};
+ toast(role==="challenger"?`Défi lancé à ${vs} : mêmes questions pour vous deux, le meilleur score gagne.`:`Défi relevé : mêmes questions que ${vs}, à toi de faire mieux !`);
+ cv.focus();
+}
+const challenge=name=>startDuel({op:"challenge",name},name,"challenger");
+const acceptDuel=x=>startDuel({op:"accept",id:x.id},x.vs,"defender");
+async function refuseDuel(x){const r=await send({op:"refuse",id:x.id},"/api/duel");if(r?.ok)toast(`Défi de ${x.vs} refusé : ça ne te coûte rien.`);duelsLoad();}
+// The challenger only learns his score (the rival has a day to answer); the defender gets the verdict at once.
+function duelDone(d,r){
+ const [a,b]=[r.mine,r.theirs].map(v=>Number.isFinite(v)?v:0);
+ if(d.role==="challenger"||!["win","loss","tie"].includes(r.res)){
+  toast(`Score de ${Number.isFinite(r.score)?r.score:a} envoyé : ${d.vs} a ${Math.round(R.DUEL.window/R.H)} h pour répondre.`);return;
+ }
+ if(Date.now()-duelJournalT>2000)toast(r.res==="win"?`Duel gagné ${a} à ${b} contre ${d.vs} !`:r.res==="loss"?`Duel perdu ${a} à ${b} contre ${d.vs}.`:`Match nul contre ${d.vs}, ${a} partout.`);
+ if(r.res==="win")playAnim("win",3000);
+}
 async function endMini(){
- const key=mini.key,score=mini.score();mini=null;pongEnded=performance.now();miniEnding=true;
+ const key=mini.key,score=mini.score(),duel=mini.duel,picks=mini.picks;mini=null;pongEnded=performance.now();miniEnding=true;
  let r;
  try{
-  // A game given up at once still waits for the server's 3-second minimum, instead of being refused.
-  const early=miniStartReal+R.MINI_RULES.minSeconds*1000+200-Date.now();if(early>0)await new Promise(ok=>setTimeout(ok,early));
+  // A game given up at once still waits for the server's 3-second minimum, instead of being refused (not a duel:
+  // its picks are replayed, not timed).
+  const early=miniStartReal+R.MINI_RULES.minSeconds*1000+200-Date.now();if(!duel&&early>0)await new Promise(ok=>setTimeout(ok,early));
   // As for the Pong: the score must not be lost behind another request.
   for(const end=Date.now()+20000;busy&&Date.now()<end;)await new Promise(ok=>setTimeout(ok,100));
-  r=await send({type:"miniEnd",score});
+  r=duel?await send({op:"submit",id:duel.id,picks},"/api/duel"):await send({type:"miniEnd",score});
  }finally{miniEnding=false;}
+ if(duel){if(r?.ok)duelDone(duel,r);duelsLoad();return;}
  if(r?.ok){
   toast(key==="debate"?`${score} argument${score>1?"s":""} · +${r.bonus} XP d'éloquence. Quitte ou double possible dans Jouer.`:`${R.MINI[key].label} : +${r.bonus} XP`);
   if(r.bonus>=10)playAnim("win",3000);
@@ -586,11 +622,14 @@ function refresh(){
   $("#journal").replaceChildren(...S.journal.filter(j=>j.k!=="level").map(j=>{const li=document.createElement("li"),tm=document.createElement("time");
    tm.textContent=when(j.t);li.append(tm,j.text);return li;}));
  }
- // A red dot on "Jouer" while the quitte-ou-double is on offer: a toast alone is easily missed.
- const rm=!rematchBlock(),playBtn=$(".pad-btn[data-sheet=play]");
- if(playBtn.classList.contains("alert")!==rm){
-  playBtn.classList.toggle("alert",rm);
-  if(rm)playBtn.setAttribute("aria-label","Jouer (quitte ou double disponible)");else playBtn.removeAttribute("aria-label");
+ // A red dot on "Jouer" while the quitte-ou-double is on offer, a count while challenges wait: a toast alone is
+ // easily missed.
+ const rm=!rematchBlock(),dn=incoming().length,playBtn=$(".pad-btn[data-sheet=play]"),sig=`${rm}|${dn}`;
+ if(playBtn.dataset.sig!==sig){
+  playBtn.dataset.sig=sig;playBtn.classList.toggle("alert",rm||dn>0);
+  if(dn)playBtn.dataset.count=String(Math.min(dn,9));else delete playBtn.dataset.count;
+  const why=[dn&&`${dn} défi${dn>1?"s":""} en attente`,rm&&"quitte ou double disponible"].filter(Boolean).join(", ");
+  if(why)playBtn.setAttribute("aria-label",`Jouer (${why})`);else playBtn.removeAttribute("aria-label");
  }
  const label=`${p.name}, niveau ${S.lvl}. Satiété ${Math.round(S.sat)}, moral ${Math.round(S.moral)}, énergie ${Math.round(S.energy)}, hygiène ${Math.round(S.hyg)}. Entrée pour lui taper sur l'épaule.`;
  if(cv.getAttribute("aria-label")!==label)cv.setAttribute("aria-label",label);
@@ -645,10 +684,12 @@ function connectLive(){
  on("board",v=>{if(Array.isArray(v)){board=v;renderBoard();}});
  on("feedInit",v=>{if(Array.isArray(v)){feed=v;renderFeed();}});
  on("feed",v=>{if(!Array.isArray(v))return;for(const f of v)feed.unshift(f);feed.length=Math.min(feed.length,60);renderFeed();});
+ on("duel",v=>{if(v&&typeof v==="object")duelEvent(v);});
  on("ping",()=>{});
  // Pushed out by a newer tab or device of the same player: this one stays quiet until it is looked at again.
  on("bye",()=>{es?.close();es=null;});
- es.onopen=()=>{lastLive=Date.now();setNet(true);};
+ // Each (re)connection reloads the duels too: the badge on "Jouer" must not miss a challenge sent meanwhile.
+ es.onopen=()=>{lastLive=Date.now();setNet(true);duelsLoad();};
  // A closed stream is either an expired session (the check below shows the login) or a server restart.
  es.onerror=()=>{if(!es)return;setNet(false);if(es.readyState===EventSource.CLOSED){es=null;retryLive();}};
 }
@@ -718,8 +759,9 @@ function openSheet(kind,opener){
  $(".sheet-card").scrollTop=0;$(".sheet-card").focus();
 }
 // Redraws the open sheet without losing the scroll position or the focused row.
-function liveSheet(){
- if(!S||!sheetKind||$("#sheet").hidden||sheetSig()===shownSig)return;
+// force: what changed is not in the state (the duels list, the push subscription).
+function liveSheet(force=false){
+ if(!S||!sheetKind||$("#sheet").hidden||(!force&&sheetSig()===shownSig))return;
  // Never under the player's fingers: an armed "tap again" button or a half-typed password survives updates.
  if($("#sheet-body .armed, #sheet-body form"))return;
  const card=$(".sheet-card"),top=card.scrollTop,f=[...card.querySelectorAll("button,select,input")],i=f.indexOf(document.activeElement);
@@ -741,7 +783,7 @@ function renderSheet(kind,opener){
   body.append(list(light),shopList("care"));
  }
  if(kind==="play"){
-  const err=activityBlock();
+  const err=activityBlock(),dn=incoming().length;
   set("Jouer",`Activités : ${R.actsToday(S)}/${XP.actsPerDay} aujourd'hui · ${XP.actsPerVisit} par visite`);
   // The rematch only shows while it is on offer: right after a debate, for one hour of game time.
   const rm=rematchBlock()?[]:[itemButton("Quitte ou double !",`Revanche immédiate, 1 chance sur 2 : moral +${R.DOUBLE.moral} et énergie +${R.DOUBLE.energy}… ou un stress ×${R.DOUBLE.stressFactor} (moral −${R.STRESS_HIT*R.DOUBLE.stressFactor}).`,"50/50",false,rematch)];
@@ -750,9 +792,12 @@ function renderSheet(kind,opener){
    itemButton("Débattre",err||`Débat chrono : ${R.MINI.debate.ms/1000} s pour enchaîner les réponses de ta ligne (doigt, souris ou 1-2-3). Énergie −8, moral +10, +1 XP par bonne réponse (20 max).`,`+${XP.activity} XP`,!!err,()=>startMini("debate")),
    itemButton(`Manif : ${manifLabel(S.camp)}`,err||(S.camp==="left"
     ?"Tiens le cortège jusqu'à Nation en 30 s : esquive LBD et lacrymo, ramasse les tracts. Doigt, souris ou flèches ; parapluie avec un deuxième doigt ou Espace."
-    :"Joue l'épervier 35 s avec un CRS : interpelle les manifestants, esquive pavés et molotovs. Gare aux journalistes et aux collègues infiltrés."),`+${XP.activity} XP`,!!err,()=>startMini("manifStart"))
+    :"Joue l'épervier 35 s avec un CRS : interpelle les manifestants, esquive pavés et molotovs. Gare aux journalistes et aux collègues infiltrés."),`+${XP.activity} XP`,!!err,()=>startMini("manifStart")),
+   // Always open: even when he cannot duel now, the sheet shows the challenges, the results and why.
+   itemButton("Duels",`Défie un rival au Débat chrono : mêmes questions, meilleur score. ${R.DUEL.perDay} défis par jour.`,dn?`${dn} défi${dn>1?"s":""}`:"PvP",false,openDuels)
   ));
  }
+ if(kind==="duels")renderDuels(body,set);
  if(kind==="news"){
   const one=newsList.length===1;
   set(one?`Quoi de neuf dans PolitiGo ${newsList[0].version}`:"Quoi de neuf dans PolitiGo",one?`Mise à jour du ${newsDate(newsList[0].date)}`:`${newsList.length} mises à jour depuis ta dernière visite`);
@@ -817,17 +862,18 @@ function renderSheet(kind,opener){
    f.addEventListener("submit",async e=>{
     e.preventDefault();go.disabled=true;err.textContent="";
     const r=await api("DELETE","/api/account",{password:pw.value});go.disabled=false;
-    if(r.ok){closeSheet();endSession("Compte supprimé. Merci d'avoir joué !");}else{err.textContent=r.error;pw.focus();}
+    if(r.ok){closeSheet();if(pushable())pushSub().then(sub=>sub?.unsubscribe()).catch(()=>{});endSession("Compte supprimé. Merci d'avoir joué !");}else{err.textContent=r.error;pw.focus();}
    });
   });
   acc.append(out,del);
+  body.append(who,acc,pushRow());
   // The version the server was built from (git describe), without the tag's leading "v".
   const ver=document.createElement("p");ver.className="fine";
   ver.textContent=VERSION==="dev"?"PolitiGo, version de développement":`PolitiGo ${VERSION.replace(/^v(?=\d)/,"")}`;
   const news=Object.assign(document.createElement("button"),{type:"button",className:"btn",textContent:"Nouveautés de la version"});
   news.addEventListener("click",()=>showNews([latestEntry(RELEASE)],false));
   const nrow=document.createElement("div");nrow.className="btn-row";nrow.append(news);
-  body.append(who,acc,ver,nrow);
+  body.append(ver,nrow);
   const about=document.createElement("p");about.className="fine";
   about.textContent="PolitiGo est une satire. Personnages caricaturés et répliques inventées ; les faits rappelés sont publics, avec le stade de chaque procédure, et la présomption d'innocence s'applique. Aucun achat réel : la seule monnaie est le frais de mandat, gagné en restant en vie. Seuls ton pseudo et ta partie sont enregistrés.";
   body.append(about);
@@ -868,13 +914,185 @@ document.querySelectorAll("[data-sheet]").forEach(b=>b.addEventListener("click",
  skipScene();openSheet(b.dataset.sheet,b);
 }));
 $("#sheet-close").addEventListener("click",()=>closeSheet());
+
+// ---------- duels ----------
+// GET /api/duels: the challenges (each from this player's side: role, status, vs, mine, theirs, res), the opponents
+// he may challenge, today's count and the server's push key. Loaded when the sheet opens, at each live duel event
+// and at each (re)connection of the live stream: never polled.
+let duelData=null,duelErr="",duelSeq=0,duelJournalT=0;
+const duelList=()=>Array.isArray(duelData?.duels)?duelData.duels.filter(x=>x&&typeof x==="object"&&typeof x.vs==="string"):[];
+const duelExp=x=>Number.isFinite(x.expires)?x.expires:(Number(x.created)||0)+R.DUEL.window;
+const isPending=x=>x.status==="pending"&&duelExp(x)>Date.now();
+const incoming=()=>duelList().filter(x=>x.role==="defender"&&isPending(x));
+async function duelsLoad(){
+ if(!S)return null;
+ const seq=++duelSeq,who=me,r=await api("GET","/api/duels");
+ if(seq!==duelSeq||!S||me!==who)return duelData;             // a newer load, or another player, won the race
+ if(r.ok){duelData=r;duelErr="";pushSync(r.pushKey);}else duelErr=r.error;
+ refresh();
+ if(sheetKind==="duels"||(r.ok&&(sheetKind==="play"||sheetKind==="more")))liveSheet(true);
+ return duelData;
+}
+function openDuels(){openSheet("duels");duelsLoad();}
+const remain=x=>{const m=Math.max(1,Math.round((duelExp(x)-Date.now())/60000));return m>=60?`${Math.floor(m/60)} h`:`${m} min`;};
+// One line per finished duel, from this player's side.
+function duelResult(x){
+ const vs=x.vs,a=x.mine??"?",b=x.theirs??"?";
+ if(x.res==="win")return `Gagné ${a} à ${b} contre ${vs}`;
+ if(x.res==="loss")return `Perdu ${a} à ${b} contre ${vs}`;
+ if(x.res==="tie")return `Match nul contre ${vs}, ${a} partout`;
+ if(x.res==="chicken")return `${vs} a esquivé ton défi`;
+ if(x.status==="refused")return x.role==="challenger"?`${vs} a esquivé ton défi`:`Refusé : le défi de ${vs}`;
+ if(x.status==="expired")return x.role==="challenger"?`Expiré : ${vs} n'a pas répondu`:`Expiré : le défi de ${vs}`;
+ if(x.status==="void")return `Annulé : le duel contre ${vs}`;
+ return "";
+}
+const fine=t=>Object.assign(document.createElement("p"),{className:"fine",textContent:t});
+function duelCard(title,sub,...buttons){
+ const d=document.createElement("div");d.className="duel";
+ const b=document.createElement("b"),sm=document.createElement("small");b.textContent=title;sm.textContent=sub;d.append(b,sm);
+ if(buttons.length){const row=document.createElement("div");row.className="btn-row";row.append(...buttons);d.append(row);}
+ return d;
+}
+function smallButton(label,cls,onClick,disabled=false){
+ const b=Object.assign(document.createElement("button"),{type:"button",className:`btn ${cls}`,textContent:label,disabled});
+ b.addEventListener("click",onClick);return b;
+}
+function renderDuels(body,set){
+ const d=duelData,why=R.duelBlock(S,d?.minLevel??R.DUEL.minLevel),D=R.DUEL;
+ set("Duels",d?`Débat chrono en face à face · défis aujourd'hui : ${d.sent??0}/${d.perDay??D.perDay}`:"Débat chrono en face à face");
+ if(!d){
+  body.append(fine(duelErr||"Chargement des duels…"));
+  if(duelErr){const row=document.createElement("div");row.className="btn-row";row.append(smallButton("Réessayer","",()=>duelsLoad()));body.append(row);}
+  return;
+ }
+ if(why)body.append(Object.assign(fine(`Pas de duel pour l'instant : ${why}`),{className:"fine warn"}));
+ const all=duelList(),inc=incoming(),out=all.filter(x=>x.role==="challenger"&&isPending(x));
+ if(inc.length){
+  body.append(blockTitle("Défis reçus"));
+  for(const x of inc)body.append(duelCard(`${x.vs} te défie`,`Débat chrono · reste ${remain(x)} pour répondre`,
+   smallButton("Relever le défi","go",()=>acceptDuel(x),!!why),smallButton("Refuser","",()=>refuseDuel(x))));
+  body.append(fine(`Refuser ne coûte rien : ${inc.length>1?"tes rivaux gagnent":"ton rival gagne"} juste un peu de moral (+${D.chicken.moral}).`));
+ }
+ if(out.length){
+  body.append(blockTitle("Tes défis en cours"));
+  for(const x of out)body.append(duelCard(`En attente de ${x.vs}`,`${x.mine!=null?`Ton score : ${x.mine} · `:""}reste ${remain(x)} pour répondre`));
+ }
+ body.append(blockTitle("Adversaires"));
+ const opps=Array.isArray(d.opponents)?d.opponents.filter(o=>o&&typeof o.name==="string"):[];
+ if(!opps.length)body.append(fine(`Personne à défier pour l'instant : les duels s'ouvrent au niveau ${D.minLevel}.`));
+ else body.append(list(...opps.map(o=>{
+  const sub=`${o.candidate||"?"} · niv. ${o.lvl??"?"}${o.ok===false&&o.why?` · ${o.why}`:""}`;
+  const b=itemButton(o.name,sub,"Défier",o.ok===false||!!why,()=>challenge(o.name));
+  b.classList.add("opp",o.camp==="right"?"right":"left");return b;
+ })));
+ const done=all.filter(x=>x.status!=="pending").map(x=>({x,text:duelResult(x)})).filter(e=>e.text);
+ if(done.length){
+  body.append(blockTitle("Derniers résultats"));
+  const ul=document.createElement("ul");ul.className="journal duel-log";
+  for(const {x,text} of done.slice(0,10)){
+   const li=document.createElement("li");li.className=["win","loss","tie","chicken"].includes(x.res)?x.res:"";
+   if(Number.isFinite(x.created)){const tm=document.createElement("time");tm.textContent=when(x.created);li.append(tm);}
+   li.append(text);ul.append(li);
+  }
+  body.append(ul);
+ }
+ body.append(blockTitle("Règles"),fine(`Victoire : +${D.win.xp} XP, moral +${D.win.moral}, énergie +${D.win.energy} (XP payée pour ${D.paidWins} victoires par jour). `+
+  `Défaite : −${-D.loss.xp} XP, moral −${-D.loss.moral}, énergie −${-D.loss.energy}, mais jamais de niveau perdu ni de jauge sous ${D.floor}. `+
+  `Match nul : moral +${D.tie.moral}. Refuser ne coûte rien. Dès le niveau ${D.minLevel}, ${D.perDay} défis par jour, ${Math.round(D.window/R.H)} h pour répondre.`));
+}
+// Live duel events. A result's journal entry (scores, XP) says more than the short notice: it is not overwritten.
+function duelEvent(v){
+ const vs=typeof v.vs==="string"?v.vs:"Un rival",m=R.DUEL.chicken.moral;
+ const texts={challenged:`${vs} te défie au Débat chrono ! Va dans Jouer → Duels.`,resolved:`Résultat du duel contre ${vs} disponible.`,
+  refused:v.role==="defender"?"":`${vs} a esquivé ton défi : moral +${m}.`,expired:v.role==="defender"?`Le défi de ${vs} a expiré.`:`Ton défi à ${vs} a expiré : moral +${m}.`,
+  void:`Le duel contre ${vs} est annulé.`};
+ const text=Object.hasOwn(texts,v.kind)?texts[v.kind]:"";
+ if(text&&(v.kind==="challenged"||Date.now()-duelJournalT>5000))toast(text);
+ if(v.kind==="challenged")notifyHidden(text,v.id);
+ duelsLoad();
+}
+
+// ---------- duel notifications (Web Push) ----------
+// Whether this device is notified is only what its push subscription says: the page stores nothing about it.
+const pushable=()=>"serviceWorker" in navigator&&"PushManager" in window&&"Notification" in window;
+const appleMobile=()=>/iP(hone|ad|od)/.test(navigator.userAgent)||(navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1);
+const PUSH_DENIED="Notifications bloquées pour PolitiGo : autorise-les dans les réglages du site de ton navigateur (le cadenas à côté de l'adresse), puis reviens ici.";
+let pushOn=null,pushBusy=false,pushSynced=false;
+async function pushSub(){try{const reg=await navigator.serviceWorker.getRegistration("/");return reg?await reg.pushManager.getSubscription():null;}catch{return null;}}
+const b64u=s=>Uint8Array.from(atob(s.replace(/-/g,"+").replace(/_/g,"/").padEnd(Math.ceil(s.length/4)*4,"=")),c=>c.charCodeAt(0));
+async function pushEnable(perm,key){
+ if(await perm!=="granted")return Notification.permission==="denied"?PUSH_DENIED:"Notifications non autorisées : rien n'a changé.";
+ await navigator.serviceWorker.register("/sw.js",{scope:"/"});
+ const reg=await navigator.serviceWorker.ready,opts={userVisibleOnly:true,applicationServerKey:b64u(key)};
+ let sub;
+ // A subscription made for another server key cannot be reused: it is dropped and made again.
+ try{sub=await reg.pushManager.subscribe(opts);}catch{await (await reg.pushManager.getSubscription())?.unsubscribe();sub=await reg.pushManager.subscribe(opts);}
+ const j=sub.toJSON(),r=await api("POST","/api/push/subscribe",{endpoint:j.endpoint,keys:{p256dh:j.keys?.p256dh,auth:j.keys?.auth}});
+ if(!r.ok){await sub.unsubscribe().catch(()=>{});return r.error;}
+ return "";
+}
+// Once per sign-in: a subscription left by an expired session (another player, same device) moves to this player,
+// and one made for an older server key (it would never receive anything) is dropped, so the toggle tells the truth.
+async function pushSync(key){
+ if(pushSynced||!pushable())return;pushSynced=true;
+ const sub=await pushSub();if(!sub)return;
+ const k=sub.options?.applicationServerKey,same=!key||!k||b64u(key).join()===new Uint8Array(k).join();
+ if(!same){await sub.unsubscribe().catch(()=>{});pushOn=false;liveSheet(true);return;}
+ const j=sub.toJSON();api("POST","/api/push/subscribe",{endpoint:j.endpoint,keys:{p256dh:j.keys?.p256dh,auth:j.keys?.auth}});
+}
+// The server first, then the device: once this returns, nothing is sent to this endpoint any more.
+async function pushDisable(){
+ const sub=await pushSub();if(!sub)return "";
+ await api("POST","/api/push/unsubscribe",{endpoint:sub.endpoint});
+ await sub.unsubscribe().catch(()=>{});return "";
+}
+async function togglePush(){
+ if(pushBusy)return;
+ const on=pushOn,key=duelData?.pushKey;
+ // Asked first, inside the tap itself: Safari only shows the permission prompt for a direct user gesture.
+ const perm=on?null:new Promise(ok=>{const p=Notification.requestPermission(ok);p?.then?.(ok);});
+ pushBusy=true;liveSheet(true);
+ let err="";
+ try{err=on?await pushDisable():await pushEnable(perm,key);}catch{err="Impossible de régler les notifications sur cet appareil : réessaie plus tard.";}
+ pushOn=!!(await pushSub());pushBusy=false;
+ toast(err||(pushOn?"Notifications de duel activées sur cet appareil.":"Notifications de duel désactivées sur cet appareil."));
+ liveSheet(true);
+}
+function pushRow(){
+ const box=document.createElement("div");
+ if(!pushable()){
+  box.append(fine(appleMobile()?"Notifications de duel : sur iPhone et iPad, ajoute d'abord PolitiGo à l'écran d'accueil (Partager → Sur l'écran d'accueil), puis ouvre-le depuis son icône."
+   :"Notifications de duel : ton navigateur ne les gère pas."));
+  return box;
+ }
+ const key=duelData?.pushKey,denied=Notification.permission==="denied";
+ const b=smallButton(`Notifications de duel : ${pushOn===null?"…":pushOn?"activées":"désactivées"}`,"",togglePush,pushBusy||pushOn===null||(!pushOn&&(!key||denied)));
+ b.setAttribute("aria-pressed",String(!!pushOn));
+ const row=document.createElement("div");row.className="btn-row";row.append(b);
+ box.append(row,fine(pushOn?"Cet appareil te prévient quand un rival te défie ou qu'un duel se termine."
+  :!duelData?"Chargement…":key===null||key===undefined?"Le serveur n'envoie pas de notifications pour l'instant."
+  :denied?PUSH_DENIED:"Sois prévenu d'un défi même PolitiGo fermé (sur cet appareil seulement)."));
+ // The state is read again at each drawing: the browser's settings may have changed it meanwhile.
+ if(!pushBusy)pushSub().then(sub=>{if(!!sub!==pushOn&&!pushBusy){pushOn=!!sub;liveSheet(true);}});
+ if(!duelData)duelsLoad();
+ return box;
+}
+// A challenge while the page is open but hidden, on a device that asked for notifications: shown locally, under
+// the tag the push uses ("duel-<id>"), so that the two replace each other instead of stacking.
+function notifyHidden(body,id){
+ if(!document.hidden||!pushable()||Notification.permission!=="granted")return;
+ navigator.serviceWorker.getRegistration("/").then(async reg=>{
+  if(reg&&await reg.pushManager.getSubscription())await reg.showNotification("PolitiGo",{body,tag:`duel-${String(id).slice(0,40)}`,data:{url:"/"}});
+ }).catch(()=>{});
+}
 $("#sheet").addEventListener("click",e=>{if(e.target.id==="sheet")closeSheet();});
 
 // ---------- sign-in / sign-up ----------
 const authEl=$("#auth");
 let regCamp="left";
 function showAuth(message=""){
- closeSheet();es?.close();es=null;S=null;anim=pong=mini=scene=null;newsPending=false;setNet(true);$("#tips").hidden=true;
+ closeSheet();es?.close();es=null;S=null;anim=pong=mini=scene=null;newsPending=false;duelData=null;duelErr="";duelSeq++;pushOn=null;pushSynced=false;setNet(true);$("#tips").hidden=true;
  authEl.hidden=false;setBackgroundInert(true);
  $("#auth-error").textContent=message;
  document.querySelectorAll(".camp").forEach(b=>{
@@ -916,7 +1134,9 @@ $("#tips-close").addEventListener("click",()=>{try{localStorage.setItem("politig
 $("#form-login").addEventListener("submit",e=>submitAuth(e,"/api/login",{}));
 $("#form-register").addEventListener("submit",e=>submitAuth(e,"/api/register",{camp:regCamp}));
 function endSession(message){me=null;board=[];feed=[];renderFeed();showAuth(message);}
-async function logout(){closeSheet();await api("POST","/api/logout",{});endSession("À bientôt !");}
+// The device's push subscription goes first, while the session still allows it: another account signing in here
+// must never receive the previous player's duel notifications.
+async function logout(){closeSheet();if(pushable())await pushDisable().catch(()=>{});await api("POST","/api/logout",{});endSession("À bientôt !");}
 
 // ===================================================================== LOOP
 let lastHud=0,lastDraw=0,lastFrame=0;

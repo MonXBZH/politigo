@@ -60,6 +60,8 @@ body.playing #screen{touch-action:none}
 .knob svg{width:28px;height:28px;stroke:var(--accent);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .knob{position:relative}
 .pad-btn.alert .knob::after{content:"";position:absolute;top:2px;right:2px;width:14px;height:14px;border-radius:50%;background:var(--danger);box-shadow:0 0 0 2px var(--bg1)}
+/* Challenges waiting: the dot carries their count. */
+.pad-btn.alert[data-count] .knob::after{content:attr(data-count);top:-2px;right:-2px;width:20px;height:20px;font:700 12px/20px Inter,sans-serif;color:#fff;text-align:center}
 /* Pinned to the viewport, above sheets and the sign-in screen: always seen, wherever the page is scrolled. */
 .toast,.net{position:fixed;left:50%;z-index:40;margin:0;padding:11px 16px;border-radius:16px;border:1px solid var(--line);backdrop-filter:blur(10px);
  font-size:14px;text-align:center;width:min(92vw,440px);transform:translateX(-50%)}
@@ -135,6 +137,17 @@ select option{background:#1d1a2a}
 .news-head{font-weight:700;margin:16px 0 4px}
 .news{margin:0;padding-left:20px;line-height:1.5}
 .news li{margin:6px 0}
+/* Duels */
+.duel{padding:12px 14px;border-radius:14px;background:var(--glass);border:1px solid var(--line);margin-top:8px;font-size:13px}
+.duel b{display:block;font-size:15px}
+.duel small{color:var(--muted)}
+.duel .btn-row{margin-top:10px}
+.btn.go{border-color:var(--accent);background:#ffffff1c}
+.btn:disabled{opacity:.55;cursor:not-allowed}
+.fine.warn{color:#ffd4d9}
+.item.opp.left small::before{content:"● ";color:#ff9db0}.item.opp.right small::before{content:"● ";color:#9cc0ff}
+.duel-log{max-height:none}
+.duel-log li.win{color:#d9ffe6}.duel-log li.loss{color:#ffd4d9}
 
 /* onboarding */
 .onboard{position:fixed;inset:0;z-index:30;overflow:auto;display:grid;grid-template-columns:minmax(0,1fr);place-items:center;padding:24px max(16px,env(safe-area-inset-right)) 24px max(16px,env(safe-area-inset-left));background:radial-gradient(110% 80% at 50% 0%,var(--bg2),var(--bg1) 72%)}
@@ -185,7 +198,7 @@ select option{background:#1d1a2a}
 .board .row.left .who small::before{content:"● ";color:#ff9db0}.board .row.right .who small::before{content:"● ";color:#9cc0ff}
 .board .val{font:700 13px ui-monospace,monospace;white-space:nowrap}
 .feed li b{color:var(--ink)}
-.feed li.death{color:#ffc7ce}.feed li.evolve,.feed li.legend{color:#ffe6b8}
+.feed li.death{color:#ffc7ce}.feed li.evolve,.feed li.legend{color:#ffe6b8}.feed li.duel{color:#d6e4ff}
 .btn-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
 .inline-form{display:flex;flex-wrap:wrap;gap:8px;width:100%}.inline-form input{flex:1 1 180px}
 .btn.armed{background:#ff6b7a33}

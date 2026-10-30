@@ -6,7 +6,6 @@ import * as R from "./rules.mjs";
 
 const W=466,C=233,RAD=222;
 const rnd=(a,b)=>a+Math.random()*(b-a),clamp=(v,a,b)=>Math.max(a,Math.min(b,v)),dist=(a,b,c,d)=>Math.hypot(a-c,b-d);
-const shuffle=a=>{for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;};
 // Keeps a point inside the round panel, with a margin.
 function inCircle(x,y,m){const dx=x-C,dy=y-C,d=Math.hypot(dx,dy),max=RAD-m;return d<=max?[x,y]:[C+dx/d*max,C+dy/d*max];}
 export const miniBonus=(key,score)=>{const c=R.MINI[key];return Math.min(c.bonusCap,Math.floor(Math.max(0,score)*c.bonusRate));};
@@ -314,63 +313,33 @@ function epervier(g,K,drawCand){
 }
 
 // ===================================================================== LE DÉBAT CHRONO (both camps: answer the party line, fast)
-// Each question: the left answer, the right answer, and a decoy that is wrong for everyone.
-export const QUESTIONS=[
- ["Programme économique ?","Taxer les riches","Taxer les pauvres","Taxer les politiques"],
- ["Le chômage ?","Partager le temps de travail","Supprimer les allocs","Interdire les lundis"],
- ["La retraite ?","À 60 ans, en fanfare","À 70 ans, en forme","À 18 ans, puis on verra"],
- ["L'école ?","Plus de profs","Plus d'uniformes","Plus de récré"],
- ["Les frontières ?","Ouvertes à tous","Fermées à double tour","Une frontière avec la Lune"],
- ["La sécurité ?","Plus de prévention","Plus de police","Un vigile par habitant"],
- ["L'écologie ?","Vélo pour tous","Nucléaire pour tous","Trottinette pour les ministres"],
- ["Les services publics ?","Tout nationaliser","Tout privatiser","Tout vendre aux enchères"],
- ["La cantine ?","Menu végé","Entrecôte obligatoire","Menu tofu-merguez"],
- ["Le SMIC ?","Augmenter le SMIC","Baisser les charges","Payer en tickets resto"],
- ["La voiture ?","Transports gratuits","Autoroute à 150","Voitures à pédales"],
- ["L'impôt sur la fortune ?","Rétablir l'ISF","Supprimer l'ISF","Impôt sur la moustache"],
- ["Le temps de travail ?","Semaine de 32 h","Travailler plus","Semaine de 8 jours"],
- ["Les banques ?","Les nationaliser","Les rassurer","Sous le matelas"],
- ["L'Europe ?","Europe sociale","Europe des nations","Europe en karaoké"],
- ["Le logement ?","Encadrer les loyers","Défiscaliser les proprios","Tous en camping-car"],
- ["La culture ?","Subventionner les artistes","Défendre le patrimoine","Remplacer l'opéra par du karting"],
- ["Les grèves ?","Soutien total","Service minimum","Grève de la grève"],
- ["L'héritage ?","Taxer l'héritage","Protéger l'héritage","Hériter de ses voisins"],
- ["La santé ?","Hôpital public","Mutuelles privées","Tisane remboursée"],
- ["La justice ?","Réinsertion","Tolérance zéro","Pierre-feuille-ciseaux"],
- ["Le budget ?","Dépenser pour relancer","Couper dans les dépenses","Imprimer des billets à la cave"],
- // The rawer ones: café-du-commerce caricatures, as unfair to both sides.
- ["Les patrons ?","Tous des voleurs","Tous des héros","Tous en slip"],
- ["Les fonctionnaires ?","Des héros sous-payés","Une armée de planqués","Des robots en kit"],
- ["Les riches ?","Qu'ils crachent au bassinet !","Qu'on leur fiche la paix !","Qu'ils adoptent un député"],
- ["Les syndicats ?","Le sel de la terre","Une bande de feignants","Un club de pétanque"],
- ["Les flics ?","Désarmer la police","Ils ont toujours raison","Les remplacer par des mimes"],
- ["Le cannabis ?","Légaliser le joint","Prison au premier pétard","Remboursé par la Sécu"],
- ["Les assistés ?","Ça n'existe pas","Au boulot, les fainéants !","Assistés par ordinateur"],
- ["Les bobos ?","Notre électorat","Des rebelles en trottinette","Un pansement et ça passe"],
- ["Le service militaire ?","Jamais de la vie","Obligatoire, en rangers","En pyjama, le dimanche"],
- ["La fraude ?","La fraude fiscale d'abord","La fraude aux allocs d'abord","Frauder au loto"]
-];
-const DB={intro:1300,penalty:1000,flash:260,top:212,h:46,gap:10,w:316};
+// The questions live in rules.mjs (the server deals and replays duels from them); kept here for older imports.
+export const QUESTIONS=R.QUESTIONS;
+// Layout only: the clock (intro, penalty, flash) is R.DEBATE, shared with the server's duel replay.
+const DB={top:212,h:46,gap:10,w:316};
 function debate(g,K,drawCand){
- const {ctx}=K,ms=R.MINI.debate.ms;
- Object.assign(g,{t0:g.t0+DB.intro,lost:0,deck:[],q:null,points:0,errors:0,flashT:-Infinity,flashOk:true,pick:-1});
+ const {ctx}=K,ms=R.MINI.debate.ms,D=R.DEBATE;
+ // Dealt by rules.mjs: a duel deals from the server's seed, so both players and the replay see the same rounds.
+ const rounds=R.debateRounds(g.seed===null?Math.random:R.seeded(g.seed));
+ Object.assign(g,{t0:g.t0+D.intro,lost:0,q:null,points:0,errors:0,flashT:-Infinity,flashOk:true,pick:-1,picks:[]});
  g.score=()=>g.points;
- // The deck is shuffled once and dealt without repeats; the answers are shuffled every time.
- const next=()=>{
-  if(!g.deck.length)g.deck=shuffle(QUESTIONS.map((_,i)=>i).filter(i=>i!==g.q?.i));
-  const i=g.deck.pop(),[text,left,right,decoy]=QUESTIONS[i];
-  g.q={i,text,answers:shuffle([{t:left,k:"left"},{t:right,k:"right"},{t:decoy,k:"decoy"}])};
- };
- next();
+ // Round k shows QUESTIONS[i]'s answers in "order" (indexes into ANSWER_KINDS; answer j is QUESTIONS[i][1+j]).
+ const deal=()=>{const {i,order}=rounds[g.picks.length],q=QUESTIONS[i];g.q={i,text:q[0],answers:order.map(j=>({t:q[1+j],k:R.ANSWER_KINDS[j]}))};};
+ deal();
  const left=now=>Math.max(0,ms-g.lost-Math.max(0,now-g.t0));
  const box=n=>({x:C-DB.w/2,y:DB.top+n*(DB.h+DB.gap),w:DB.w,h:DB.h});
  g.answer=(n,now)=>{
-  if(g.endT||now<g.t0||now-g.flashT<DB.flash||!g.q.answers[n])return;
+  if(g.endT||now<g.t0||now-g.flashT<D.flash||!g.q.answers[n])return;
+  // Judged on the whole milliseconds that are recorded, exactly as R.replayDebate will: a pick the replay would
+  // drop after the whistle is never scored on screen. (Rounding keeps the 260 ms flash above DUEL.minGap.)
+  const t=Math.round(now-g.t0);
+  if(ms-g.lost-t<=0){g.endT=now;return;}
   const ok=g.q.answers[n].k===g.camp;
-  g.flashT=now;g.flashOk=ok;g.pick=n;
+  g.picks.push([n,t]);g.flashT=now;g.flashOk=ok;g.pick=n;
   if(ok){g.points++;K.floater("+1",C+150,160,"#9be59b",now);}
-  else{g.errors++;g.lost+=DB.penalty;K.floater(g.q.answers[n].k==="decoy"?"Hors sujet ! −1 s":"Ligne de l'adversaire ! −1 s",C,206,"#ff9aa5",now);}
-  next();
+  else{g.errors++;g.lost+=D.penalty;K.floater(g.q.answers[n].k==="decoy"?"Hors sujet ! −1 s":"Ligne de l'adversaire ! −1 s",C,206,"#ff9aa5",now);}
+  if(g.picks.length>=R.DUEL.maxPicks){g.endT=now;return;}   // more picks than the server replays: the game stops
+  deal();
  };
  g.tapAt=(x,y,now)=>{for(let n=0;n<3;n++){const r=box(n);if(x>=r.x&&x<=r.x+r.w&&y>=r.y&&y<=r.y+r.h)g.answer(n,now);}};
  g.step=now=>{if(!g.endT&&now>=g.t0&&left(now)<=0)g.endT=now;};
@@ -385,7 +354,7 @@ function debate(g,K,drawCand){
   K.text(`${(rest/1000).toFixed(1)} s · ${g.points} argument${g.points>1?"s":""}`,C,104,"700 12px Inter, sans-serif","#fff6ea");
   if(now<g.t0){
    K.outlined(lft?"Défends la ligne de gauche !":"Défends la ligne de droite !",C,190,19,"#fff6ea");
-   K.outlined(String(Math.ceil((g.t0-now)/(DB.intro/3))),C,260,44,accent);
+   K.outlined(String(Math.ceil((g.t0-now)/(D.intro/3))),C,260,44,accent);
    K.text("Touche la bonne réponse, ou 1 · 2 · 3",C,300,"600 12px Inter, sans-serif","#fff6ea");
    drawCand(g.p,"idle",80,C,430,now);return;
   }
@@ -395,7 +364,7 @@ function debate(g,K,drawCand){
   K.text(g.q.text,C,156,"700 18px Fredoka, system-ui, sans-serif","#2a2230");
   K.text("ADVERSAIRE",C,120,"700 9px ui-monospace, monospace","#fff6ea99");
   // The last pick flashes green or red for a moment, over the new question's answers.
-  const flash=now-g.flashT<DB.flash;
+  const flash=now-g.flashT<D.flash;
   g.q.answers.forEach((a,n)=>{
    const r=box(n),hot=flash&&n===g.pick;
    ctx.fillStyle=hot?(g.flashOk?"#5fbf73":"#e0566a"):"#fff6ea";ctx.beginPath();ctx.roundRect(r.x,r.y,r.w,r.h,14);ctx.fill();
@@ -409,8 +378,11 @@ function debate(g,K,drawCand){
   K.drawFloaters(now);
   if(g.endT&&now-g.endT>500){
    const rate=g.points+g.errors?Math.round(100*g.points/(g.points+g.errors)):0,great=g.points>=R.MINI.debate.great;
-   K.endPanel(great?"Débat remporté !":g.points>=9?"Match nul sur le plateau":"Recadré par le parti",
-    [`${g.points} argument${g.points>1?"s":""} dans la ligne · ${g.errors} faux pas`,`Fidélité à la ligne : ${rate} %`,`+${miniBonus("debate",g.points)} XP d'éloquence`],great?"#ffd59a":accent);
+   const tally=`${g.points} argument${g.points>1?"s":""} dans la ligne · ${g.errors} faux pas`;
+   // A duel pays no eloquence bonus: the server replays the picks and the outcome comes back from it.
+   if(g.seed!==null)K.endPanel("Fin du duel !",[tally,`Fidélité à la ligne : ${rate} %`,"Score envoyé à l'arbitre…"],accent);
+   else K.endPanel(great?"Débat remporté !":g.points>=9?"Match nul sur le plateau":"Recadré par le parti",
+    [tally,`Fidélité à la ligne : ${rate} %`,`+${miniBonus("debate",g.points)} XP d'éloquence`],great?"#ffd59a":accent);
   }
  };
 }
@@ -419,8 +391,10 @@ function debate(g,K,drawCand){
 // key: "debate", "cortege" or "epervier"; p: the candidate to draw; drawCand(p,state,size,cx,ground,t) draws him.
 // The game ends on its own, or with abort(); it is over (score ready to send) a moment after its result shows,
 // or sooner with a tap on the result.
-export function createMini(key,{p,camp,ctx,scale,drawCand,now}){
- const K=makeKit(ctx,scale),g={key,p,camp,t0:now,now,endT:0,keys:{},target:null,skipT:0};
+// seed (debate only): a number deals a duel's debate from it; picks ([answer, ms since play started]) are kept in
+// g.picks for the server to replay.
+export function createMini(key,{p,camp,ctx,scale,drawCand,now,seed}){
+ const K=makeKit(ctx,scale),g={key,p,camp,t0:now,now,endT:0,keys:{},target:null,skipT:0,seed:Number.isFinite(seed)?seed:null};
  ({debate,cortege,epervier})[key](g,K,drawCand);
  const step0=g.step;
  g.step=(t,dt)=>{g.now=t;step0(t,dt);};

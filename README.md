@@ -7,7 +7,7 @@
   <img alt="Node 24" src="https://img.shields.io/badge/node-24%20LTS-5fa04e">
   <img alt="Aucune dépendance" src="https://img.shields.io/badge/d%C3%A9pendances-0-success">
   <img alt="Docker" src="https://img.shields.io/badge/docker-compose%20%7C%20Portainer-2496ed">
-  <img alt="148 tests" src="https://img.shields.io/badge/tests-148-brightgreen">
+  <img alt="184 tests" src="https://img.shields.io/badge/tests-184-brightgreen">
   <img alt="Satire" src="https://img.shields.io/badge/genre-satire-ff9db0">
 </p>
 
@@ -119,7 +119,13 @@ et toutes sont recensées, avec leurs références, dans **[docs/SOURCES.md](doc
 ### Entre amis
 
 - 🏆 **Classement en direct** : score, niveau, série record, survie.
-- 📰 **Fil de la République** : les évolutions, les morts politiques et les beaux scores aux mini-jeux de chacun, en temps réel.
+- ⚔️ **Duels** : défie un autre élu au Débat chrono. Mêmes questions pour les deux, le meilleur score gagne.
+  Tu joues d'abord, ton rival a 24 h pour relever le défi ou le refuser (sans rien perdre).
+  Victoire : **+40 XP**, moral +10, énergie +5. Défaite : −15 XP, moral −10, énergie −5, sans jamais perdre de niveau
+  ni descendre une jauge sous 25. Dès le niveau 5, trois défis par jour.
+- 🔔 **Notifications** : sois prévenu d'un défi ou d'un résultat même le jeu fermé (Dossier → Compte).
+  Sur iPhone, ajoute d'abord PolitiGo à l'écran d'accueil.
+- 📰 **Fil de la République** : les évolutions, les morts politiques et les beaux scores aux mini-jeux et les duels de chacun, en temps réel.
 - 🔐 **Sur invitation** : un code donné par l'organisateur, et le nombre de comptes plafonné.
 
 ---
