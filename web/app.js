@@ -545,7 +545,7 @@ document.addEventListener("keydown",e=>{
 let toastTimer=0;
 function toast(text){const el=$("#toast");el.textContent=text;el.classList.add("show");clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove("show"),3800);}
 const pad2=n=>String(n).padStart(2,"0");
-function clockLabel(){const v=vnow(),c=R.clockOf(v);return `Jour ${Math.floor((v-S.born)/86400000)+1} · ${pad2(c.hour)}:${pad2(c.minute)}`;}
+function clockLabel(){const v=vnow(),c=R.clockOf(v);return `Jour ${R.mandateDay(S,v)} · ${pad2(c.hour)}:${pad2(c.minute)}`;}
 const when=t=>new Date(t).toLocaleString("fr-FR",{timeZone:R.timeZone(),weekday:"short",hour:"2-digit",minute:"2-digit"});
 const gaugeEls={};
 for(const g of GAUGES){

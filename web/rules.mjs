@@ -146,6 +146,10 @@ function parts(ms){
 export const clockOf=ms=>{const p=parts(ms);return {hour:Number(p.hour),minute:Number(p.minute)};};
 export const hodOf=idx=>Number(parts(idx*H).hour);
 export const dayKey=idx=>{const p=parts(idx*H);return Number(p.year)*10000+Number(p.month)*100+Number(p.day);};
+// The day of the mandate counts calendar days in the game's time zone: day 1 is the day of birth, and the next one
+// starts at midnight, like the daily limits (visits, activities, coffees), not 24 h after the birth hour.
+const civilDay=ms=>{const p=parts(ms);return Date.UTC(Number(p.year),Number(p.month)-1,Number(p.day))/864e5;};
+export const mandateDay=(S,now=S.vclock)=>Math.max(1,civilDay(now)-civilDay(S.born)+1);
 export const curIdx=S=>Math.floor(S.vclock/H);
 export const isNight=S=>hodOf(curIdx(S))<ECO.nightEnd;
 // Asleep = the night (forced) or a nap the player started by switching the light off.
