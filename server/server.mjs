@@ -223,6 +223,8 @@ const NAME_RE=/^[A-Za-z0-9À-ÖØ-öø-ÿĀ-İĲ-ķĹ-ňŊ-ž][A-Za-z0-9À-ÖØ-
 const cleanName=n=>typeof n==="string"?n.normalize("NFC").trim().replace(/\s+/g," "):"";
 // The uniqueness key ignores case and accents: "Chloé" and "chloe" are the same player.
 const nameKey=n=>n.normalize("NFKD").replace(/\p{M}/gu,"").toLocaleLowerCase("fr");
+// The organiser's announcements sign the feed "Annonce officielle": no player may pass for them.
+const reservedName=n=>nameKey(n).replace(/[^a-z]/g,"").includes("annonceofficiel");
 // Keys written by an older version are brought up to date (a clash keeps the older key).
 for(const p of players.values()){try{q.setKey.run(nameKey(p.name),p.id);}catch(e){console.error(`player ${p.id}: name key not updated (${e.message})`);}}
 
@@ -553,6 +555,7 @@ async function route(req,res){
   if(typeof b.invite!=="string"||!sameSecret(b.invite.trim(),INVITE))throw new HttpError(403,"Code d'invitation incorrect.");
   const name=cleanName(b.name);
   if(!NAME_RE.test(name))throw new HttpError(400,"Pseudo : 3 à 20 caractères (lettres, chiffres, espace, . _ -).");
+  if(reservedName(name))throw new HttpError(400,"Ce pseudo est réservé à l'organisation.");
   if(typeof b.password!=="string"||b.password.length<8||b.password.length>200)throw new HttpError(400,"Mot de passe : 8 caractères minimum.");
   if(!R.CAMPS.includes(b.camp))throw new HttpError(400,"Choisis une collection.");
   if(q.countPlayers.get().n>=MAX_PLAYERS)throw new HttpError(403,"La partie est complète.");
@@ -681,8 +684,31 @@ function adminPlayer(name){
  if(!p)throw new HttpError(404,`Joueur introuvable : ${typeof name==="string"?cleanName(name).slice(0,40):"?"}`);
  return p;
 }
+// An announcement from the organiser: a banner on the screens open right now (shown after a game, never during
+// one), a push to the subscribed devices (held during a game like the duel ones) and, sent to everyone, a line in
+// the public feed. Plain text only: control, bidi and invisible characters are dropped (not the joiner emoji sequences need), the length is capped for the push.
+const ANNOUNCE_MAX=240;
+function announce(b){
+ const text=typeof b.text==="string"?b.text.normalize("NFC").replace(/[\p{Cc}\u061c\u200b\u200c\u200e\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/gu," ").replace(/\s+/g," ").trim():"";
+ if(!text||text.length>ANNOUNCE_MAX)throw new HttpError(400,`Annonce : 1 à ${ANNOUNCE_MAX} caractères.`);
+ const to=b.to==null?null:adminPlayer(b.to),ids=to?[to.id]:[...players.keys()],now=Date.now();
+ const live=new Set();
+ for(const c of clients)if(!to||c.playerId===to.id){sse(c.res,"announce",{text});live.add(c.playerId);}
+ let pushed=0;
+ if(VAPID)for(const id of ids){
+  if(!q.subsOf.all(id).length)continue;
+  pushed++;notify(id,{title:"Annonce officielle",body:text,tag:`announce-${now}`,url:"/"});
+ }
+ if(!to){
+  const e={t:now,player:"Annonce officielle",kind:"announce",text};
+  q.insertFeed.run(e.t,e.player,e.kind,e.text);q.trimFeed.run(FEED_KEEP);broadcast("feed",[e]);
+ }
+ console.log(`admin: announcement sent to ${to?"player "+to.id:"everyone"} (${live.size} on screen, ${pushed} by push)`);
+ return {name:to?.name??null,live:live.size,pushed,push:!!VAPID};
+}
 async function adminCommand(b){
  if(b.cmd==="list")return {players:q.listPlayers.all()};
+ if(b.cmd==="announce")return announce(b);
  if(b.cmd==="unlock"){
   const p=adminPlayer(b.name),cleared=unlockName(nameKey(p.name));
   console.log(`admin: login counters cleared for player ${p.id}`);

@@ -754,6 +754,13 @@ const toastQ=[];
 function toast(text,now=false){
  if(!now&&quiet()){const i=toastQ.indexOf(text);if(i>=0)toastQ.splice(i,1);toastQ.push(text);if(toastQ.length>4)toastQ.shift();return;}
  toastAt=Date.now();const el=$("#toast");el.textContent=text;el.classList.add("show");clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove("show"),3800);}
+// The organiser's announcements (admin.mjs announce): one banner at a time, kept until closed, never during a game or a scene.
+const announceQ=[];
+function showAnnounce(){
+ if(!announceQ.length||quiet()||scene||!$("#announce").hidden)return;
+ $("#announce").hidden=false;$("#announce-text").textContent=announceQ.shift();   // shown first: screen readers hear the text land
+}
+$("#announce-close").addEventListener("click",()=>{$("#announce").hidden=true;showAnnounce();});
 const pad2=n=>String(n).padStart(2,"0");
 function clockLabel(){const v=vnow(),c=R.clockOf(v);return `Jour ${R.mandateDay(S,v)} · ${pad2(c.hour)}:${pad2(c.minute)}`;}
 const when=t=>new Date(t).toLocaleString("fr-FR",{timeZone:R.timeZone(),weekday:"short",hour:"2-digit",minute:"2-digit"});
@@ -866,6 +873,7 @@ function connectLive(){
  on("feedInit",v=>{if(Array.isArray(v)){feed=v;renderFeed();}});
  on("feed",v=>{if(!Array.isArray(v))return;for(const f of v)feed.unshift(f);feed.length=Math.min(feed.length,60);renderFeed();});
  on("duel",v=>{if(v&&typeof v==="object")duelEvent(v);});
+ on("announce",v=>{if(typeof v?.text!=="string"||!v.text.trim())return;announceQ.push(v.text.slice(0,240));if(announceQ.length>3)announceQ.shift();showAnnounce();});
  on("ping",()=>{});
  // Pushed out by a newer tab or device of the same player: this one stays quiet until it is looked at again.
  on("bye",()=>{es?.close();es=null;});
@@ -1353,7 +1361,7 @@ function armRestart(camp,text){
 const authEl=$("#auth");
 let regCamp="left";
 function showAuth(message=""){
- closeSheet();es?.close();es=null;S=null;anim=pong=mini=scene=null;newsPending=false;toastQ.length=0;duelData=null;duelErr="";duelSeq++;pushOn=null;pushSynced=false;setNet(true);$("#tips").hidden=true;
+ closeSheet();es?.close();es=null;S=null;anim=pong=mini=scene=null;newsPending=false;toastQ.length=0;announceQ.length=0;$("#announce").hidden=true;duelData=null;duelErr="";duelSeq++;pushOn=null;pushSynced=false;setNet(true);$("#tips").hidden=true;
  authEl.hidden=false;setBackgroundInert(true);
  $("#auth-error").textContent=message;regQuizShow(false);$("#camp-note").textContent="";document.body.dataset.camp=regCamp;
  document.querySelectorAll(".camp").forEach(b=>{
@@ -1458,6 +1466,7 @@ function tickFrame(now){
    if(journalShown<S.jn){if(Date.now()-toastAt>3800)playJournal(false);}
    else if(newsPending){newsPending=false;maybeShowNews();}
    else if(toastQ.length&&Date.now()-toastAt>=4000)toast(toastQ.shift());
+   if(announceQ.length)showAnnounce();
   }
   if(hw()&&!hwHello&&!scene&&!quiet()&&!toastQ.length&&sheetKind!=="news"&&Date.now()-toastAt>4000)halloweenHello();
  }
