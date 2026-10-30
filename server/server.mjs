@@ -5,10 +5,11 @@ import net from "node:net";
 import crypto from "node:crypto";
 import {promisify} from "node:util";
 import {DatabaseSync} from "node:sqlite";
-import {readFileSync,writeFileSync,lstatSync,unlinkSync,chmodSync} from "node:fs";
+import {readFileSync,writeFileSync,lstatSync,unlinkSync,chmodSync,readdirSync,statSync} from "node:fs";
 import {dirname,join} from "node:path";
 import * as R from "./rules.mjs";
 import * as P from "./push.mjs";
+import {createChat} from "./chat.mjs";
 
 const env=process.env;
 process.umask(0o077);
@@ -36,6 +37,8 @@ else if(INVITE){
  }
  INVITE_GENERATED=true;
 }
+// A short label for the admin interface, which may manage several servers.
+const SERVER_NAME=(env.POLITIGO_SERVER_NAME||"").normalize("NFC").replace(/\s+/g," ").replace(/[\p{Cc}\p{Cf}]/gu,"").trim().slice(0,40)||"PolitiGo";
 const SPEED=Math.max(1,Math.min(3600,Number(env.POLITIGO_SPEED)||1));   // >1 only on a test server
 const COOKIE_SECURE=env.COOKIE_SECURE!=="0";
 // Proxies in front of us that append to X-Forwarded-For: the site's reverse proxy + this stack's nginx.
@@ -57,7 +60,7 @@ if(DUEL_MIN_LEVEL!==R.DUEL.minLevel||DUEL_MIN_AGE!==R.DUEL.minAgeMs)console.warn
 // A turn is void past the debate, its countdown and the same grace as the solo mini-games.
 const DUEL_TURN_MS=R.MINI.debate.ms+R.DEBATE.intro+R.MINI_RULES.graceSeconds*1000;
 // Seasonal events (Halloween): "auto" follows the calendar, "off" switches them off, "halloween" forces it (a test).
-const EVENT_MODE=R.EVENT_MODES.includes(env.POLITIGO_EVENT)?env.POLITIGO_EVENT:"auto";
+let EVENT_MODE=R.EVENT_MODES.includes(env.POLITIGO_EVENT)?env.POLITIGO_EVENT:"auto";
 if(env.POLITIGO_EVENT&&EVENT_MODE!==env.POLITIGO_EVENT)console.error(`POLITIGO_EVENT must be one of ${R.EVENT_MODES.join(", ")}: using auto.`);
 if(EVENT_MODE!=="auto")console.warn(`Seasonal event forced: ${EVENT_MODE}.`);
 const eventNow=()=>R.eventAt(Date.now(),EVENT_MODE);
@@ -86,19 +89,34 @@ CREATE INDEX IF NOT EXISTS duels_defender ON duels(defender);
 CREATE INDEX IF NOT EXISTS duels_status ON duels(status);
 CREATE TABLE IF NOT EXISTS push_subs(id INTEGER PRIMARY KEY,player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
  endpoint TEXT NOT NULL UNIQUE,p256dh TEXT NOT NULL,auth TEXT NOT NULL,created INTEGER NOT NULL);
-CREATE INDEX IF NOT EXISTS push_subs_player ON push_subs(player_id);`);
-// Databases from before the changelog lack the column: NULL means "has read nothing yet".
+CREATE INDEX IF NOT EXISTS push_subs_player ON push_subs(player_id);
+CREATE TABLE IF NOT EXISTS admin_log(id INTEGER PRIMARY KEY,t INTEGER NOT NULL,via TEXT NOT NULL,cmd TEXT NOT NULL,target TEXT,detail TEXT);
+CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT);
+CREATE TABLE IF NOT EXISTS schedules(id INTEGER PRIMARY KEY,text TEXT NOT NULL,target TEXT NOT NULL,kind TEXT NOT NULL,at INTEGER,time TEXT,days TEXT,
+ until INTEGER,next INTEGER,last INTEGER,enabled INTEGER NOT NULL DEFAULT 1,created INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS activity(player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,t INTEGER NOT NULL,kind TEXT NOT NULL,live INTEGER NOT NULL,ua TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS activity_player ON activity(player_id,t);
+CREATE INDEX IF NOT EXISTS activity_t ON activity(t);`);
+// Databases from before the changelog (or the suspensions) lack the column: NULL means "has read nothing yet".
 // Another process starting on the same file at the same moment may have added it first: that is fine too.
-if(!db.prepare("PRAGMA table_info(players)").all().some(c=>c.name==="seen_version")){
- try{db.exec("ALTER TABLE players ADD COLUMN seen_version TEXT");}catch(e){if(!/duplicate column/i.test(e.message))throw e;}
+for(const [col,type] of [["seen_version","TEXT"],["suspended","INTEGER NOT NULL DEFAULT 0"]]){
+ if(db.prepare("PRAGMA table_info(players)").all().some(c=>c.name===col))continue;
+ try{db.exec(`ALTER TABLE players ADD COLUMN ${col} ${type}`);}catch(e){if(!/duplicate column/i.test(e.message))throw e;}
 }
+// Settings changed from the admin interface win over the environment and the files, from then on.
+const getSetting=k=>db.prepare("SELECT value FROM settings WHERE key=?").get(k)?.value??null;
+const setSetting=(k,v)=>db.prepare("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(k,v);
+let INVITE_SOURCE=env.POLITIGO_INVITE?"env":"file";
+{const v=getSetting("invite");if(v&&v.length>=16){INVITE=v;INVITE_SOURCE="admin";INVITE_GENERATED=false;}}
+let REG_OPEN=getSetting("registrations")!=="closed";
+{const v=getSetting("event");if(R.EVENT_MODES.includes(v)&&v!==EVENT_MODE){EVENT_MODE=v;console.warn(`Seasonal event set by the admin: ${v}.`);}}
 const RELEASE=R.releaseOf(VERSION);   // "1.3.0" for v1.3.0-3-gabc1234, null on a dev server
 const q={
  insertPlayer:db.prepare("INSERT INTO players(name,name_key,pass,created,state,score,updated,seen_version) VALUES(?,?,?,?,?,?,?,?)"),
  savePlayer:db.prepare("UPDATE players SET state=?,score=?,updated=? WHERE id=?"),
  playerByKey:db.prepare("SELECT id,pass FROM players WHERE name_key=?"),
  deletePlayer:db.prepare("DELETE FROM players WHERE id=?"),
- allPlayers:db.prepare("SELECT id,name,created,state,seen_version FROM players"),
+ allPlayers:db.prepare("SELECT id,name,created,state,seen_version,suspended FROM players"),
  insertSession:db.prepare("INSERT INTO sessions(token_hash,player_id,expires) VALUES(?,?,?)"),
  session:db.prepare("SELECT player_id FROM sessions WHERE token_hash=? AND expires>?"),
  deleteSession:db.prepare("DELETE FROM sessions WHERE token_hash=?"),
@@ -109,9 +127,36 @@ const q={
  setKey:db.prepare("UPDATE players SET name_key=? WHERE id=?"),
  setPass:db.prepare("UPDATE players SET pass=? WHERE id=?"),
  deleteSessionsOf:db.prepare("DELETE FROM sessions WHERE player_id=?"),
- listPlayers:db.prepare("SELECT name,created,updated FROM players ORDER BY name_key"),
+ listPlayers:db.prepare("SELECT id,name,created,updated,suspended FROM players ORDER BY name_key"),
  insertFeed:db.prepare("INSERT INTO feed(t,player,kind,text) VALUES(?,?,?,?)"),
- recentFeed:db.prepare("SELECT t,player,kind,text FROM feed ORDER BY id DESC LIMIT ?"),
+ recentFeed:db.prepare("SELECT id,t,player,kind,text FROM feed ORDER BY id DESC LIMIT ?"),
+ deleteFeed:db.prepare("DELETE FROM feed WHERE id=?"),
+ setSuspended:db.prepare("UPDATE players SET suspended=? WHERE id=?"),
+ rename:db.prepare("UPDATE players SET name=?,name_key=? WHERE id=?"),
+ updatedOf:db.prepare("SELECT updated FROM players WHERE id=?"),
+ sessionsOf:db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE player_id=? AND expires>?"),
+ countSubs:db.prepare("SELECT COUNT(*) AS n FROM push_subs"),
+ countSubsOf:db.prepare("SELECT COUNT(*) AS n FROM push_subs WHERE player_id=?"),
+ lastDuelsOf:db.prepare("SELECT * FROM duels WHERE challenger=? OR defender=? ORDER BY id DESC LIMIT 10"),
+ openDuelsOf:db.prepare("SELECT * FROM duels WHERE (challenger=? OR defender=?) AND status IN ('c_play','pending','d_play')"),
+ openDuels:db.prepare("SELECT * FROM duels WHERE status IN ('c_play','pending','d_play') ORDER BY id DESC LIMIT 500"),
+ insertAudit:db.prepare("INSERT INTO admin_log(t,via,cmd,target,detail) VALUES(?,?,?,?,?)"),
+ trimAudit:db.prepare("DELETE FROM admin_log WHERE id<=(SELECT id FROM admin_log ORDER BY id DESC LIMIT 1 OFFSET ?)"),
+ audit:db.prepare("SELECT t,via,cmd,target,detail FROM admin_log ORDER BY id DESC LIMIT ?"),
+ announces:db.prepare("SELECT t,via,target,detail FROM admin_log WHERE cmd IN ('announce','schedule') ORDER BY id DESC LIMIT 50"),
+ insertActivity:db.prepare("INSERT INTO activity(player_id,t,kind,live,ua) VALUES(?,?,?,?,?)"),
+ purgeActivity:db.prepare("DELETE FROM activity WHERE t<?"),
+ activitySince:db.prepare("SELECT player_id,t,live,ua FROM activity WHERE t>? ORDER BY player_id,t"),
+ activityOf:db.prepare("SELECT player_id,t,live,ua FROM activity WHERE player_id=? AND t>? ORDER BY t"),
+ activeSince:db.prepare("SELECT DISTINCT player_id AS id FROM activity WHERE t>?"),
+ schedules:db.prepare("SELECT * FROM schedules ORDER BY id"),
+ schedule:db.prepare("SELECT * FROM schedules WHERE id=?"),
+ dueSchedules:db.prepare("SELECT * FROM schedules WHERE enabled=1 AND next IS NOT NULL AND next<=?"),
+ insertSchedule:db.prepare("INSERT INTO schedules(text,target,kind,at,time,days,until,next,last,enabled,created) VALUES(?,?,?,?,?,?,?,?,NULL,1,?)"),
+ scheduleRan:db.prepare("UPDATE schedules SET next=?,last=COALESCE(?,last),enabled=? WHERE id=?"),
+ scheduleToggle:db.prepare("UPDATE schedules SET enabled=?,next=? WHERE id=?"),
+ deleteSchedule:db.prepare("DELETE FROM schedules WHERE id=?"),
+ countSchedules:db.prepare("SELECT COUNT(*) AS n FROM schedules"),
  trimFeed:db.prepare("DELETE FROM feed WHERE id<=(SELECT id FROM feed ORDER BY id DESC LIMIT 1 OFFSET ?)"),
  insertDuel:db.prepare("INSERT INTO duels(game,challenger,defender,seed,status,created,c_started,sday) VALUES(?,?,?,?,'c_play',?,?,?)"),
  duel:db.prepare("SELECT * FROM duels WHERE id=?"),
@@ -170,7 +215,7 @@ const players=new Map();
    // Ahead of real time on a real-time server: left as is (no replay), but said, since it should not happen.
    if(SPEED===1&&state.vclock-now>10*60e3)console.error(`player ${row.id}: game clock ${Math.round((state.vclock-now)/60e3)} min ahead of real time`);
   }catch(e){console.error(`player ${row.id}: clock not resynced`,e);state.lastReal=now;}
-  players.set(row.id,{id:row.id,name:row.name,created:row.created,state,seen:row.seen_version??null});
+  players.set(row.id,{id:row.id,name:row.name,created:row.created,state,seen:row.seen_version??null,suspended:!!row.suspended});
  }
  if(longest>=60000)console.log(`Clocks back on the real hour: ${resynced} player(s), up to ${Math.round(longest/60000)} min skipped, gauges untouched.`);
 }
@@ -250,16 +295,19 @@ function send(res,status,body,headers={}){
  res.end(data);
 }
 // Cross-site requests are refused twice over: SameSite=Lax cookies, and POSTs must be JSON from our own origin.
-async function readJson(req){
- if(!/^application\/json\s*(;|$)/i.test(String(req.headers["content-type"]||"")))throw new HttpError(415,"JSON attendu.");
- // The Origin must name this site. A proxy that forwards Host without its port (nginx's $host) is accepted
- // as long as the host name itself matches.
+// The Origin must name this site. A proxy that forwards Host without its port (nginx's $host) is accepted
+// as long as the host name itself matches.
+function checkOrigin(req){
  const origin=req.headers.origin;
  if(origin){
   let o=null;try{o=new URL(origin);}catch{}
   const host=String(req.headers.host||"");
   if(!o||!(o.host===host||(!host.includes(":")&&o.hostname===host)))throw new HttpError(403,"Origine refusée.");
  }
+}
+async function readJson(req){
+ if(!/^application\/json\s*(;|$)/i.test(String(req.headers["content-type"]||"")))throw new HttpError(415,"JSON attendu.");
+ checkOrigin(req);
  let size=0;const chunks=[];
  for await(const c of req){size+=c.length;if(size>BODY_LIMIT)throw new HttpError(413,"Requête trop grosse.");chunks.push(c);}
  try{const v=JSON.parse(Buffer.concat(chunks).toString("utf8")||"{}");if(!v||typeof v!=="object"||Array.isArray(v))throw 0;return v;}
@@ -282,8 +330,10 @@ function auth(req){
  const row=token&&q.session.get(sha256(token),Date.now());
  const p=row&&players.get(row.player_id);
  if(!p)throw new HttpError(401,"Connexion requise.");
+ if(p.suspended)throw new HttpError(403,SUSPENDED);   // sessions are deleted at suspension: this is the belt and braces
  return p;
 }
+const SUSPENDED="Compte suspendu par l'organisation.";
 
 // ===================================================================== GAME: TICKS, FEED, LEADERBOARD
 const FEED_KINDS=new Set(["new","evolve","legend","death","stress","pong","mini"]);
@@ -299,7 +349,7 @@ const onlineIds=()=>new Set([...clients].map(c=>c.playerId));
 const isOnline=id=>[...clients].some(c=>c.playerId===id);
 function boardRows(){
  const on=onlineIds();
- return [...players.values()].map(p=>{const S=p.state;return {
+ return [...players.values()].filter(p=>!p.suspended).map(p=>{const S=p.state;return {
   name:p.name,camp:S.camp,candidate:R.person(S).name,lvl:S.lvl,score:R.score(S),form:S.form,
   streak:S.streak,bestStreak:S.bestStreak,deaths:S.deaths,asleep:R.isAsleep(S),online:on.has(p.id)};})
  .sort((a,b)=>b.score-a.score||b.lvl-a.lvl||a.name.localeCompare(b.name,"fr"));
@@ -337,14 +387,18 @@ setInterval(()=>{
  const now=Date.now();
  for(const p of players.values()){
   // One broken player (or a full disk) is logged and skipped; it must not stop everyone else's clock.
+  if(p.suspended)continue;   // frozen: their companion neither lives nor dies until the suspension is lifted
   try{update(p,S=>R.advance(S,now,SPEED,Math.random));}
   catch(e){console.error(`sweep, player ${p.id}:`,e);}
  }
+ try{sweepSchedules(now);}catch(e){console.error("sweep, schedules:",e);}
+ if(now-lastChores>=60e3){lastChores=now;try{chores(now);}catch(e){console.error("sweep, chores:",e);}}
  try{sweepDuels(now);}catch(e){console.error("sweep, duels:",e);}
+ try{chat.sweep(now);}catch(e){console.error("sweep, chat:",e);}
  try{flushDeferred();}catch(e){console.error("sweep, deferred pushes:",e);}   // games that expired or were closed above
  lastSweep=now;
 },SWEEP_MS).unref();
-let lastSweep=Date.now();
+let lastSweep=Date.now(),lastChores=0;
 
 // ===================================================================== DUELS AND NOTIFICATIONS
 // The key is made once and kept next to the database: browsers subscribed with it keep working across restarts.
@@ -425,7 +479,7 @@ function targetWhy(o,ties,now){
 }
 function duelOpponents(p,now){
  const self=selfWhy(p,now),ties=duelTies(p,now),on=onlineIds();
- return [...players.values()].filter(o=>o.id!==p.id).map(o=>{const S=o.state,why=self||targetWhy(o,ties,now);
+ return [...players.values()].filter(o=>o.id!==p.id&&!o.suspended).map(o=>{const S=o.state,why=self||targetWhy(o,ties,now);
   return {name:o.name,camp:S.camp,lvl:S.lvl,candidate:R.person(S).name,ok:!why,why,online:on.has(o.id)};})
   .sort((a,b)=>b.online-a.online||a.name.localeCompare(b.name,"fr"));   // online first
 }
@@ -475,11 +529,12 @@ async function duelRoute(req,res){
  const p=auth(req);if(limited("duel:"+p.id,30,60e3))throw new HttpError(429,"Doucement : trop de duels d'un coup.");
  const b=await readJson(req);
  if(!players.has(p.id))throw new HttpError(401,"Connexion requise.");   // deleted while the body was arriving
+ logActivity(p,req,"duel:"+(typeof b.op==="string"?b.op:"?"));
  const now=Date.now(),refuse=m=>new HttpError(422,m.endsWith(".")?m:m+".");
  if(b.op==="challenge"){
   update(p,S=>R.advance(S,now,SPEED,Math.random));
   const row=typeof b.name==="string"&&q.playerByKey.get(nameKey(cleanName(b.name).slice(0,40))),o=row&&players.get(row.id);
-  if(!o||o.id===p.id)throw refuse("Adversaire introuvable.");
+  if(!o||o.id===p.id||o.suspended)throw refuse("Adversaire introuvable.");
   const why=selfWhy(p,now)||targetWhy(o,duelTies(p,now),now);if(why)throw refuse(why);
   const seed=crypto.randomInt(0,2**32),{lastInsertRowid}=q.insertDuel.run(R.DUEL.game,p.id,o.id,seed,now,now,dayNow(now));
   return send(res,200,{ok:true,duel:{id:Number(lastInsertRowid),seed},me:mePayload(p)});
@@ -536,6 +591,9 @@ async function pushRoute(req,res,path){
  return send(res,200,{ok:true});
 }
 
+// ===================================================================== CHAT (server/chat.mjs)
+const chat=createChat({db,dataDir:dirname(DB_PATH),players,clients,sse,auth,limited,HttpError,send,readJson,checkOrigin,clientIp});
+
 // ===================================================================== ROUTES
 async function route(req,res){
  // Only the path matters, and an odd request target ("//", "//host") is just not found, never a 500.
@@ -551,7 +609,7 @@ async function route(req,res){
  if(path==="/api/register"&&method==="POST"){
   const ip=clientIp(req);if(limited("reg:"+ip,5,3600e3))throw new HttpError(429,"Trop d'inscriptions depuis cette adresse, réessaie plus tard.");
   const b=await readJson(req);
-  if(!INVITE)throw new HttpError(403,"Les inscriptions sont fermées.");
+  if(!INVITE||!REG_OPEN)throw new HttpError(403,"Les inscriptions sont fermées.");
   if(typeof b.invite!=="string"||!sameSecret(b.invite.trim(),INVITE))throw new HttpError(403,"Code d'invitation incorrect.");
   const name=cleanName(b.name);
   if(!NAME_RE.test(name))throw new HttpError(400,"Pseudo : 3 à 20 caractères (lettres, chiffres, espace, . _ -).");
@@ -583,6 +641,7 @@ async function route(req,res){
   // A password reset that landed during the hashing pause wins: the old password no longer opens a session.
   const p=row&&players.get(row.id);
   if(!p||!okPw||q.playerByKey.get(key)?.pass!==row.pass)throw new HttpError(401,"Pseudo ou mot de passe incorrect.");
+  if(p.suspended)throw new HttpError(403,SUSPENDED);   // only said to whoever knows the password
   return send(res,200,mePayload(p),{"Set-Cookie":startSession(p.id)});
  }
  if(path==="/api/logout"&&method==="POST"){
@@ -606,6 +665,7 @@ async function route(req,res){
   const p=auth(req);if(limited("act:"+p.id,40,10e3))throw new HttpError(429,"Doucement : trop d'actions d'un coup.");
   const b=await readJson(req);
   if(!players.has(p.id))throw new HttpError(401,"Connexion requise.");   // deleted while the body was arriving
+  logActivity(p,req,typeof b.type==="string"?b.type:"?");
   const r=update(p,S=>R.act(S,b,{now:Date.now(),speed:SPEED,random:Math.random,event:eventNow()}));
   if(deferred.size)flushDeferred();
   return send(res,r.ok?200:422,{...r,me:mePayload(p)});
@@ -626,7 +686,10 @@ async function route(req,res){
   const b=await readJson(req);
   const row=q.playerByKey.get(nameKey(p.name));
   if(!row||!await checkPassword(typeof b.password==="string"?b.password.slice(0,200):"",row.pass))throw new HttpError(401,"Mot de passe incorrect.");
+  let after=null;try{after=chat.beforePlayerDelete?.(p.id);}catch(e){console.error("chat, before deleting a player:",e);}
   q.deletePlayer.run(p.id);players.delete(p.id);deferred.delete(p.id);
+  try{after?.();}catch(e){console.error("chat, after deleting a player:",e);}
+  try{chat.playerDeleted(p.id);}catch(e){console.error("chat, deleted player:",e);}
   for(const c of [...clients])if(c.playerId===p.id)closeStream(c,true);
   publishBoard();
   return send(res,200,{ok:true},{"Set-Cookie":sessionCookie("",0)});
@@ -644,10 +707,12 @@ async function route(req,res){
   const c={res,playerId:p.id,ping:null};clients.add(c);
   // The first stream brings the player online for everyone (this one included); otherwise only this one needs the board.
   sse(res,"me",mePayload(p));sse(res,"board",boardRows());if(!mine.length)presenceChanged();sse(res,"feedInit",q.recentFeed.all(40));   // newest first
+  try{chat.onStream(c,p);}catch(e){console.error("chat on stream:",e);}
   c.ping=setInterval(()=>sse(res,"ping",0),25000);
   req.on("close",()=>closeStream(c));
   return;
  }
+ if(path==="/api/chat"||path.startsWith("/api/chat/")){if(await chat.route(req,res,path,method))return;}
  throw new HttpError(404,"Introuvable.");
 }
 
@@ -684,49 +749,347 @@ function adminPlayer(name){
  if(!p)throw new HttpError(404,`Joueur introuvable : ${typeof name==="string"?cleanName(name).slice(0,40):"?"}`);
  return p;
 }
+// A player named by id (the web interface) or by name (the CLI).
+function adminTarget(id,name){
+ if(Number.isSafeInteger(id)){const p=players.get(id);if(!p)throw new HttpError(404,`Joueur introuvable : #${id}`);return p;}
+ return adminPlayer(name);
+}
+const who=b=>adminTarget(b.id,b.name);
+// One row per mutating command, kept to the last 1000. Never a password nor the invite code.
+const VIAS=["cli","web","schedule"];
+function audit(via,cmd,target,detail=""){
+ try{q.insertAudit.run(Date.now(),VIAS.includes(via)?via:"cli",cmd,String(target??"").slice(0,80),String(detail??"").slice(0,300));q.trimAudit.run(1000);}
+ catch(e){console.error("admin log:",e);}
+}
 // An announcement from the organiser: a banner on the screens open right now (shown after a game, never during
 // one), a push to the subscribed devices (held during a game like the duel ones) and, sent to everyone, a line in
-// the public feed. Plain text only: control, bidi and invisible characters are dropped (not the joiner emoji sequences need), the length is capped for the push.
+// the public feed. Plain text only: control, bidi and invisible characters are dropped (not the joiner emoji
+// sequences need), the length is capped for the push.
 const ANNOUNCE_MAX=240;
-function announce(b){
- const text=typeof b.text==="string"?b.text.normalize("NFC").replace(/[\p{Cc}\u061c\u200b\u200c\u200e\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/gu," ").replace(/\s+/g," ").trim():"";
+function announceText(t){
+ const text=typeof t==="string"?t.normalize("NFC").replace(/[\p{Cc}\u061c\u200b\u200c\u200e\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/gu," ").replace(/\s+/g," ").trim():"";
  if(!text||text.length>ANNOUNCE_MAX)throw new HttpError(400,`Annonce : 1 à ${ANNOUNCE_MAX} caractères.`);
- const to=b.to==null?null:adminPlayer(b.to),ids=to?[to.id]:[...players.keys()],now=Date.now();
+ return text;
+}
+const campFr=c=>c==="left"?"gauche":"droite";
+function announce(b,via){
+ const text=announceText(b.text);
+ if(b.camp!=null&&!R.CAMPS.includes(b.camp))throw new HttpError(400,"Camp : left ou right.");
+ const to=b.to==null?null:adminTarget(b.to,b.to),camp=to?null:b.camp??null,now=Date.now();
+ // A suspended player is out of the game: no banner, no push (unless named on purpose).
+ const ids=to?[to.id]:[...players.values()].filter(p=>!p.suspended&&(!camp||p.state.camp===camp)).map(p=>p.id),want=new Set(ids);
  const live=new Set();
- for(const c of clients)if(!to||c.playerId===to.id){sse(c.res,"announce",{text});live.add(c.playerId);}
+ for(const c of clients)if(want.has(c.playerId)){sse(c.res,"announce",{text});live.add(c.playerId);}
  let pushed=0;
  if(VAPID)for(const id of ids){
   if(!q.subsOf.all(id).length)continue;
   pushed++;notify(id,{title:"Annonce officielle",body:text,tag:`announce-${now}`,url:"/"});
  }
- if(!to){
+ // Only an announcement to everyone is public: one meant for a camp or a player stays off the shared feed.
+ if(!to&&!camp){
   const e={t:now,player:"Annonce officielle",kind:"announce",text};
-  q.insertFeed.run(e.t,e.player,e.kind,e.text);q.trimFeed.run(FEED_KEEP);broadcast("feed",[e]);
+  const {lastInsertRowid}=q.insertFeed.run(e.t,e.player,e.kind,e.text);e.id=Number(lastInsertRowid);q.trimFeed.run(FEED_KEEP);broadcast("feed",[e]);
  }
- console.log(`admin: announcement sent to ${to?"player "+to.id:"everyone"} (${live.size} on screen, ${pushed} by push)`);
- return {name:to?.name??null,live:live.size,pushed,push:!!VAPID};
+ audit(via,"announce",to?to.name:camp?campFr(camp):"tous",text);
+ console.log(`admin: announcement sent to ${to?"player "+to.id:camp?"camp "+camp:"everyone"} (${live.size} on screen, ${pushed} by push)`);
+ return {name:to?.name??null,camp,live:live.size,pushed,push:!!VAPID};
 }
+
+// ---- Scheduled announcements, in the game's time zone. Wall times are turned into instants afresh for every run,
+// so "every day at 09:00" stays 09:00 across a DST change.
+const WALL=new Intl.DateTimeFormat("en-GB",{timeZone:R.timeZone(),year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hourCycle:"h23"});
+function wall(ms){const o={};for(const x of WALL.formatToParts(ms))if(x.type!=="literal")o[x.type]=Number(x.value);return o;}
+// The instant showing that wall time; twice, since the offset at the first guess may differ (a DST day).
+function wallToUtc(y,mo,d,h,mi){
+ const want=Date.UTC(y,mo-1,d,h,mi);let t=want;
+ for(let i=0;i<2;i++){const w=wall(t);t+=want-Date.UTC(w.year,w.month-1,w.day,w.hour,w.minute);}
+ return t;
+}
+// The first run strictly after "after" (null: none, a once already past).
+function nextRun(s,after){
+ if(s.kind==="once")return s.at>after?s.at:null;
+ const [h,mi]=s.time.split(":").map(Number),w=wall(after);
+ for(let k=0;k<9;k++){
+  const day=new Date(Date.UTC(w.year,w.month-1,w.day+k)),t=wallToUtc(day.getUTCFullYear(),day.getUTCMonth()+1,day.getUTCDate(),h,mi);
+  if(t>after&&(s.kind==="daily"||s.days.includes(day.getUTCDay())))return t;
+ }
+ return null;
+}
+const SCHEDULE_LATE=30*60e3,SCHEDULES_MAX=100;
+function scheduleView(r){
+ const target=JSON.parse(r.target),days=r.days?JSON.parse(r.days):null;
+ if(target.kind==="player")target.name=players.get(target.id)?.name??target.name;
+ return {id:r.id,text:r.text,target:{kind:target.kind,...(target.camp?{camp:target.camp}:{}),...(target.kind==="player"?{name:target.name}:{})},kind:r.kind,
+  ...(r.kind==="once"?{at:r.at}:{time:r.time}),...(days?{days}:{}),until:r.until??null,next:r.next??null,last:r.last??null,enabled:!!r.enabled};
+}
+function scheduleAdd(b,via){
+ const text=announceText(b.text),now=Date.now(),t=b.target&&typeof b.target==="object"?b.target:{kind:"all"};
+ let target;
+ if(t.kind==="all")target={kind:"all"};
+ else if(t.kind==="camp"&&R.CAMPS.includes(t.camp))target={kind:"camp",camp:t.camp};
+ else if(t.kind==="player"){const p=adminTarget(t.id,t.name);target={kind:"player",id:p.id,name:p.name};}
+ else throw new HttpError(400,"Destinataire : tous, un camp ou un joueur.");
+ if(!["once","daily","weekly"].includes(b.kind))throw new HttpError(400,"Fréquence : une fois, chaque jour ou chaque semaine.");
+ const s={kind:b.kind,at:null,time:null,days:null};
+ if(b.kind==="once"){if(!Number.isSafeInteger(b.at)||b.at<=now)throw new HttpError(400,"La date d'envoi doit être dans le futur.");s.at=b.at;}
+ else{
+  const m=typeof b.time==="string"&&/^([01]\d|2[0-3]):([0-5]\d)$/.exec(b.time);if(!m)throw new HttpError(400,"Heure : HH:MM.");s.time=b.time;
+  if(b.kind==="weekly"){
+   if(!Array.isArray(b.days)||!b.days.length||!b.days.every(d=>Number.isInteger(d)&&d>=0&&d<=6))throw new HttpError(400,"Choisis au moins un jour de la semaine.");
+   s.days=[...new Set(b.days)].sort();
+  }
+ }
+ const until=b.until==null?null:b.until;
+ if(until!==null&&(!Number.isSafeInteger(until)||until<=now))throw new HttpError(400,"La date de fin doit être dans le futur.");
+ const next=nextRun(s,now);
+ if(next===null||(until!==null&&next>until))throw new HttpError(400,"Aucun envoi possible avant la date de fin.");
+ if(q.countSchedules.get().n>=SCHEDULES_MAX)throw new HttpError(400,`${SCHEDULES_MAX} annonces planifiées au maximum.`);
+ const {lastInsertRowid}=q.insertSchedule.run(text,JSON.stringify(target),s.kind,s.at,s.time,s.days&&JSON.stringify(s.days),until,next,now);
+ const row=q.schedule.get(Number(lastInsertRowid));
+ audit(via,"schedule-add",target.kind==="player"?target.name:target.kind==="camp"?campFr(target.camp):"tous",`#${row.id} ${s.kind} : ${text}`);
+ return {schedule:scheduleView(row)};
+}
+// Due runs go out through announce(); one missed by more than 30 min (server down) is skipped, never sent late.
+function sweepSchedules(now){
+ for(const r of q.dueSchedules.all(now)){
+  let sent=null;
+  try{
+   if(now-r.next<=SCHEDULE_LATE){
+    const t=JSON.parse(r.target);
+    announce({text:r.text,...(t.kind==="camp"?{camp:t.camp}:{}),...(t.kind==="player"?{to:t.id}:{})},"schedule");sent=now;
+   }else console.log(`schedule ${r.id}: run of ${new Date(r.next).toISOString()} missed, skipped`);
+  }catch(e){console.error(`schedule ${r.id}:`,e.message);}
+  const s={kind:r.kind,at:r.at,time:r.time,days:r.days?JSON.parse(r.days):null},next=r.kind==="once"?null:nextRun(s,now);
+  const on=next!==null&&(r.until==null||next<=r.until);
+  q.scheduleRan.run(on?next:null,sent,on?1:0,r.id);
+ }
+}
+
+// ---- Activity log and bot report. Kept 14 days, no address: what was done, when, with a screen open or not, and
+// from what kind of client.
+const ACTIVITY_DAYS=14;
+function uaTag(ua){
+ ua=String(ua||"").slice(0,400);
+ if(!ua.trim())return "none";
+ if(/headless|phantom|puppeteer|playwright|selenium/i.test(ua))return "headless";
+ if(/^Mozilla\/5\.0 \(/.test(ua)&&/(Gecko\/|AppleWebKit\/|Firefox\/|Chrome\/|Safari\/)/.test(ua)&&!/bot|crawl|spider|curl|python|wget/i.test(ua))return "browser";
+ return (/^[A-Za-z0-9._-]+/.exec(ua)?.[0]||"other").toLowerCase().slice(0,24);
+}
+function logActivity(p,req,kind){
+ try{q.insertActivity.run(p.id,Date.now(),String(kind).replace(/[^\w:.-]/g,"").slice(0,24)||"?",isOnline(p.id)?1:0,uaTag(req.headers["user-agent"]));}
+ catch(e){console.error(`activity, player ${p.id}:`,e.message);}
+}
+const pct=x=>`${Math.round(x*100)} %`;
+// Suspicion score, 0 to 100, from the last 14 days of actions:
+//  +35 more than half of the actions sent with no live screen open (a script, not the page),
+//  +35 more than 20 % from a client that is not a browser (curl, python-requests, node...),
+//  +15 more than 25 % of the actions between 1 h and 6 h (game time zone),
+//  +15 gaps under 2 h too regular (coefficient of variation < 0.15 over at least 30 gaps): a timer, not a hand.
+function botReport(p,rows){
+ const byHour=Array(24).fill(0),n=rows.length;let noLive=0,nonBrowser=0,night=0;const gaps=[];
+ for(let i=0;i<n;i++){
+  const r=rows[i],h=R.clockOf(r.t).hour;byHour[h]++;
+  if(!r.live)noLive++;if(r.ua!=="browser")nonBrowser++;if(h>=1&&h<6)night++;
+  if(i)gaps.push((r.t-rows[i-1].t)/1000);
+ }
+ const sorted=[...gaps].sort((a,b)=>a-b),median=sorted.length?sorted[sorted.length>>1]:null;
+ const short=gaps.filter(g=>g<7200),mean=short.length?short.reduce((a,b)=>a+b,0)/short.length:0;
+ const cv=short.length>1&&mean>0?Math.sqrt(short.reduce((a,g)=>a+(g-mean)**2,0)/short.length)/mean:null;
+ const noLiveShare=n?noLive/n:0,nonBrowserShare=n?nonBrowser/n:0,nightShare=n?night/n:0,reasons=[];let score=0;
+ if(noLiveShare>0.5){score+=35;reasons.push(`${pct(noLiveShare)} des actions sans écran de jeu ouvert`);}
+ if(nonBrowserShare>0.2){
+  const tags=[...new Set(rows.filter(r=>r.ua!=="browser").map(r=>r.ua))].slice(0,3).join(", ");
+  score+=35;reasons.push(`${pct(nonBrowserShare)} des actions hors navigateur (${tags})`);
+ }
+ if(nightShare>0.25){score+=15;reasons.push(`${pct(nightShare)} des actions entre 1 h et 6 h`);}
+ if(cv!==null&&short.length>=30&&cv<0.15){score+=15;reasons.push(`Rythme trop régulier (variation ${cv.toFixed(2).replace(".",",")} sur ${short.length} intervalles)`);}
+ return {id:p.id,name:p.name,actions14d:n,byHour,noLiveShare,nonBrowserShare,nightShare,medianGapS:median===null?null:Math.round(median),
+  gapCv:cv===null?null:Math.round(cv*1000)/1000,score:Math.min(100,score),reasons};
+}
+const activityCut=now=>now-ACTIVITY_DAYS*864e5;
+function botsAll(now){
+ const by=new Map();for(const r of q.activitySince.all(activityCut(now))){let l=by.get(r.player_id);if(!l)by.set(r.player_id,l=[]);l.push(r);}
+ return [...players.values()].map(p=>botReport(p,by.get(p.id)??[])).sort((a,b)=>b.score-a.score||b.actions14d-a.actions14d||a.name.localeCompare(b.name,"fr"));
+}
+// Once a minute from the sweep: old activity rows, and backups the admin interface did not take away.
+function chores(now){
+ q.purgeActivity.run(activityCut(now));
+ if(!ADMIN_SOCKET)return;
+ const dir=dirname(ADMIN_SOCKET);
+ for(const f of readdirSync(dir)){
+  if(!/^backup-\d+\.db$/.test(f))continue;
+  try{const st=lstatSync(join(dir,f));if(st.isFile()&&now-st.mtimeMs>10*60e3)unlinkSync(join(dir,f));}catch{}
+ }
+}
+
+// ---- Suspension, sign-out, duels.
+function closeStreamsOf(id){for(const c of [...clients])if(c.playerId===id)closeStream(c);}
+// Voided like a challenge nobody finished: no gauge moves, both players are told.
+function voidDuel(d,now){
+ if(!q.duelClose.run("void",now,dayNow(now),d.id,d.status).changes)return false;
+ duelEvent(d,"void",[d.challenger,d.defender]);return true;
+}
+function suspend(p,on){
+ const now=Date.now();
+ if(on===p.suspended)return;
+ if(on){
+  // The time until now is played, then the clock stops where it is.
+  try{update(p,S=>R.advance(S,now,SPEED,Math.random));}catch(e){console.error(`suspend, player ${p.id}:`,e);}
+  q.setSuspended.run(1,p.id);p.suspended=true;q.deleteSessionsOf.run(p.id);closeStreamsOf(p.id);deferred.delete(p.id);
+  for(const d of q.openDuelsOf.all(p.id,p.id)){try{voidDuel(d,now);}catch(e){console.error(`suspend, duel ${d.id}:`,e);}}
+  publishBoard();
+ }else{
+  // Back on the real hour: the suspension is skipped, not played.
+  q.setSuspended.run(0,p.id);p.suspended=false;
+  update(p,S=>{R.resync(S,now);});
+ }
+}
+function playerDetail(p){
+ const S=p.state,now=Date.now();
+ return {id:p.id,name:p.name,camp:S.camp,candidate:R.person(S).name,lvl:S.lvl,xp:Math.floor(S.xp),score:R.score(S),form:S.form,sat:S.sat,moral:S.moral,energy:S.energy,hyg:S.hyg,
+  fm:S.fm,deaths:S.deaths,created:p.created,updated:q.updatedOf.get(p.id)?.updated??null,online:isOnline(p.id),sessions:q.sessionsOf.get(p.id,now).n,pushSubs:q.countSubsOf.get(p.id).n,
+  suspended:!!p.suspended,chatMutedUntil:mutedUntil(p.id),
+  duels:q.lastDuelsOf.all(p.id,p.id).map(d=>{const v=duelView(d,p.id);return {id:v.id,status:v.status,vs:v.vs,role:v.role,created:v.created,res:v.res};}),
+  activity:botReport(p,q.activityOf.all(p.id,activityCut(now)))};
+}
+function mutedUntil(id){try{return chat.admin.mutedUntil(id)??null;}catch{return null;}}
+function renamePlayer(p,raw){
+ const name=cleanName(raw);
+ if(!NAME_RE.test(name))throw new HttpError(400,"Pseudo : 3 à 20 caractères (lettres, chiffres, espace, . _ -).");
+ if(reservedName(name))throw new HttpError(400,"Ce pseudo est réservé à l'organisation.");
+ const row=q.playerByKey.get(nameKey(name));if(row&&row.id!==p.id)throw new HttpError(409,"Ce pseudo est déjà pris.");
+ try{q.rename.run(name,nameKey(name),p.id);}catch(e){if(/UNIQUE/i.test(e.message))throw new HttpError(409,"Ce pseudo est déjà pris.");throw e;}
+ const old=p.name;p.name=name;pushMe(p);publishBoard();
+ return {name,old};
+}
+// VACUUM INTO writes a consistent copy while the game runs, next to the socket so only the admin side can read it.
+function backup(b){
+ if(!ADMIN_SOCKET)throw new HttpError(400,"Socket d'administration désactivé.");
+ const path=join(dirname(ADMIN_SOCKET),`backup-${Date.now()}.db`);
+ // Created 0600 from the start (no window where another user could open it), then the usual mask is put back.
+ const mask=process.umask(0o177);
+ try{db.prepare("VACUUM INTO ?").run(path);}finally{process.umask(mask);}
+ try{chmodSync(path,0o600);}catch{}
+ const out={path,bytes:statSync(path).size};
+ if(b.vapid===true){try{out.vapid=JSON.parse(readFileSync(VAPID_FILE,"utf8"));}catch{}}
+ return out;
+}
+const regOpen=()=>REG_OPEN&&!!INVITE;
+const limitOf=(v,def,max)=>Number.isSafeInteger(v)&&v>0?Math.min(v,max):def;
+
 async function adminCommand(b){
- if(b.cmd==="list")return {players:q.listPlayers.all()};
- if(b.cmd==="announce")return announce(b);
- if(b.cmd==="unlock"){
-  const p=adminPlayer(b.name),cleared=unlockName(nameKey(p.name));
+ const via=b.via==="web"?"web":"cli",cmd=b.cmd,now=Date.now();
+ if(cmd==="list")return {players:q.listPlayers.all().map(r=>{const p=players.get(r.id);
+  return {id:r.id,name:r.name,camp:p?.state.camp??null,lvl:p?.state.lvl??null,created:r.created,updated:r.updated,online:isOnline(r.id),suspended:!!r.suspended,chatMutedUntil:mutedUntil(r.id)};})};
+ if(cmd==="stats"){
+  const on=onlineIds(),active=s=>new Set([...q.activeSince.all(s).map(r=>r.id),...on]).size;
+  let chatStats={};try{chatStats=chat.admin.stats();}catch(e){console.error("chat stats:",e);}
+  return {name:SERVER_NAME,players:players.size,online:on.size,active24h:active(now-864e5),active7d:active(now-7*864e5),pushSubs:q.countSubs.get().n,version:VERSION,release:RELEASE,
+   uptimeS:Math.round(process.uptime()),dbBytes:Number(db.prepare("SELECT page_count*page_size AS n FROM pragma_page_count(),pragma_page_size()").get().n),
+   event:{mode:EVENT_MODE,current:eventNow()},registrations:{open:regOpen()},suspended:[...players.values()].filter(p=>p.suspended).length,chat:chatStats};
+ }
+ if(cmd==="player")return {player:playerDetail(who(b))};
+ if(cmd==="announce")return announce(b,via);
+ if(cmd==="unlock"){
+  const p=who(b),cleared=unlockName(nameKey(p.name));
+  audit(via,cmd,p.name,`${cleared} compteur(s) effacé(s)`);
   console.log(`admin: login counters cleared for player ${p.id}`);
   return {name:p.name,cleared};
  }
- if(b.cmd==="reset-password"){
-  const p=adminPlayer(b.name);
+ if(cmd==="reset-password"){
+  const p=who(b);
   if(typeof b.password!=="string"||b.password.length<8||b.password.length>200)throw new HttpError(400,"Mot de passe : 8 à 200 caractères.");
   const pass=await hashPassword(b.password);
   if(!players.has(p.id))throw new HttpError(404,"Ce joueur a supprimé son compte entre-temps.");
   // Every device is signed out: whoever knew the old password (or held a session) is out as well.
   db.exec("BEGIN");
   try{q.setPass.run(pass,p.id);q.deleteSessionsOf.run(p.id);db.exec("COMMIT");}catch(e){db.exec("ROLLBACK");throw e;}
-  for(const c of [...clients])if(c.playerId===p.id)closeStream(c);
+  closeStreamsOf(p.id);
   const cleared=unlockName(nameKey(p.name));
+  audit(via,cmd,p.name,"Mot de passe réinitialisé, sessions fermées");
   console.log(`admin: password reset for player ${p.id}, sessions revoked`);
   return {name:p.name,cleared};
  }
+ if(cmd==="signout"){
+  const p=who(b);q.deleteSessionsOf.run(p.id);closeStreamsOf(p.id);
+  audit(via,cmd,p.name,"Déconnecté partout");
+  return {name:p.name};
+ }
+ if(cmd==="rename"){
+  const p=who(b),r=renamePlayer(p,b.newName);
+  audit(via,cmd,r.name,`Ancien pseudo : ${r.old}`);console.log(`admin: player ${p.id} renamed`);
+  return r;
+ }
+ if(cmd==="suspend"){
+  if(typeof b.on!=="boolean")throw new HttpError(400,"on : true ou false.");
+  const p=who(b);suspend(p,b.on);
+  audit(via,cmd,p.name,b.on?"Compte suspendu":"Suspension levée");console.log(`admin: player ${p.id} ${b.on?"suspended":"reinstated"}`);
+  return {name:p.name,suspended:p.suspended};
+ }
+ if(cmd==="schedule-list")return {schedules:q.schedules.all().map(scheduleView)};
+ if(cmd==="schedule-add")return scheduleAdd(b,via);
+ if(cmd==="schedule-delete"||cmd==="schedule-toggle"){
+  const r=Number.isSafeInteger(b.id)&&q.schedule.get(b.id);if(!r)throw new HttpError(404,"Annonce planifiée introuvable.");
+  if(cmd==="schedule-delete"){q.deleteSchedule.run(r.id);audit(via,cmd,`#${r.id}`,r.text);return {};}
+  if(typeof b.enabled!=="boolean")throw new HttpError(400,"enabled : true ou false.");
+  // Switched back on: the next run is counted from now (a past date can no longer be sent).
+  const next=b.enabled?nextRun({kind:r.kind,at:r.at,time:r.time,days:r.days?JSON.parse(r.days):null},now):r.next;
+  if(b.enabled&&(next===null||(r.until!=null&&next>r.until)))throw new HttpError(400,"Plus aucun envoi possible pour cette annonce.");
+  q.scheduleToggle.run(b.enabled?1:0,next,r.id);audit(via,cmd,`#${r.id}`,b.enabled?"Activée":"Désactivée");
+  return {};
+ }
+ if(cmd==="announce-history")return {items:q.announces.all().map(r=>({t:r.t,via:r.via,target:r.target,text:r.detail}))};
+ if(cmd==="feed-list")return {items:q.recentFeed.all(limitOf(b.limit,50,200))};
+ if(cmd==="feed-delete"){
+  if(!Number.isSafeInteger(b.id)||!q.deleteFeed.run(b.id).changes)throw new HttpError(404,"Ligne du fil introuvable.");
+  broadcast("feedInit",q.recentFeed.all(40));audit(via,cmd,`#${b.id}`,"Ligne du fil supprimée");
+  return {};
+ }
+ if(cmd==="duels-list")return {items:q.openDuels.all().map(d=>({id:d.id,status:d.status,challenger:nameOf(d.challenger),defender:nameOf(d.defender),created:d.created,expires:d.expires??null}))};
+ if(cmd==="duel-cancel"){
+  const d=Number.isSafeInteger(b.id)&&q.duel.get(b.id);
+  if(!d||!OPEN_DUEL.has(d.status)||!voidDuel(d,now))throw new HttpError(404,"Duel introuvable ou déjà terminé.");
+  audit(via,cmd,`#${d.id}`,`${nameOf(d.challenger)} contre ${nameOf(d.defender)}`);
+  return {};
+ }
+ if(cmd==="invite-get")return {invite:INVITE,source:INVITE_SOURCE,open:regOpen()};
+ if(cmd==="invite-regenerate"){
+  INVITE="politigo-"+crypto.randomBytes(12).toString("base64url");setSetting("invite",INVITE);INVITE_SOURCE="admin";
+  audit(via,cmd,"","Nouveau code d'invitation");console.log("admin: invite code regenerated");
+  return {invite:INVITE};
+ }
+ if(cmd==="registrations-set"){
+  if(typeof b.open!=="boolean")throw new HttpError(400,"open : true ou false.");
+  REG_OPEN=b.open;setSetting("registrations",b.open?"open":"closed");audit(via,cmd,"",b.open?"Inscriptions ouvertes":"Inscriptions fermées");
+  return {open:regOpen()};
+ }
+ if(cmd==="event-set"){
+  if(!R.EVENT_MODES.includes(b.mode))throw new HttpError(400,`Mode : ${R.EVENT_MODES.join(", ")}.`);
+  EVENT_MODE=b.mode;setSetting("event",b.mode);
+  // Every open screen switches at once.
+  for(const id of onlineIds()){const p=players.get(id);if(p)pushMe(p);}
+  audit(via,cmd,"",`Événement : ${b.mode}`);console.log(`admin: seasonal event mode ${b.mode}`);
+  return {event:{mode:EVENT_MODE,current:eventNow()}};
+ }
+ if(cmd==="backup"){const r=backup(b);audit(via,cmd,"",`${r.bytes} octets${r.vapid?", avec vapid.json":""}`);return r;}
+ if(cmd==="bots")return {items:botsAll(now)};
+ if(cmd==="chat-reports")return {items:chat.admin.reports()};
+ if(cmd==="chat-delete"){
+  if(!Number.isSafeInteger(b.id)||!chat.admin.deleteMessage(b.id))throw new HttpError(404,"Message introuvable.");
+  audit(via,cmd,`#${b.id}`,"Message supprimé");return {};
+ }
+ if(cmd==="chat-media"){
+  const m=typeof b.id==="string"&&chat.admin.media?.(b.id);if(!m)throw new HttpError(404,"Image introuvable.");
+  return {type:m.type,data:m.data};
+ }
+ if(cmd==="chat-mute"){
+  const p=who(b),h=Number(b.hours);
+  if(!Number.isFinite(h)||h<0||h>24*365)throw new HttpError(400,"Durée : 0 à 8760 heures.");
+  const until=h>0?now+Math.round(h*R.H):null;chat.admin.mute(p.id,until);
+  audit(via,cmd,p.name,until?`Chat coupé ${h} h`:"Chat rétabli");
+  return {name:p.name,until};
+ }
+ if(cmd==="audit")return {items:q.audit.all(limitOf(b.limit,100,500))};
  throw new HttpError(400,"Commande inconnue.");
 }
 let admin=null;
@@ -761,7 +1124,7 @@ function startAdmin(){
    });
   });
  });
- admin.maxConnections=4;
+ admin.maxConnections=8;   // the admin interface sends a few requests at once
  // Created 0600 from the start (no window where it is world-writable), then the usual mask is put back.
  const mask=process.umask(0o177);
  admin.on("error",e=>{process.umask(mask);console.error(`admin socket disabled: ${e.message}`);admin=null;});
@@ -771,7 +1134,7 @@ function stopAdmin(){if(!admin)return;try{admin.close();}catch{}try{unlinkSync(A
 startAdmin();
 // Logged on every start, so log rotation never loses it.
 if(INVITE_GENERATED)console.log(`Invite code: ${INVITE} (generated, kept in ${INVITE_FILE}; delete that file and restart for a new one)`);
-server.listen(PORT,()=>console.log(`PolitiGo API ${VERSION} on :${PORT} (speed x${SPEED}, ${players.size} players, registrations ${INVITE?"open with invite":"closed"})`));
+server.listen(PORT,()=>console.log(`PolitiGo API ${VERSION} on :${PORT} (speed x${SPEED}, ${players.size} players, registrations ${regOpen()?"open with invite":"closed"})`));
 // A bug that escapes every handler is logged with its stack, then the container restarts the process cleanly.
 // Every clock is written as it stands before leaving, so a restart never sets anyone's game time back.
 function saveAll(){for(const p of players.values()){try{persist(p);}catch(e){console.error(`saving player ${p.id}:`,e);}}}

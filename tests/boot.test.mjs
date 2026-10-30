@@ -23,7 +23,9 @@ test("a v1.3.0 database (no duels, no push_subs) gains both tables; restarts are
  try{await player(PORT,"Ancien");await player(PORT,"Ancienne","right");}finally{await stop(p);}
  // Back to the v1.3.0 schema.
  const d=new DatabaseSync(join(dir,"old.db"));
- d.exec("DROP TABLE push_subs;DROP TABLE duels;");
+ // Every later table and column goes (duels, push, chat, admin...): what is left is exactly v1.3.0.
+ for(const t of tables(d))if(!(t in V13))d.exec(`DROP TABLE ${t}`);
+ for(const c of cols(d,"players"))if(!V13.players.includes(c))d.exec(`ALTER TABLE players DROP COLUMN ${c}`);
  assert.deepEqual(tables(d),Object.keys(V13).sort());
  for(const [t,c] of Object.entries(V13))assert.deepEqual(cols(d,t),c,t);
  d.close();

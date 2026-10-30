@@ -196,7 +196,7 @@ test("board rows and feed entries expose only public fields, and need a session"
  const c=client("10.0.1.13");await reg(c,"Uma");const b=(await c.call("GET","/api/board")).json;
  const pub=["name","camp","candidate","lvl","score","form","streak","bestStreak","deaths","asleep","online"].sort();
  for(const r of b.board)assert.deepEqual(Object.keys(r).sort(),pub);
- for(const f of b.feed)assert.deepEqual(Object.keys(f).sort(),["kind","player","t","text"]);
+ for(const f of b.feed)assert.deepEqual(Object.keys(f).sort(),["id","kind","player","t","text"]);   // id: the admin deletes a line by it
 });
 
 test("names: accents and case do not make a new player; look-alike scripts and markup are refused",async()=>{

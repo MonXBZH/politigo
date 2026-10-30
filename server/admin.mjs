@@ -3,14 +3,16 @@
 //   node admin.mjs reset-password <pseudo>         a strong password is generated and printed once
 //   node admin.mjs reset-password <pseudo> --stdin the password is typed (hidden) or piped in
 //   node admin.mjs unlock <pseudo>                 forgets the failed login attempts on that name
-//   node admin.mjs announce "<texte>" [--to <pseudo>]  a message to everyone (or one player): banner, push, feed
+//   node admin.mjs announce "<texte>" [--to <pseudo> | --camp gauche|droite]  a message to everyone (or one player, or one camp): banner, push, feed
+//   node admin.mjs stats                           the server at a glance
+//   node admin.mjs invite                          the invite code in force (or that registrations are closed)
 // It talks to the running server over its admin socket (POLITIGO_ADMIN_SOCKET), so the server itself hashes the
 // password, signs the player out everywhere and clears the login counters: no restart, no second database writer.
 import net from "node:net";
 import crypto from "node:crypto";
 
 const SOCKET=process.env.POLITIGO_ADMIN_SOCKET||"/tmp/politigo-admin.sock";
-const USAGE="Usage : node admin.mjs list | reset-password <pseudo> [--stdin] | unlock <pseudo> | announce \"<texte>\" [--to <pseudo>]";
+const USAGE="Usage : node admin.mjs list | reset-password <pseudo> [--stdin] | unlock <pseudo> | announce \"<texte>\" [--to <pseudo> | --camp gauche|droite] | stats | invite";
 const fail=(msg,code=1)=>{console.error(msg);process.exit(code);};
 const check=r=>{if(!r?.ok)fail(r?.error||"Échec.");return r;};
 
@@ -19,7 +21,7 @@ function call(req){
   const s=net.createConnection(SOCKET);let buf="";
   s.setEncoding("utf8");
   s.setTimeout(15000,()=>{s.destroy();ko(new Error("pas de réponse du serveur en 15 s"));});
-  s.on("connect",()=>s.write(JSON.stringify(req)+"\n"));
+  s.on("connect",()=>s.write(JSON.stringify({...req,via:"cli"})+"\n"));
   s.on("data",d=>{buf+=d;if(buf.length>1e6)s.destroy(new Error("réponse trop grosse"));});
   s.on("end",()=>{try{ok(JSON.parse(buf));}catch{ko(new Error("réponse illisible du serveur"));}});
   s.on("error",ko);
@@ -61,15 +63,30 @@ try{
  }
  else if(cmd==="announce"&&name){
   // The text is one argument: unquoted words would each become one, and only the first would be sent.
-  if(rest.length&&!(rest.length===2&&rest[0]==="--to"&&rest[1]))
-   fail("Mets le texte entre guillemets : node admin.mjs announce \"Ton message\" [--to <pseudo>]",2);
-  const r=check(await call({cmd,text:name,to:rest[1]}));
+  if(rest.length&&!(rest.length===2&&["--to","--camp"].includes(rest[0])&&rest[1]))
+   fail("Mets le texte entre guillemets : node admin.mjs announce \"Ton message\" [--to <pseudo> | --camp gauche|droite]",2);
+  const camp=rest[0]==="--camp"?{gauche:"left",droite:"right"}[rest[1].toLowerCase()]:undefined;
+  if(rest[0]==="--camp"&&!camp)fail("Camp : gauche ou droite.",2);
+  const r=check(await call({cmd,text:name,to:rest[0]==="--to"?rest[1]:undefined,camp}));
   const pushNote=r.push?`${r.pushed} par notification`:"notifications désactivées sur ce serveur";
   if(r.name){
    console.log(`Annonce envoyée à ${r.name} : ${r.live?"à l'écran maintenant":"pas connecté"}, ${r.pushed?"notification envoyée":"pas de notification"}.`);
    if(!r.live&&!r.pushed)console.log("Attention : ni connecté ni abonné aux notifications, il ne verra pas ce message.");
   }
+  else if(r.camp)console.log(`Annonce envoyée à la ${r.camp==="left"?"gauche":"droite"} : ${r.live} joueur(s) à l'écran, ${pushNote} (pas dans le fil public).`);
   else console.log(`Annonce envoyée à tous : ${r.live} joueur(s) à l'écran, ${pushNote}, et ajoutée au fil de la République.`);
+ }
+ else if(cmd==="stats"&&name===undefined){
+  const r=check(await call({cmd})),up=Math.floor(r.uptimeS/3600);
+  console.log(`${r.name} ${r.version}${r.release?` (${r.release})`:""}, en route depuis ${up>=24?Math.floor(up/24)+" j "+up%24+" h":up+" h "+Math.floor(r.uptimeS%3600/60)+" min"}`);
+  console.log(`Joueurs : ${r.players} (${r.online} en ligne, ${r.active24h} actifs sur 24 h, ${r.active7d} sur 7 jours, ${r.suspended} suspendu(s))`);
+  console.log(`Inscriptions : ${r.registrations.open?"ouvertes":"fermées"} · notifications : ${r.pushSubs} appareil(s) · événement : ${r.event.mode}${r.event.current?` (${r.event.current} en cours)`:""}`);
+  console.log(`Base de données : ${(r.dbBytes/1048576).toFixed(1).replace(".",",")} Mo`);
+ }
+ else if(cmd==="invite"&&name===undefined){
+  const r=check(await call({cmd:"invite-get"})),src={env:"POLITIGO_INVITE",file:"fichier invite.txt",admin:"interface d'administration"}[r.source]??r.source;
+  if(!r.open)console.log(`Inscriptions fermées.${r.invite?` (Code en réserve : ${r.invite}, source : ${src}.)`:""}`);
+  else console.log(`Code d'invitation : ${r.invite}  (source : ${src})`);
  }
  else if(cmd==="unlock"&&name&&!rest.length){
   const r=check(await call({cmd,name}));
