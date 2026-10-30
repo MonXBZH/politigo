@@ -266,14 +266,14 @@ test("B10 action responses: ok / refused shape, and me matches GET /api/me",asyn
  const c=await player("Actor");
  const ok=await c.call("POST","/api/action",{type:"pet"});
  assert.equal(ok.status,200);assert.equal(ok.json.ok,true);assert.equal(ok.json.petted,true);
- assert.deepEqual(Object.keys(ok.json.me).sort(),["name","release","seenVersion","serverNow","speed","state","tz","version"]);
+ assert.deepEqual(Object.keys(ok.json.me).sort(),["event","name","release","seenVersion","serverNow","speed","state","tz","version"]);
  assert.equal(ok.json.me.name,"Actor");assert.equal(ok.json.me.speed,1);assert.equal(ok.json.me.tz,DAY_TZ);
  assert.ok(Math.abs(ok.json.me.serverNow-Date.now())<60000);
  const again=await c.call("POST","/api/action",{type:"pet"});
  assert.equal(again.status,200);assert.equal(again.json.petted,false,"already petted this hour");
  const no=await c.call("POST","/api/action",{type:"buy",key:"caviar"});
  assert.equal(no.status,422);assert.equal(no.json.ok,false);assert.equal(typeof no.json.error,"string");assert.ok(no.json.error.length>0);
- assert.deepEqual(Object.keys(no.json.me).sort(),["name","release","seenVersion","serverNow","speed","state","tz","version"]);
+ assert.deepEqual(Object.keys(no.json.me).sort(),["event","name","release","seenVersion","serverNow","speed","state","tz","version"]);
  const me=await c.call("GET","/api/me");
  assert.deepEqual(strip(me.json.state),strip(no.json.me.state));
  assert.equal(me.json.name,no.json.me.name);assert.equal(me.json.tz,no.json.me.tz);assert.equal(me.json.speed,no.json.me.speed);

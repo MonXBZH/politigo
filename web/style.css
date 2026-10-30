@@ -6,6 +6,8 @@
  --dev:min(86vw,420px);--radius:22px;
 }
 body[data-camp=right]{--accent:#9cc0ff;--bg1:#0b1530;--bg2:#1b3566;--bg3:#2f5b9a}
+/* Halloween (set by app.js from rules.mjs eventAt): a purple and pumpkin night for both camps. */
+body[data-season=halloween],body[data-camp][data-season=halloween]{--accent:#ff9f43;--accent-2:#ffd27a;--bg1:#150a20;--bg2:#3a1747;--bg3:#7a3a1e}
 *{box-sizing:border-box}
 html,body{margin:0;min-height:100%}
 body{background:var(--bg1);color:var(--ink);font:16px/1.45 Inter,system-ui,sans-serif;overflow-x:hidden;transition:background-color .6s;-webkit-tap-highlight-color:transparent}

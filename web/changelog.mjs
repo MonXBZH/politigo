@@ -10,6 +10,7 @@ export const CHANGELOG=[
    "Victoire : +40 XP, moral +10, énergie +5. Défaite : −15 XP, moral −10, énergie −5, sans jamais perdre de niveau ni descendre une jauge sous 25. Refuser ne coûte rien ; celui qui t'a défié gagne juste un peu de moral.",
    "Trois défis par jour, un seul duel à la fois contre le même rival, et pas deux contre lui en 24 h. Les duels s'ouvrent au niveau 5.",
    "Notifications : active-les dans Dossier → Compte pour être prévenu d'un défi ou d'un résultat, même jeu fermé. Sur iPhone, ajoute d'abord PolitiGo à l'écran d'accueil.",
+   "🎃 Ce soir à minuit, quelque chose d'étrange va se passer dans la République… Reviens jeter un œil, si tu l'oses. 👻",
    "Indécis ? À l'inscription comme quand tu repars de zéro, laisse faire le hasard, ou passe ton test politique : cinq questions bien salées, et il te propose ton camp. Libre à toi de rejoindre l'autre bord."
   ],
   changed:[

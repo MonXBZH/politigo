@@ -30,6 +30,7 @@ docker compose up -d --build
 | `POLITIGO_SPEED` | `1` (temps réel ; plus grand uniquement sur un serveur de test) |
 | `POLITIGO_PUSH` | facultatif. Vide : notifications de duel activées ; **`off`** : désactivées (voir « Duels et notifications ») |
 | `POLITIGO_PUSH_CONTACT` | facultatif. Adresse `mailto:` ou `https:` transmise aux services de notification ; vide : la page GitHub du projet |
+| `POLITIGO_EVENT` | facultatif. Vide : événements saisonniers automatiques ; **`off`** : désactivés ; `halloween` : forcé (tests) — voir « Événements saisonniers (Halloween) » |
 
 **Pare-feu** : n'autoriser le port 8080 qu'à l'adresse du reverse proxy. Attention, les ports publiés par Docker
 contournent UFW et firewalld : la règle se pose dans la chaîne `DOCKER-USER` (à rendre persistante, par exemple avec `iptables-persistent`) :
@@ -58,7 +59,7 @@ construites par GitHub et publiées sur son registre (ghcr.io) :
    |---|---|
    | `POLITIGO_IMAGES` | `ghcr.io/<compte>/politigo` |
    | `POLITIGO_TAG` | `latest`, ou une version figée (`1.2.0`, `sha-xxxxxxx`) pour maîtriser les mises à jour |
-   | `POLITIGO_INVITE`, `POLITIGO_BIND`, `POLITIGO_PORT`, `COOKIE_SECURE`, `PROXY_HOPS`, `MAX_PLAYERS`, `POLITIGO_PUSH`, `POLITIGO_PUSH_CONTACT` | comme dans le tableau ci-dessus |
+   | `POLITIGO_INVITE`, `POLITIGO_BIND`, `POLITIGO_PORT`, `COOKIE_SECURE`, `PROXY_HOPS`, `MAX_PLAYERS`, `POLITIGO_PUSH`, `POLITIGO_PUSH_CONTACT`, `POLITIGO_EVENT` | comme dans le tableau ci-dessus |
 
 4. **Mise à jour** : dans la stack, « Update the stack » en cochant « Re-pull image ». Le volume (les parties) est conservé.
    Portainer préfixe le volume du nom de la stack : `<stack>_politigo-data`, à sauvegarder.
@@ -166,6 +167,11 @@ Si l'un de ses `location` utilise `add_header`, recopier la ligne HSTS dedans : 
   (`fcm.googleapis.com`, `updates.push.services.mozilla.com`, `*.push.apple.com`, `*.notify.windows.com`) : ce sont les
   seules adresses acceptées pour un abonnement. `POLITIGO_PUSH=off` désactive tout ; `POLITIGO_PUSH_CONTACT` fixe le contact
   transmis à ces services.
+- **Événements saisonniers (Halloween)** : automatiques, du 31 octobre 00:00 au 1er novembre 23:59 dans le fuseau du
+  jeu (Europe/Paris), puis tout redevient normal sans intervention. Purement cosmétique (noms, dessins, répliques ; prix
+  et effets inchangés, duels identiques), sauf une friandise quotidienne : +5 de moral une fois par jour de jeu, éveillé.
+  `POLITIGO_EVENT=off` l'arrête avant la fin ; `POLITIGO_EVENT=halloween` le force n'importe quel jour (serveur de test
+  uniquement). Vide ou absent : automatique ; une valeur inconnue est signalée dans les logs et traitée comme vide.
 - **Réglages de test** (jamais en production) : `POLITIGO_DUEL_MIN_LEVEL` et `POLITIGO_DUEL_MIN_AGE_H` abaissent le niveau
   et l'ancienneté du compte exigés pour les duels (ils ne peuvent que les baisser), pour tester avec des comptes neufs.
 
@@ -227,7 +233,7 @@ interdire la suppression et le force push, exiger une pull request (0 approbatio
 ## 6. Tests
 
 ```bash
-bash tests/run-server.sh                       # 211 tests : règles (dont l'équilibrage J15) + mini-jeux + test politique + changelog + API + duels + notifications + migrations + outil d'admin, dans l'image Node de production
+bash tests/run-server.sh                       # 239 tests : règles (dont l'équilibrage J15) + mini-jeux + test politique + changelog + API + duels + notifications + migrations + outil d'admin, dans l'image Node de production
 docker compose restart api                     # remet à zéro les limites d'inscription avant l'e2e
 powershell -ExecutionPolicy Bypass -File tests\e2e.ps1   # parcours complet dans Chrome (crée deux joueurs de test)
 ```

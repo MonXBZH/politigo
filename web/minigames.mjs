@@ -58,6 +58,19 @@ function protester(c,t,kind,state){
  c.restore();
 }
 
+// Halloween costume (drawing only): a jack-o'-lantern, and a bat flapping with the clock.
+function pumpkin(c,x,y,r,face){
+ c.fillStyle="#e8742a";c.beginPath();c.ellipse(x,y,r*1.2,r,0,0,7);c.fill();
+ c.fillStyle="#c4561c";c.fillRect(x-r*.5-1,y-r*.85,2,r*1.7);c.fillRect(x+r*.5-1,y-r*.85,2,r*1.7);c.fillStyle="#4f7a2c";c.fillRect(x-1.5,y-r-4,3,5);
+ if(face){c.fillStyle="#ffe08a";c.fillRect(x-r*.55,y-r*.35,r*.35,r*.3);c.fillRect(x+r*.2,y-r*.35,r*.35,r*.3);c.fillRect(x-r*.5,y+r*.2,r,r*.22);}
+}
+function bat(c,x,y,s,t){
+ const f=Math.sin(t/60)*s*.6;c.fillStyle="#141018";c.beginPath();c.moveTo(x-s*.4,y);c.lineTo(x-s*1.7,y-s*.4-f);c.lineTo(x-s*1.1,y+s*.3);c.lineTo(x-s*.6,y+s*.1);c.lineTo(x,y+s*.5);
+ c.lineTo(x+s*.6,y+s*.1);c.lineTo(x+s*1.1,y+s*.3);c.lineTo(x+s*1.7,y-s*.4-f);c.lineTo(x+s*.4,y);c.closePath();c.fill();
+ c.beginPath();c.arc(x,y,s*.5,0,7);c.fill();c.fillRect(x-s*.45,y-s*.85,2,s*.5);c.fillRect(x+s*.45-2,y-s*.85,2,s*.5);
+ c.fillStyle="#ff5a3c";c.fillRect(x-s*.25-1,y-s*.15,2,2);c.fillRect(x+s*.25-1,y-s*.15,2,2);
+}
+
 // ===================================================================== SHARED DRAWING
 function makeKit(ctx,scale){
  const blit=(size,cx,ground,flip)=>{
@@ -89,7 +102,7 @@ function steer(g,dt,speed){
 // ===================================================================== LE CORTÈGE (left: dodge LBD and tear gas on a scrolling street)
 const CG={ms:30000,lives:3,speed:210,scroll:70};
 function cortege(g,K,drawCand){
- const {ctx}=K;
+ const {ctx}=K,hw=g.season==="halloween";
  Object.assign(g,{x:C,y:380,hp:CG.lives,inv:-Infinity,hitT:-Infinity,tears:0,tracts:0,blocked:0,scroll:0,shots:[],grenades:[],clouds:[],items:[],nextItem:g.t0+800,
   crs:[150,233,316].map((x,i)=>({x,dir:i%2?1:-1,cool:1.2+i*.6,aim:null})),
   crowd:[{dx:-46,dy:34,kind:"plain"},{dx:44,dy:40,kind:"gilet"},{dx:-12,dy:62,kind:"retraite"},{dx:26,dy:74,kind:"plain"}].map(m=>({...m,x:C+m.dx,y:380+m.dy})),
@@ -117,7 +130,7 @@ function cortege(g,K,drawCand){
   for(let i=g.shots.length-1;i>=0;i--){const s=g.shots[i];s.x+=s.vx*dt;s.y+=s.vy*dt;
    if(s.y>W+10||s.x<-10||s.x>W+10){g.shots.splice(i,1);continue;}
    if(dist(s.x,s.y,g.x,g.y-30)<(g.umbrella>now?34:17)){g.shots.splice(i,1);
-    if(g.umbrella>now){g.blocked++;K.floater("Ploc !",g.x,g.y-70,"#8fd0ff",now);}else hit("Aïe ! LBD");}}
+    if(g.umbrella>now){g.blocked++;K.floater("Ploc !",g.x,g.y-70,"#8fd0ff",now);}else hit(hw?"Aïe ! Une chauve-souris":"Aïe ! LBD");}}
   for(let i=g.grenades.length-1;i>=0;i--){const n=g.grenades[i];if(now-n.t0>=n.ms){g.clouds.push({x:n.x1,y:n.y1,r:0,max:rnd(48,62),born:now,life:4200});g.grenades.splice(i,1);}}
   for(let i=g.clouds.length-1;i>=0;i--){const c=g.clouds[i],age=now-c.born;if(age>c.life){g.clouds.splice(i,1);continue;}c.y+=CG.scroll*.6*dt;c.r=c.max*Math.min(1,age/600)*(age>c.life-800?(c.life-age)/800:1);}
   if(slow<1&&now>g.inv){g.tears+=55*dt;if(g.tears>=100){g.tears=0;hit("Les yeux qui piquent !");}}
@@ -140,6 +153,8 @@ function cortege(g,K,drawCand){
   ctx.fillStyle="#5a5f6c";for(let i=0;i<10;i++){const y=(i*97+g.scroll)%520-30;ctx.fillRect(110+(i*71)%240,y,8,5);}
   ctx.fillStyle="#e8edf3";ctx.fillRect(160,40,146,58);ctx.fillStyle="#2f4c8f";ctx.fillRect(160,70,146,8);ctx.fillStyle="#9fb6d2";ctx.fillRect(176,48,34,16);ctx.fillRect(256,48,34,16);
   ctx.fillStyle=Math.floor(now/250)%2?"#3c7cf0":"#8fb6ff";ctx.fillRect(220,34,26,7);
+  // In costume: dusk over the street, lanterns scrolling along both pavements.
+  if(hw){ctx.fillStyle="#3b1d5e59";ctx.fillRect(0,0,W,W);for(let y=-100+(g.scroll%100);y<W+20;y+=100){pumpkin(ctx,72,y,7,true);pumpkin(ctx,394,y+50,7,true);}}
   for(const c of g.crs){crs(sctx,now+(c.x|0),"idle","lbd");K.blit(62,c.x,140);}
   for(const c of g.crs)if(c.aim){ctx.strokeStyle=`rgba(255,70,70,${.35+.4*Math.sin(now/50)**2})`;ctx.setLineDash([6,6]);ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(c.x+18,124);ctx.lineTo(c.aim.x,c.aim.y);ctx.stroke();ctx.setLineDash([]);}
   for(const it of g.items){
@@ -148,13 +163,14 @@ function cortege(g,K,drawCand){
    if(it.kind==="merguez"){ctx.fillStyle="#e8c27a";ctx.fillRect(it.x-12,it.y-5,24,10);ctx.fillStyle="#a8402e";ctx.fillRect(it.x-10,it.y-3,20,5);}
   }
   for(const n of g.grenades){const a=Math.min(1,(until-n.t0)/n.ms),x=n.x0+(n.x1-n.x0)*a,y=n.y0+(n.y1-n.y0)*a-Math.sin(a*Math.PI)*70;
-   ctx.fillStyle="#dfe6f088";for(let k=1;k<5;k++){const b=Math.max(0,a-k*.05);ctx.beginPath();ctx.arc(n.x0+(n.x1-n.x0)*b,n.y0+(n.y1-n.y0)*b-Math.sin(b*Math.PI)*70,3+k,0,7);ctx.fill();}
-   ctx.save();ctx.translate(x,y);ctx.rotate(now/90);ctx.fillStyle="#7d8a6c";ctx.fillRect(-4,-7,8,14);ctx.fillStyle="#c9c46a";ctx.fillRect(-4,-7,8,3);ctx.restore();}
+   ctx.fillStyle=hw?"#a8e89a88":"#dfe6f088";for(let k=1;k<5;k++){const b=Math.max(0,a-k*.05);ctx.beginPath();ctx.arc(n.x0+(n.x1-n.x0)*b,n.y0+(n.y1-n.y0)*b-Math.sin(b*Math.PI)*70,3+k,0,7);ctx.fill();}
+   ctx.save();ctx.translate(x,y);ctx.rotate(now/90);if(hw)pumpkin(ctx,0,0,6,true);else{ctx.fillStyle="#7d8a6c";ctx.fillRect(-4,-7,8,14);ctx.fillStyle="#c9c46a";ctx.fillRect(-4,-7,8,3);}ctx.restore();}
   for(const m of [...g.crowd].sort((a,b)=>a.y-b.y)){protester(sctx,now+m.dx*13,m.kind,"run");K.blit(46,m.x,m.y);}
   if(!(now<g.inv&&Math.floor(now/90)%2))drawCand(g.p,now-g.hitT<700?"stress":g.endT&&g.why==="nation"?"win":"run",72,g.x,g.y,now);
   if(g.umbrella>now){ctx.fillStyle="#e1576b";ctx.beginPath();ctx.arc(g.x,g.y-64,34,Math.PI,2*Math.PI);ctx.fill();ctx.fillStyle="#b8324a";for(let k=-2;k<=2;k++){ctx.beginPath();ctx.moveTo(g.x,g.y-98);ctx.lineTo(g.x+k*17-5,g.y-64);ctx.lineTo(g.x+k*17+5,g.y-64);ctx.fill();}ctx.fillStyle="#202330";ctx.fillRect(g.x-1,g.y-64,2,22);}
-  for(const c of g.clouds){if(c.r<=1)continue;for(let k=0;k<5;k++){const a=k*1.3+now/1400,cx=c.x+Math.cos(a)*c.r*.35,cy=c.y+Math.sin(a)*c.r*.25,rr=c.r*(.55+.12*(k%3));const gr=ctx.createRadialGradient(cx,cy,0,cx,cy,rr);gr.addColorStop(0,"#f2f5f0cc");gr.addColorStop(1,"#f2f5f000");ctx.fillStyle=gr;ctx.beginPath();ctx.arc(cx,cy,rr,0,7);ctx.fill();}}
-  for(const s of g.shots){ctx.fillStyle="#00000040";ctx.beginPath();ctx.arc(s.x-s.vx*.03,s.y-s.vy*.03,4,0,7);ctx.fill();ctx.fillStyle="#2a2a2a";ctx.beginPath();ctx.arc(s.x,s.y,6,0,7);ctx.fill();ctx.fillStyle="#9aa0aa";ctx.fillRect(s.x-3,s.y-3,2,2);}
+  for(const c of g.clouds){if(c.r<=1)continue;for(let k=0;k<5;k++){const a=k*1.3+now/1400,cx=c.x+Math.cos(a)*c.r*.35,cy=c.y+Math.sin(a)*c.r*.25,rr=c.r*(.55+.12*(k%3));const gr=ctx.createRadialGradient(cx,cy,0,cx,cy,rr);gr.addColorStop(0,hw?"#bff0a8cc":"#f2f5f0cc");gr.addColorStop(1,hw?"#bff0a800":"#f2f5f000");ctx.fillStyle=gr;ctx.beginPath();ctx.arc(cx,cy,rr,0,7);ctx.fill();}}
+  for(const s of g.shots){ctx.fillStyle="#00000040";ctx.beginPath();ctx.arc(s.x-s.vx*.03,s.y-s.vy*.03,4,0,7);ctx.fill();
+   if(hw)bat(ctx,s.x,s.y,7,now+s.vx);else{ctx.fillStyle="#2a2a2a";ctx.beginPath();ctx.arc(s.x,s.y,6,0,7);ctx.fill();ctx.fillStyle="#9aa0aa";ctx.fillRect(s.x-3,s.y-3,2,2);}}
   if(g.tears>45){ctx.fillStyle=`rgba(150,200,255,${(g.tears-45)/240})`;ctx.fillRect(0,0,W,W);}
   if(g.tears>0){ctx.fillStyle="#141b2acc";ctx.fillRect(g.x-26,g.y+6,52,6);ctx.fillStyle="#8fd0ff";ctx.fillRect(g.x-25,g.y+7,50*g.tears/100,4);}
   // Route République → Nation, lives, tracts, umbrella.
@@ -188,7 +204,7 @@ function spawnProt(side,y){
  return{x:side?EP.zoneR+rnd(18,48):EP.zoneL-rnd(18,48),y,kind,look:kind==="infiltre"?(Math.random()<.5?"plain":"gilet"):kind,state:"wait",side,zig:rnd(0,6),delay:0,throwAt:0};
 }
 function epervier(g,K,drawCand){
- const {ctx}=K;
+ const {ctx}=K,hw=g.season==="halloween";
  Object.assign(g,{x:C,y:250,vx:0,vy:0,hp:EP.lives,inv:-Infinity,hitT:-Infinity,throws:[],fires:[],rubble:[],points:0,caught:0,press:0,cops:0,wave:0,
   waveT:g.t0+1600,side:0,prot:[],ally:{x:C+30,y:320,hitT:-Infinity,flip:false},swingT:-Infinity,shoutT:-Infinity,reinfT:-Infinity,why:""});
  for(let i=0;i<5;i++)g.prot.push(spawnProt(0,150+i*50));
@@ -238,7 +254,7 @@ function epervier(g,K,drawCand){
   // Projectiles land where the player was heading: a paving stone hurts on impact, a molotov's fire while it burns.
   const hurt=label=>{if(now<g.inv)return;g.hp--;g.inv=now+1200;g.hitT=now;K.floater(label,g.x,g.y-80,"#ff9aa5",now);if(g.hp<=0){g.endT=now;g.why="hurt";}};
   for(let i=g.throws.length-1;i>=0;i--){const s=g.throws[i];if(now-s.t0<s.ms)continue;g.throws.splice(i,1);
-   if(s.type==="pave"){g.rubble.push({x:s.x1,y:s.y1,t:now});if(dist(s.x1,s.y1,g.x,g.y-8)<26)hurt("Aïe ! Un pavé");}
+   if(s.type==="pave"){g.rubble.push({x:s.x1,y:s.y1,t:now});if(dist(s.x1,s.y1,g.x,g.y-8)<26)hurt(hw?"Aïe ! Une citrouille":"Aïe ! Un pavé");}
    else g.fires.push({x:s.x1,y:s.y1,born:now});}
   g.fires=g.fires.filter(f=>now-f.born<EP.fireMs);g.rubble=g.rubble.filter(r=>now-r.t<1500);
   if(g.fires.some(f=>dist(f.x,f.y,g.x,g.y-6)<EP.fireR))hurt("Ça brûle !");
@@ -273,15 +289,19 @@ function epervier(g,K,drawCand){
   ctx.fillStyle="#e8edf3";ctx.fillRect(170,46,126,62);ctx.fillStyle="#2f4c8f";ctx.fillRect(170,80,126,8);ctx.fillStyle="#22293a";ctx.fillRect(206,56,54,22);
   ctx.fillStyle="#9fb6d2";for(let i=0;i<5;i++)ctx.fillRect(210+i*10,58,3,18);
   ctx.fillStyle=Math.floor(now/250)%2?"#3c7cf0":"#8fb6ff";ctx.fillRect(220,40,26,7);
+  if(hw){ctx.fillStyle="#3b1d5e59";ctx.fillRect(0,0,W,W);}   // in costume: dusk over the square
   K.text(`${g.caught}`,233,104,"700 11px Inter, sans-serif","#fff6ea");
   // On the ground: where each projectile will land (the ring closes in), fires and fallen stones.
-  for(const s of g.throws){const a=Math.min(1,(until-s.t0)/s.ms),r=(s.type==="molotov"?EP.fireR:26)*(1.5-.5*a);ctx.strokeStyle=s.type==="molotov"?`rgba(255,120,40,${.3+.6*a})`:`rgba(40,40,50,${.25+.5*a})`;ctx.lineWidth=2;ctx.beginPath();ctx.ellipse(s.x1,s.y1,r,r*.45,0,0,7);ctx.stroke();}
+  for(const s of g.throws){const a=Math.min(1,(until-s.t0)/s.ms),r=(s.type==="molotov"?EP.fireR:26)*(1.5-.5*a);ctx.strokeStyle=s.type==="molotov"?`rgba(${hw?"110,230,80":"255,120,40"},${.3+.6*a})`:`rgba(40,40,50,${.25+.5*a})`;ctx.lineWidth=2;ctx.beginPath();ctx.ellipse(s.x1,s.y1,r,r*.45,0,0,7);ctx.stroke();}
   for(const f of g.fires){const age=until-f.born,k=Math.max(0,age<200?age/200:age>EP.fireMs-400?(EP.fireMs-age)/400:1);
-   const gr=ctx.createRadialGradient(f.x,f.y,0,f.x,f.y,EP.fireR*1.3);gr.addColorStop(0,`rgba(255,170,60,${.55*k})`);gr.addColorStop(1,"rgba(255,90,30,0)");ctx.fillStyle=gr;ctx.beginPath();ctx.ellipse(f.x,f.y,EP.fireR*1.3,EP.fireR*.7,0,0,7);ctx.fill();
+   const gr=ctx.createRadialGradient(f.x,f.y,0,f.x,f.y,EP.fireR*1.3);gr.addColorStop(0,`rgba(${hw?"120,235,90":"255,170,60"},${.55*k})`);gr.addColorStop(1,hw?"rgba(60,200,60,0)":"rgba(255,90,30,0)");ctx.fillStyle=gr;ctx.beginPath();ctx.ellipse(f.x,f.y,EP.fireR*1.3,EP.fireR*.7,0,0,7);ctx.fill();
    ctx.fillStyle="#3a2a2288";ctx.beginPath();ctx.ellipse(f.x,f.y,EP.fireR*.9,EP.fireR*.4,0,0,7);ctx.fill();
    for(let i=0;i<9;i++){const fx=f.x+Math.cos(i*2.4)*EP.fireR*.7*((i%3+1)/3),fy=f.y+Math.sin(i*2.4)*EP.fireR*.3,h=(10+((now/60+i*7)%10))*k;
-    ctx.fillStyle="#e8532c";ctx.fillRect(fx-4,fy-h,8,h);ctx.fillStyle="#ffb13b";ctx.fillRect(fx-2,fy-h*.7,4,h*.7);ctx.fillStyle="#fff1a8";ctx.fillRect(fx-1,fy-h*.35,2,h*.35);}}
-  for(const r of g.rubble){ctx.globalAlpha=Math.max(0,1-(until-r.t)/1500);ctx.fillStyle="#6f6a63";ctx.fillRect(r.x-7,r.y-5,14,10);ctx.fillStyle="#8e8880";ctx.fillRect(r.x-7,r.y-5,14,3);ctx.globalAlpha=1;}
+    ctx.fillStyle=hw?"#2f9e3a":"#e8532c";ctx.fillRect(fx-4,fy-h,8,h);ctx.fillStyle=hw?"#7fe35a":"#ffb13b";ctx.fillRect(fx-2,fy-h*.7,4,h*.7);ctx.fillStyle=hw?"#e6ffc4":"#fff1a8";ctx.fillRect(fx-1,fy-h*.35,2,h*.35);}}
+  // A fallen stone; in costume, a squashed pumpkin.
+  for(const r of g.rubble){ctx.globalAlpha=Math.max(0,1-(until-r.t)/1500);
+   if(hw){ctx.fillStyle="#e8742a";ctx.beginPath();ctx.ellipse(r.x,r.y,11,5,0,0,7);ctx.fill();ctx.fillStyle="#f7b05a";ctx.fillRect(r.x-12,r.y+2,4,3);ctx.fillRect(r.x+8,r.y+1,5,3);ctx.fillStyle="#4f7a2c";ctx.fillRect(r.x-1,r.y-7,3,4);}
+   else{ctx.fillStyle="#6f6a63";ctx.fillRect(r.x-7,r.y-5,14,10);ctx.fillStyle="#8e8880";ctx.fillRect(r.x-7,r.y-5,14,3);}ctx.globalAlpha=1;}
   const actors=[];
   for(const m of g.prot)if(m.state!=="van")actors.push({y:m.y,draw:()=>{
    const st=m.state==="caught"?"caught":m.state==="run"&&now>=m.delay?"run":"idle";
@@ -292,7 +312,11 @@ function epervier(g,K,drawCand){
   actors.sort((a,b)=>a.y-b.y).forEach(a=>a.draw());
   for(const s of g.throws){const a=Math.min(1,(until-s.t0)/s.ms),x=s.x0+(s.x1-s.x0)*a,y=s.y0+(s.y1-s.y0)*a-Math.sin(a*Math.PI)*80+40*a;
    ctx.save();ctx.translate(x,y);ctx.rotate(now/110);
-   if(s.type==="pave"){ctx.fillStyle="#6f6a63";ctx.fillRect(-7,-6,14,12);ctx.fillStyle="#8e8880";ctx.fillRect(-7,-6,14,4);}
+   // In costume: a pumpkin for a paving stone, a bubbling green potion for a molotov.
+   if(hw&&s.type==="pave")pumpkin(ctx,0,0,7,true);
+   else if(hw){ctx.fillStyle="#6b3fa0";ctx.beginPath();ctx.arc(0,2,7,0,7);ctx.fill();ctx.fillRect(-2,-9,4,6);ctx.fillStyle="#7fe35a";ctx.beginPath();ctx.arc(0,3,5,0,7);ctx.fill();
+    ctx.fillStyle="#d8ffc0";const b=Math.floor(now/120)%3;ctx.fillRect(-3+b*2,1-b,2,2);ctx.fillRect(1-b,-2+b,2,2);ctx.fillStyle="#8a6a48";ctx.fillRect(-2,-12,4,3);}
+   else if(s.type==="pave"){ctx.fillStyle="#6f6a63";ctx.fillRect(-7,-6,14,12);ctx.fillStyle="#8e8880";ctx.fillRect(-7,-6,14,4);}
    else{ctx.fillStyle="#4f7a45";ctx.fillRect(-4,-6,8,13);ctx.fillRect(-2,-11,4,5);ctx.fillStyle="#f2e8cd";ctx.fillRect(-2,-14,4,3);ctx.fillStyle=Math.floor(now/80)%2?"#ffb13b":"#e8532c";ctx.fillRect(-3,-20,6,6);}
    ctx.restore();}
   ctx.fillStyle="#141b2ad9";ctx.beginPath();ctx.roundRect(140,122,186,42,10);ctx.fill();
@@ -320,11 +344,13 @@ const DB={top:212,h:46,gap:10,w:316};
 function debate(g,K,drawCand){
  const {ctx}=K,ms=R.MINI.debate.ms,D=R.DEBATE;
  // Dealt by rules.mjs: a duel deals from the server's seed, so both players and the replay see the same rounds.
- const rounds=R.debateRounds(g.seed===null?Math.random:R.seeded(g.seed));
+ // A solo debate in costume adds the event's questions to the deck; a duel keeps QUESTIONS alone (the server replays it).
+ const hw=g.season==="halloween",pool=g.seed===null&&hw?[...R.QUESTIONS,...R.HALLOWEEN.questions]:R.QUESTIONS;
+ const rounds=g.seed===null?R.debateRounds(Math.random,undefined,pool.length):R.debateRounds(R.seeded(g.seed));
  Object.assign(g,{t0:g.t0+D.intro,lost:0,q:null,points:0,errors:0,flashT:-Infinity,flashOk:true,pick:-1,picks:[]});
  g.score=()=>g.points;
- // Round k shows QUESTIONS[i]'s answers in "order" (indexes into ANSWER_KINDS; answer j is QUESTIONS[i][1+j]).
- const deal=()=>{const {i,order}=rounds[g.picks.length],q=QUESTIONS[i];g.q={i,text:q[0],answers:order.map(j=>({t:q[1+j],k:R.ANSWER_KINDS[j]}))};};
+ // Round k shows pool[i]'s answers in "order" (indexes into ANSWER_KINDS; answer j is pool[i][1+j]).
+ const deal=()=>{const {i,order}=rounds[g.picks.length],q=pool[i];g.q={i,text:q[0],answers:order.map(j=>({t:q[1+j],k:R.ANSWER_KINDS[j]}))};};
  deal();
  const left=now=>Math.max(0,ms-g.lost-Math.max(0,now-g.t0));
  const box=n=>({x:C-DB.w/2,y:DB.top+n*(DB.h+DB.gap),w:DB.w,h:DB.h});
@@ -348,7 +374,13 @@ function debate(g,K,drawCand){
   ctx.fillStyle="#141b2a";ctx.fillRect(0,0,W,W);
   ctx.fillStyle=lft?"#583345":"#2d4265";ctx.beginPath();ctx.arc(C,C,200,0,7);ctx.fill();
   ctx.lineWidth=12;ctx.strokeStyle=lft?"#ffb2c21c":"#b4ceff1c";for(const r of [150,185]){ctx.beginPath();ctx.arc(C,330,r,Math.PI,2*Math.PI);ctx.stroke();}
-  K.outlined("DÉBAT CHRONO",C,62,20,"#fff6ea");
+  // In costume: an orange ring, a crescent moon, two bats and two lanterns, all behind the question and answers.
+  if(hw){
+   ctx.lineWidth=4;ctx.strokeStyle="#ff8c2a99";ctx.beginPath();ctx.arc(C,C,198,0,7);ctx.stroke();
+   ctx.fillStyle="#f6e7b0";ctx.beginPath();ctx.arc(372,146,16,0,7);ctx.fill();ctx.fillStyle=lft?"#583345":"#2d4265";ctx.beginPath();ctx.arc(380,140,14,0,7);ctx.fill();
+   bat(ctx,92,152,7,now);bat(ctx,120,126,5,now+170);pumpkin(ctx,168,440,9,true);pumpkin(ctx,298,440,9,true);
+  }
+  K.outlined(hw?"DÉBAT D'OUTRE-TOMBE":"DÉBAT CHRONO",C,62,20,hw?"#ffb36b":"#fff6ea");
   ctx.fillStyle="#ffffff22";ctx.beginPath();ctx.roundRect(133,76,200,10,5);ctx.fill();
   ctx.fillStyle=frac<.3?"#ff6b7d":"#ffd59a";ctx.beginPath();ctx.roundRect(133,76,Math.max(10,200*frac),10,5);ctx.fill();
   K.text(`${(rest/1000).toFixed(1)} s · ${g.points} argument${g.points>1?"s":""}`,C,104,"700 12px Inter, sans-serif","#fff6ea");
@@ -393,8 +425,10 @@ function debate(g,K,drawCand){
 // or sooner with a tap on the result.
 // seed (debate only): a number deals a duel's debate from it; picks ([answer, ms since play started]) are kept in
 // g.picks for the server to replay.
-export function createMini(key,{p,camp,ctx,scale,drawCand,now,seed}){
- const K=makeKit(ctx,scale),g={key,p,camp,t0:now,now,endT:0,keys:{},target:null,skipT:0,seed:Number.isFinite(seed)?seed:null};
+// season: "halloween" puts the games in costume (drawings and lines only; a solo debate also deals the event's
+// questions). Same hitboxes, timings and scores.
+export function createMini(key,{p,camp,ctx,scale,drawCand,now,seed,season}){
+ const K=makeKit(ctx,scale),g={key,p,camp,t0:now,now,endT:0,keys:{},target:null,skipT:0,seed:Number.isFinite(seed)?seed:null,season:season==="halloween"?"halloween":""};
  ({debate,cortege,epervier})[key](g,K,drawCand);
  const step0=g.step;
  g.step=(t,dt)=>{g.now=t;step0(t,dt);};

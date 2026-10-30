@@ -53,6 +53,11 @@ const DUEL_MIN_LEVEL=knob(env.POLITIGO_DUEL_MIN_LEVEL,R.DUEL.minLevel),DUEL_MIN_
 if(DUEL_MIN_LEVEL!==R.DUEL.minLevel||DUEL_MIN_AGE!==R.DUEL.minAgeMs)console.warn(`Duel test settings active: level ${DUEL_MIN_LEVEL}+, accounts ${DUEL_MIN_AGE/R.H} h old+ (normal: ${R.DUEL.minLevel}, ${R.DUEL.minAgeMs/R.H} h).`);
 // A turn is void past the debate, its countdown and the same grace as the solo mini-games.
 const DUEL_TURN_MS=R.MINI.debate.ms+R.DEBATE.intro+R.MINI_RULES.graceSeconds*1000;
+// Seasonal events (Halloween): "auto" follows the calendar, "off" switches them off, "halloween" forces it (a test).
+const EVENT_MODE=R.EVENT_MODES.includes(env.POLITIGO_EVENT)?env.POLITIGO_EVENT:"auto";
+if(env.POLITIGO_EVENT&&EVENT_MODE!==env.POLITIGO_EVENT)console.error(`POLITIGO_EVENT must be one of ${R.EVENT_MODES.join(", ")}: using auto.`);
+if(EVENT_MODE!=="auto")console.warn(`Seasonal event forced: ${EVENT_MODE}.`);
+const eventNow=()=>R.eventAt(Date.now(),EVENT_MODE);
 // Web Push: on unless POLITIGO_PUSH=off. The contact goes into every VAPID token, so a push service can reach the admin.
 const PUSH_ON=env.POLITIGO_PUSH!=="off",PUSH_DEFAULT_CONTACT="https://github.com/MonXBZH/politigo";
 let PUSH_CONTACT=(env.POLITIGO_PUSH_CONTACT||"").trim()||PUSH_DEFAULT_CONTACT;
@@ -302,7 +307,7 @@ function publishBoard(force=false){
  const rows=boardRows(),json=JSON.stringify(rows);
  if(force||json!==lastBoard){lastBoard=json;broadcast("board",rows);}
 }
-function mePayload(p){return {name:p.name,state:p.state,speed:SPEED,tz:R.timeZone(),serverNow:Date.now(),version:VERSION,release:RELEASE,seenVersion:p.seen??null};}
+function mePayload(p){return {name:p.name,state:p.state,speed:SPEED,tz:R.timeZone(),serverNow:Date.now(),event:EVENT_MODE,version:VERSION,release:RELEASE,seenVersion:p.seen??null};}
 // The clock runs for everyone, connected or not: needs drain and deaths happen while the page is closed.
 setInterval(()=>{
  const now=Date.now();
@@ -551,7 +556,7 @@ async function route(req,res){
   const p=auth(req);if(limited("act:"+p.id,40,10e3))throw new HttpError(429,"Doucement : trop d'actions d'un coup.");
   const b=await readJson(req);
   if(!players.has(p.id))throw new HttpError(401,"Connexion requise.");   // deleted while the body was arriving
-  const r=update(p,S=>R.act(S,b,{now:Date.now(),speed:SPEED,random:Math.random}));
+  const r=update(p,S=>R.act(S,b,{now:Date.now(),speed:SPEED,random:Math.random,event:eventNow()}));
   return send(res,r.ok?200:422,{...r,me:mePayload(p)});
  }
  if(path==="/api/duels"&&method==="GET"){

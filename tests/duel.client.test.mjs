@@ -121,3 +121,29 @@ test("the result panel promises XP in a solo game, not in a duel",()=>{
   assert.equal(/arbitre/.test(all),!xp,all);
  }
 });
+
+// Halloween: a solo debate in costume deals from a bigger deck, a duel never does (the server replays R.QUESTIONS),
+// and the Manif games only change their drawings.
+const makeKey=(key,o={})=>M.createMini(key,{p:{},camp:"left",ctx:fakeCtx(),scale:()=>1,drawCand:()=>{},now:0,...o});
+test("Halloween: a solo debate can deal a costume question, a plain one never does",()=>{
+ const hq=new Set(R.HALLOWEEN.questions.map(q=>q[0]));let seen=false;
+ for(let k=0;k<20&&!seen;k++){const g=makeKey("debate",{season:"halloween"});for(let n=0;n<R.DUEL.maxPicks&&!g.endT&&!seen;n++){if(hq.has(g.q.text))seen=true;g.answer(g.q.answers.findIndex(a=>a.k==="left"),g.t0+n*400);}}
+ assert.ok(seen);
+ const g=makeKey("debate");for(let n=0;n<R.DUEL.maxPicks&&!g.endT;n++){assert.ok(!hq.has(g.q.text));g.answer(0,g.t0+n*400);}
+});
+test("Halloween: a duel deals and records exactly the same with or without the costume",()=>{
+ for(const seed of [1,42,12345,987654321]){
+  const a=makeKey("debate",{seed}),b=makeKey("debate",{seed,season:"halloween"});
+  for(let n=0;n<R.DUEL.maxPicks;n++){assert.deepEqual([b.q.i,b.q.text,b.q.answers],[a.q.i,a.q.text,a.q.answers]);const t=a.t0+n*400,x=a.q.answers.findIndex(q=>q.k==="left");a.answer(x,t);b.answer(x,t);if(a.endT)break;}
+  assert.deepEqual(b.picks,a.picks);
+ }
+});
+test("Halloween: the Manif games play the same in costume, and every drawing runs",()=>{
+ for(const key of ["cortege","epervier"]){
+  const run=season=>{const r0=Math.random;Math.random=R.seeded(7);try{const g=makeKey(key,{season,camp:key==="cortege"?"left":"right"});g.target=[300,300];let now=0;
+   for(let f=0;f<2400;f++){now+=16.7;g.step(now,.0167);if(f%7===0)g.target=[150+(f*13)%170,200+(f*29)%200];if(f%300===0)g.special?.(now);g.draw(now);}
+   g.draw(now+1000);return JSON.stringify([g.score(),g.hp,g.endT,g.x,g.y,Math.random()]);}finally{Math.random=r0;}};
+  assert.equal(run("halloween"),run(""),key);
+ }
+ const d=makeKey("debate",{season:"halloween"});d.draw(0);d.draw(5000);d.abort(6000);d.draw(7000);
+});

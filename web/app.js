@@ -4,7 +4,7 @@ import * as R from "./rules.mjs";
 import {createMini,manifLabel} from "./minigames.mjs";
 import {missedEntries,latestEntry} from "./changelog.mjs";
 import {drawTest,verdict,randomCamp} from "./politest.mjs";
-const {people,personalItems,stresses,shop,pongLines,fxNames,XP,xpCost,xpFloor,stage}=R;
+const {people,personalItems,stresses,shop,fxNames,XP,xpCost,xpFloor,stage}=R;
 const $=s=>document.querySelector(s);
 const motionQuery=matchMedia("(prefers-reduced-motion: reduce)");
 let reduced=motionQuery.matches;motionQuery.addEventListener?.("change",e=>{reduced=e.matches;});
@@ -36,9 +36,14 @@ async function api(method,path,body){
 }
 let skew=0;                                          // server clock minus this device's clock
 const serverNow=()=>Date.now()+skew;
+// The seasonal event (rules.mjs eventAt), asked every frame: worked out once a second, Intl is not free.
+let EVENT_MODE="auto",seasonAt=0,seasonVal="";
+function season(){const n=Date.now();if(n-seasonAt>1000){seasonAt=n;seasonVal=R.eventAt(serverNow(),EVENT_MODE);}return seasonVal;}
+const hw=()=>season()==="halloween";
 function applyMe(m,{replay=false}={}){
  if(!m||!m.state)return;
  if(Number.isFinite(m.serverNow))skew=m.serverNow-Date.now();
+ if(R.EVENT_MODES.includes(m.event)&&m.event!==EVENT_MODE){EVENT_MODE=m.event;seasonAt=0;}
  const first=!S||me!==m.name;
  // The action answer and the live stream race each other: an older copy of the state never replaces a newer one.
  if(!first&&m.state.lastReal<S.lastReal)return;
@@ -89,6 +94,7 @@ function playJournal(onlyMajor){
   else if(act.k==="equip")playAnim("win",1500);
   else if(act.k==="sync")toast(act.text);              // back from a maintenance: said once, nothing to animate
   else if(act.k==="duel"){if(d.res==="win")playAnim("win",2500);toast(act.text);duelJournalT=Date.now();}
+  else if(act.k==="treat"){playAnim("eat",2500,{food:"candy"});toast(act.text);}
   else if(level)toast(level.text);
  }else if(level)toast(level.text);
 }
@@ -117,7 +123,7 @@ async function startMini(type){
  closeSheet();                                      // a sheet opened while the request was on its way
  miniStartReal=Date.now();
  const key=type==="debate"?"debate":r.game;
- mini=createMini(key,{p:key==="epervier"?{...look(),prop:"tonfa"}:look(),camp:S.camp,ctx,scale:()=>scale,now:miniClock,
+ mini=createMini(key,{p:key==="epervier"?{...look(),prop:"tonfa"}:look(),camp:S.camp,ctx,scale:()=>scale,now:miniClock,season:season(),
   drawCand});
  cv.focus();
 }
@@ -134,7 +140,7 @@ async function startDuel(body,vs,role){
  if(!Number.isFinite(r.duel?.seed)){toast("Duel introuvable : réessaie dans un instant.");return;}
  closeSheet();                                      // a sheet opened while the request was on its way
  if(pong||mini)return;
- mini=createMini("debate",{p:look(),camp:S.camp,ctx,scale:()=>scale,now:miniClock,seed:r.duel.seed,drawCand});
+ mini=createMini("debate",{p:look(),camp:S.camp,ctx,scale:()=>scale,now:miniClock,seed:r.duel.seed,season:season(),drawCand});
  mini.duel={id:r.duel.id,vs,role};
  toast(role==="challenger"?`Défi lancé à ${vs} : mêmes questions pour vous deux, le meilleur score gagne.`:`Défi relevé : mêmes questions que ${vs}, à toi de faire mieux !`);
  cv.focus();
@@ -190,30 +196,38 @@ async function pet(){
 
 // ===================================================================== SPRITES (64x64 logical grid)
 function rect(c,x,y,w,h,color){c.fillStyle=color;c.fillRect(Math.round(x),Math.round(y),w,h);}
-function sprite(c,p,t,state,legend=false,food="soup"){
+// costume: "vampire" or "hunter", the Halloween night skins (render() passes it in the sleep state only).
+function sprite(c,p,t,state,legend=false,food="soup",costume=""){
  c.clearRect(0,0,64,64);
+ const vamp=costume==="vampire",hunt=costume==="hunter";
+ if(vamp)p={...p,coat:"#1c1824",tie:"#b3122e"};else if(hunt)p={...p,coat:"#4a3426",tie:null,glasses:false};
  const phase=Math.floor(t/300)%4,sulk=state==="debate"&&phase>=2,stomp=state==="debate"&&!sulk;
  const run=state==="run",bob=state==="sleep"?0:state==="win"?[0,-3,-5,-2][phase]:run?[0,-2,0,-2][phase]:[0,-1,0,0][phase];
  c.fillStyle="#0004";c.beginPath();c.ellipse(32,59,15,3,0,0,Math.PI*2);c.fill();
  if(legend){for(let i=0;i<8;i++){const a=i*Math.PI/4+t/1300;rect(c,31+Math.cos(a)*25,29+Math.sin(a)*26,2,2,"#fbd47b");}}
  c.save();c.translate(state==="stress"?(phase%2?1:-1):0,bob);
- const skin="#e9b38e",shade="#c78e76",ink="#202330",body=37;
+ const skin=vamp?"#e4e0ec":"#e9b38e",shade=vamp?"#c6bccf":"#c78e76",ink="#202330",body=37;
+ if(vamp){const k="#120e18",red="#b3122e";rect(c,16,30,32,27,k);rect(c,16,32,2,24,red);rect(c,46,32,2,24,red);rect(c,16,23,7,15,k);rect(c,41,23,7,15,k);rect(c,18,24,3,13,red);rect(c,43,24,3,13,red);}  // cape, high collar
  if(p.style==="long")rect(c,21,15,23,26,p.hair);
  rect(c,22,body,20,18,ink);rect(c,24,body,16,16,p.coat);
- rect(c,29,body,6,9,"#f1e9da");if(p.tie)rect(c,31,body+2,2,11,p.tie);
+ rect(c,29,body,6,9,hunt?"#26262c":"#f1e9da");if(p.tie)rect(c,31,body+2,2,11,p.tie);
  rect(c,24,54-((stomp&&phase===0)||(run&&phase%2===0)?2:0),6,5,ink);rect(c,35,54-((stomp&&phase===1)||(run&&phase%2===1)?2:0),6,5,ink);
+ if(hunt){const d="#2e2018";rect(c,22,50,9,6,"#3a281c");rect(c,33,50,9,6,"#3a281c");rect(c,22,50,1,6,d);rect(c,41,50,1,6,d);rect(c,27,body,2,11,d);rect(c,35,body,2,11,d);}   // long leather coat
  const lift=state==="debate"?(phase===0?9:5):state==="win"?5+phase%2*2:state==="eat"?3:0;
  if(sulk){rect(c,18,body+2,5,7,p.coat);rect(c,42,body+2,5,7,p.coat);rect(c,21,body+7,23,4,p.coat);rect(c,21,body+7,23,1,ink);rect(c,22,body+8,3,3,skin);rect(c,40,body+8,3,3,skin);}
  else{rect(c,18,body+2,5,12,p.coat);rect(c,19,body+13,4,4,skin);rect(c,42,body+2-lift,5,12,p.coat);rect(c,43,body+13-lift,4,4,skin);}
  rect(c,29,31,7,8,shade);
  const face=state==="debate"?"#ee9f86":skin;
  rect(c,22,13,21,20,ink);rect(c,23,14,19,18,face);rect(c,21,22,2,6,face);rect(c,42,22,2,6,face);
- rect(c,23,12,19,5,p.style==="bald"?face:p.hair);
+ rect(c,23,12,19,5,p.style==="bald"||vamp?face:p.hair);
+ if(vamp){if(p.style!=="bald"){rect(c,23,12,19,4,p.hair);rect(c,22,13,3,8,p.hair);rect(c,40,13,3,8,p.hair);rect(c,30,16,5,1,p.hair);rect(c,31,17,3,1,p.hair);rect(c,32,18,1,1,p.hair);rect(c,26,13,9,1,"#ffffff2a");}}  // slicked back, widow's peak
+ else{
  if(p.style==="receding"){rect(c,27,12,11,4,face);rect(c,22,15,3,7,p.hair);rect(c,40,15,3,7,p.hair);}
  if(p.style==="short")rect(c,22,15,3,5,p.hair);
  if(p.style==="quiff"){rect(c,25,9,15,5,p.hair);rect(c,22,13,4,8,p.hair);}
  if(p.style==="bob"||p.style==="long"){rect(c,21,16,4,18,p.hair);rect(c,40,16,4,18,p.hair);rect(c,25,13,9,5,p.hair);}
  if(p.style==="curly"){for(let i=0;i<5;i++)rect(c,21+i*4,11-(i%2)*2,5,6,p.hair);rect(c,21,16,3,7,p.hair);rect(c,41,16,3,7,p.hair);}
+ }
  const blink=state==="sleep"||Math.floor(t/180)%19===0;
  if(state==="stress"){rect(c,26,21,4,4,"#fff");rect(c,35,21,4,4,"#fff");rect(c,27,22,2,2,ink);rect(c,36,22,2,2,ink);}
  else{rect(c,27,22,2,blink?1:3,ink);rect(c,36,22,2,blink?1:3,ink);}
@@ -225,7 +239,10 @@ function sprite(c,p,t,state,legend=false,food="soup"){
  else if(sulk){rect(c,31,29,4,1,ink);rect(c,30,30,1,1,ink);rect(c,35,30,1,1,ink);rect(c,31,30,4,1,"#c56a6a");}
  else rect(c,30,29,6,state==="eat"&&phase%2?3:1,state==="eat"?"#783f49":ink);
  if(p.beard){rect(c,25,30,15,3,p.beardColor||p.hair);rect(c,29,29,7,2,face);rect(c,30,31,5,1,ink);}
- if(state==="eat")drawFood(c,food,p.side==="left",28,31,t);
+ if(vamp){rect(c,30,30,1,2,"#fff");rect(c,35,30,1,2,"#fff");}   // fangs
+ if(hunt){const g="#0d0d12";for(const x of [25,34]){rect(c,x,22,6,2,g);rect(c,x+1,21,4,4,g);rect(c,x+1,21,2,1,"#6c7fa8");}rect(c,31,22,3,1,g);rect(c,23,22,2,1,g);rect(c,40,22,2,1,g);   // sunglasses at night
+  for(const [x,y] of [[24,33],[27,35],[30,36],[34,36],[37,35],[40,33]]){rect(c,x,y,3,3,"#f3eedd");rect(c,x+1,y-1,1,1,"#c9bf9c");}}   // garlic necklace
+ if(state==="eat")drawFood(c,food,(p.side||S?.camp)==="left",28,31,t);
  else if(!sulk&&state!=="sleep")drawProp(c,p.prop,46,43-lift);
  c.restore();
  if(state==="sleep"){c.fillStyle="#a8c9ff";c.font="bold 8px monospace";c.fillText("z",48,17-phase*2);c.fillText("Z",53,10-phase);}
@@ -270,6 +287,16 @@ function drawProp(c,type,x,y){
 }
 function drawFood(c,key,left,x,y,t){
  const steam="#dfe6f0",puff=Math.floor(t/300)%2,paper="#f2e8cd",brown="#6b4426";
+ // Halloween costumes (same items, same effects): pumpkin soup, cauldron potion, candies or pralines.
+ if(hw()||key==="candy")switch(key){
+ case"soup":rect(c,x,y-4,10,5,"#e0731c");rect(c,x+3,y-4,1,5,"#b85814");rect(c,x+6,y-4,1,5,"#b85814");rect(c,x+1,y-5,8,2,"#ffb04a");rect(c,x+4,y-6,2,1,"#5f8a3a");rect(c,x+3,y-9+puff,1,3,steam);rect(c,x+7,y-8-puff,1,3,steam);return;
+ case"coffee":rect(c,x+1,y-4,9,5,"#26262e");rect(c,x,y-5,11,1,"#3c3c48");rect(c,x+2,y-6,7,1,"#7ee06a");rect(c,x+2,y+1,1,1,"#26262e");rect(c,x+8,y+1,1,1,"#26262e");
+  rect(c,x+3+puff*3,y-8-puff,2,2,"#9cf28a");rect(c,x+6-puff*2,y-10+puff,1,1,"#9cf28a");return;
+ case"snack":
+  if(left){for(const [dx,dy,col] of [[0,-2,"#e8476a"],[4,-5,"#f2a531"]]){rect(c,x+dx+2,y+dy,4,3,col);rect(c,x+dx,y+dy,2,1,paper);rect(c,x+dx,y+dy+2,2,1,paper);rect(c,x+dx+6,y+dy,2,1,paper);rect(c,x+dx+6,y+dy+2,2,1,paper);}}
+  else{rect(c,x,y,10,1,"#d9b45a");for(const dx of [1,4,7])rect(c,x+dx,y-3,3,3,"#5a3420");rect(c,x+2,y-3,1,1,"#d9b45a");rect(c,x+8,y-3,1,1,"#e8c9a0");}return;
+ case"candy":for(const [dx,dy,col] of [[0,-1,"#f2862a"],[5,-1,"#8e5ad8"],[2,-4,"#5fc25a"]]){rect(c,x+dx+1,y+dy,3,2,col);rect(c,x+dx,y+dy,1,2,paper);rect(c,x+dx+4,y+dy,1,2,paper);}return;
+ }
  switch(key){
  case"bread":rect(c,x,y-3,10,4,"#d9a35f");rect(c,x+2,y-4,6,1,"#e9c07a");rect(c,x+3,y-3,1,1,"#a8703a");rect(c,x+6,y-2,1,1,"#a8703a");break;
  case"banquet":rect(c,x-3,y,16,2,paper);rect(c,x-1,y-4,8,4,"#b0703a");rect(c,x+5,y-6,2,3,paper);rect(c,x+9,y-7,3,4,left?"#b8324a":"#f0d97a");rect(c,x+10,y-3,1,3,paper);rect(c,x+9,y,3,1,paper);break;
@@ -295,8 +322,8 @@ function fitCanvas(){
 }
 addEventListener("resize",fitCanvas);
 const GAUGES=[{k:"sat",l:"SAT",c:"#f1bc72",a:200},{k:"moral",l:"MOR",c:"#ef91ae",a:290},{k:"energy",l:"ÉNE",c:"#85cbbb",a:20},{k:"hyg",l:"HYG",c:"#93b4ec",a:110}];
-function bigSprite(p,state,size,cx,ground,t,legend=false,food){
- sprite(scratch.getContext("2d"),p,t,state,legend,food);
+function bigSprite(p,state,size,cx,ground,t,legend=false,food,costume=""){
+ sprite(scratch.getContext("2d"),p,t,state,legend,food,costume);
  ctx.imageSmoothingEnabled=false;ctx.drawImage(scratch,cx-size/2,ground-size,size,size);
 }
 // Fits a centred label inside the round panel: shrink first, then split into two balanced lines.
@@ -309,14 +336,117 @@ function fitLabel(text,y){
  ctx.fillText(best.l1,233,y-7);ctx.fillText(best.l2,233,y+8);
 }
 function room(night){
- const left=S.camp==="left",h=hodOf(curIdx());
- const sky=night?"#0e1433":h<8?"#5b4a7a":h>=19?(left?"#5d2f4e":"#2f3f6e"):(left?"#7a3d5c":"#3d5f96");
+ const left=S.camp==="left",h=hodOf(curIdx()),spooky=hw();
+ const sky=spooky?(night?"#120a26":h<8?"#3d2350":h>=19?(left?"#3a1838":"#24184a"):(left?"#5a2a52":"#3a2c66"))
+  :night?"#0e1433":h<8?"#5b4a7a":h>=19?(left?"#5d2f4e":"#2f3f6e"):(left?"#7a3d5c":"#3d5f96");
  ctx.fillStyle=sky;ctx.fillRect(0,0,466,466);
+ if(spooky){ctx.fillStyle=hwPaint().dusk;ctx.fillRect(0,140,466,178);}      // an orange glow on the horizon
  if(night){ctx.fillStyle="#ffffffaa";for(let i=0;i<26;i++)ctx.fillRect((i*97)%440+13,(i*53)%200+40,2,2);}
- ctx.lineWidth=12;ctx.strokeStyle=left?"#ffb2c21c":"#b4ceff1c";            // the hemicycle
+ ctx.lineWidth=12;ctx.strokeStyle=spooky?"#ffb05a1c":left?"#ffb2c21c":"#b4ceff1c";            // the hemicycle
  for(const r of [130,165,200]){ctx.beginPath();ctx.arc(233,318,r,Math.PI,2*Math.PI);ctx.stroke();}
- ctx.fillStyle=night?"#141a2a":"#1f2536";ctx.fillRect(0,318,466,148);
+ ctx.fillStyle=spooky?(night?"#120c1a":"#1c1424"):night?"#141a2a":"#1f2536";ctx.fillRect(0,318,466,148);
  ctx.fillStyle="#ffffff10";ctx.fillRect(0,318,466,3);
+}
+// ---------- Halloween (31 October and 1 November, rules.mjs eventAt): decor only, nothing changes in the game ----------
+// The gradients are made once (the context never changes) and faded with globalAlpha.
+let hwCache=null;
+function hwPaint(){
+ if(hwCache)return hwCache;
+ const glow=(x,y,r)=>{const g=ctx.createRadialGradient(x,y,0,x,y,r);g.addColorStop(0,"rgba(255,168,64,.5)");g.addColorStop(1,"rgba(255,168,64,0)");return g;};
+ const dusk=ctx.createLinearGradient(0,140,0,318);dusk.addColorStop(0,"rgba(255,120,40,0)");dusk.addColorStop(1,"rgba(255,120,40,.26)");
+ return hwCache={dusk,pumpkins:PUMPKINS.map(([x,y,r])=>glow(x,y,r*3)),candle:glow(330,296,70)};
+}
+const PUMPKINS=[[80,331,15],[388,331,13],[300,337,9]];
+// A jack-o'-lantern; lit (0-1) brightens its face, a negative one draws none (the Pong's tiny pumpkin).
+function pumpkin(x,y,r,lit){
+ ctx.fillStyle="#e8761e";ctx.beginPath();ctx.ellipse(x,y,r,r*0.8,0,0,Math.PI*2);ctx.fill();
+ ctx.strokeStyle="#b85814";ctx.lineWidth=Math.max(1,r/7);ctx.beginPath();ctx.ellipse(x,y,r*0.45,r*0.8,0,0,Math.PI*2);ctx.stroke();
+ ctx.fillStyle="#4f7a2e";ctx.fillRect(x-r*0.12,y-r*1.05,r*0.25,r*0.35);
+ if(lit<0)return;
+ ctx.fillStyle=`rgb(255,${200+Math.round(40*lit)},90)`;ctx.beginPath();
+ for(const s of [-1,1]){ctx.moveTo(x+s*r*0.5,y-r*0.1);ctx.lineTo(x+s*r*0.2,y-r*0.1);ctx.lineTo(x+s*r*0.35,y-r*0.4);}
+ ctx.moveTo(x-r*0.55,y+r*0.15);for(let i=0;i<=4;i++)ctx.lineTo(x-r*0.55+i*r*0.275,y+r*(i%2?0.45:0.25));ctx.lineTo(x+r*0.4,y+r*0.55);ctx.lineTo(x-r*0.4,y+r*0.55);ctx.fill();
+}
+// A sheet ghost: a round head, a scalloped hem.
+function ghost(x,y,r,fill){
+ ctx.fillStyle=fill;ctx.beginPath();ctx.arc(x,y,r,Math.PI,0);ctx.lineTo(x+r,y+r*1.2);
+ for(let i=1;i<=4;i++)ctx.lineTo(x+r-i*r/2,y+r*(i%2?0.85:1.2));ctx.closePath();ctx.fill();
+ const e=Math.max(2,r*0.22);ctx.fillStyle="#2a2230";ctx.fillRect(x-r*0.45,y-r*0.2,e,e*1.4);ctx.fillRect(x+r*0.25,y-r*0.2,e,e*1.4);
+}
+function bat(x,y,up){
+ ctx.fillStyle="#120a18";ctx.beginPath();ctx.ellipse(x,y,3,4,0,0,Math.PI*2);ctx.fill();
+ ctx.beginPath();for(const s of [-1,1]){ctx.moveTo(x,y-1);ctx.lineTo(x+s*7,y+(up?-6:-1));ctx.lineTo(x+s*13,y+(up?-3:3));ctx.lineTo(x+s*9,y+(up?0:2));ctx.lineTo(x+s*6,y+(up?-1:4));ctx.lineTo(x,y+2);}ctx.fill();
+}
+// A cobweb hanging in a corner of the round panel, its strands pointing at the centre.
+function cobweb(a){
+ const ax=233+Math.cos(a)*206,ay=233+Math.sin(a)*206,d=a+Math.PI;
+ ctx.strokeStyle="#ffffff2e";ctx.lineWidth=1;ctx.beginPath();
+ for(let i=-2;i<=2;i++){ctx.moveTo(ax,ay);ctx.lineTo(ax+Math.cos(d+i*0.3)*46,ay+Math.sin(d+i*0.3)*46);}
+ for(const r of [14,26,38])for(let i=-2;i<=2;i++){const x=ax+Math.cos(d+i*0.3)*r,y=ay+Math.sin(d+i*0.3)*r;if(i===-2)ctx.moveTo(x,y);else ctx.lineTo(x,y);}
+ ctx.stroke();
+}
+let ghostSaid="",ghostLines=[],ghostW=0;
+// The room's Halloween decor: moon, bats, cobwebs, jack-o'-lanterns and the camp's spectre, who speaks up every 15 s.
+function hwRoom(t,now){
+ const G=hwPaint(),left=S.camp==="left";
+ ctx.fillStyle="#ffb34722";ctx.beginPath();ctx.arc(352,160,42,0,Math.PI*2);ctx.fill();
+ ctx.fillStyle="#ffb347";ctx.beginPath();ctx.arc(352,160,30,0,Math.PI*2);ctx.fill();
+ ctx.fillStyle="#e8973a";for(const [x,y,r] of [[342,150,6],[362,170,4],[358,146,3]]){ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();}
+ for(let i=0;i<3;i++){
+  const x=reduced?[150,318,392][i]:(t/28+i*207)%620-80,y=reduced?[168,138,206][i]:150+i*24+Math.sin(t/420+i*2)*8;
+  bat(x,y,!reduced&&Math.floor(t/130+i)%2===0);
+ }
+ cobweb(232*Math.PI/180);cobweb(308*Math.PI/180);
+ const flick=reduced?0.8:0.75+0.25*Math.sin(t/90+1)*Math.sin(t/37);
+ PUMPKINS.forEach(([x,y,r],i)=>{ctx.globalAlpha=flick;ctx.fillStyle=G.pumpkins[i];ctx.fillRect(x-r*3,y-r*3,r*6,r*6);ctx.globalAlpha=1;pumpkin(x,y,r,flick);});
+ // "Le spectre du communisme" (a red flag) or "le spectre de la dette" (a ball and chain).
+ const gx=92,gy=232+(reduced?0:Math.sin(t/700)*5);
+ ghost(gx,gy,15,"#f2f0fae6");
+ if(left){ctx.strokeStyle="#8a6a44";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(gx+13,gy+6);ctx.lineTo(gx+19,gy-24);ctx.stroke();ctx.fillStyle="#d42a2a";ctx.fillRect(gx+19,gy-24,13,8);ctx.fillStyle="#f6d25a";ctx.fillRect(gx+22,gy-22,2,2);}
+ else{
+  ctx.fillStyle="#8a8f9e";for(let i=0;i<4;i++){ctx.beginPath();ctx.arc(gx+8+i*4,gy+18+i*3.5,1.6,0,Math.PI*2);ctx.fill();}
+  ctx.fillStyle="#2a2a33";ctx.beginPath();ctx.arc(gx+28,gy+36,15,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle="#fff6ea";ctx.font="700 7px ui-monospace, monospace";ctx.textAlign="center";ctx.fillText("3 000",gx+28,gy+35);ctx.fillText("Md€",gx+28,gy+43);
+ }
+ if(now%15000<3000){
+  const said=R.HALLOWEEN.ghost[S.camp];ctx.font="700 10px Inter, system-ui, sans-serif";
+  if(said!==ghostSaid){ghostSaid=said;ghostLines=[];let cur="";for(const w of said.split(" ")){const x=cur?cur+" "+w:w;if(ctx.measureText(x).width>118&&cur){ghostLines.push(cur);cur=w;}else cur=x;}ghostLines.push(cur);ghostW=Math.max(...ghostLines.map(l=>ctx.measureText(l).width))+14;}
+  const w=ghostW,hh=ghostLines.length*12+8,bx=52,by=gy-28-hh-8;
+  ctx.fillStyle="#fff6ea";ctx.beginPath();ctx.roundRect(bx,by,w,hh,8);ctx.moveTo(gx-6,by+hh-1);ctx.lineTo(gx,by+hh+7);ctx.lineTo(gx+5,by+hh-1);ctx.fill();
+  ctx.fillStyle="#2a2230";ctx.textAlign="left";ghostLines.forEach((l,i)=>ctx.fillText(l,bx+7,by+15+i*12));ctx.textAlign="center";
+ }
+}
+// Behind the sleeper: the vampire's open coffin, the hunter's kit (garlic, "Le Capital" as a stake, placard).
+function hwProps(costume){
+ if(costume==="vampire"){
+  const shape=pts=>{ctx.beginPath();pts.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));ctx.closePath();};
+  shape([[192,128],[274,128],[300,184],[282,318],[184,318],[166,184]]);ctx.fillStyle="#5b2416";ctx.fill();ctx.strokeStyle="#3a140c";ctx.lineWidth=4;ctx.stroke();
+  shape([[199,137],[267,137],[290,185],[274,312],[192,312],[176,185]]);ctx.fillStyle="#8c1c2c";ctx.fill();
+  ctx.fillStyle="#6e1422";for(let y=170;y<300;y+=26)for(let x=196;x<276;x+=20)ctx.fillRect(x,y,3,3);
+  ctx.fillStyle="#d9b45a";ctx.fillRect(205,140,56,13);ctx.strokeStyle="#8a6a22";ctx.lineWidth=1;ctx.strokeRect(205.5,140.5,55,12);
+  ctx.fillStyle="#3a2a10";ctx.font="700 9px Inter, system-ui, sans-serif";ctx.textAlign="center";ctx.fillText("Patrimoine",233,150);
+ }else if(costume==="hunter"){
+  for(const [x,y] of [[118,311],[133,309],[147,312],[125,301],[140,300],[132,291]]){
+   ctx.fillStyle="#f3eedd";ctx.beginPath();ctx.ellipse(x,y,7,6,0,0,Math.PI*2);ctx.fill();
+   ctx.fillStyle="#d5ccb0";ctx.fillRect(x-1,y-9,2,4);ctx.fillRect(x-3,y-3,1,6);ctx.fillRect(x+2,y-3,1,6);
+  }
+  ctx.save();ctx.translate(166,318);ctx.rotate(-0.18);
+  ctx.fillStyle="#c9a26a";ctx.beginPath();ctx.moveTo(-6,-104);ctx.lineTo(6,-104);ctx.lineTo(0,-122);ctx.fill();
+  ctx.fillStyle="#b3202c";ctx.fillRect(-6,-104,12,96);ctx.fillStyle="#8e1520";for(let y=-96;y<-8;y+=22)ctx.fillRect(-6,y,12,2);
+  ctx.translate(0,-56);ctx.rotate(-Math.PI/2);ctx.fillStyle="#f2d27a";ctx.font="700 8px ui-monospace, monospace";ctx.textAlign="center";ctx.fillText("LE CAPITAL",0,3);
+  ctx.restore();
+  ctx.fillStyle="#8a6a44";ctx.fillRect(350,250,4,68);
+  ctx.fillStyle="#f2e8cd";ctx.fillRect(308,226,88,36);ctx.strokeStyle="#c23b4a";ctx.lineWidth=2;ctx.strokeRect(309,227,86,34);
+  ctx.fillStyle="#c23b4a";ctx.font="700 10px Inter, system-ui, sans-serif";ctx.textAlign="center";ctx.fillText("TAXEZ LES",352,241);ctx.fillText("VAMPIRES",352,255);
+ }
+}
+// A nap with the light off: one candle, its warm glow flickering.
+function hwCandle(t){
+ const f=reduced?0.85:0.75+0.25*Math.sin(t/80)*Math.sin(t/31+2);
+ ctx.globalAlpha=f;ctx.fillStyle=hwPaint().candle;ctx.fillRect(260,226,140,140);ctx.globalAlpha=1;
+ ctx.fillStyle="#efe6cf";ctx.fillRect(326,302,8,16);ctx.fillStyle="#202330";ctx.fillRect(329,299,2,3);
+ ctx.fillStyle="#ffcf5a";ctx.beginPath();ctx.ellipse(330,293,3,5+f*2,0,0,Math.PI*2);ctx.fill();
+ ctx.fillStyle="#fff3c0";ctx.beginPath();ctx.ellipse(330,295,1.5,2.5,0,0,Math.PI*2);ctx.fill();
 }
 function gauges(now){
  ctx.lineCap="round";
@@ -351,18 +481,20 @@ function render(now){
  if(scene&&drawScene(now))return;
  if(pong){drawPong(now);return;}
  if(mini){mini.draw(miniClock);return;}
- const night=isAsleep(),t=reduced?0:now;
+ const night=isAsleep(),t=reduced?0:now,spooky=hw();
  if(anim&&now>anim.until)anim=null;
+ const state=anim?(anim.name==="bath"?"idle":anim.name):night?"sleep":"idle";
+ const costume=spooky&&state==="sleep"?(S.camp==="left"?"hunter":"vampire"):"";
  room(isNight());
- if(S.sleeping&&!isNight()){ctx.fillStyle="rgba(6,8,22,.62)";ctx.fillRect(0,0,466,466);}   // light off during a nap
+ if(spooky){hwRoom(t,now);hwProps(costume);}
+ if(S.sleeping&&!isNight()){ctx.fillStyle="rgba(6,8,22,.62)";ctx.fillRect(0,0,466,466);if(spooky)hwCandle(t);}   // light off during a nap
  gauges(now);
  const p=look();
  ctx.textAlign="center";ctx.fillStyle="#fff6ea";ctx.font="600 25px Fredoka, system-ui, sans-serif";ctx.fillText(p.name,233,92);
  ctx.font="600 13px ui-monospace, monospace";ctx.fillStyle="#ffffffc0";ctx.fillText(`NIVEAU ${S.lvl}${S.lvl===100?" · LÉGENDE":""}`,233,112);
  const part=S.lvl>=100?1:Math.min(1,(S.xp-xpFloor(S.lvl))/xpCost(S.lvl));
  ctx.fillStyle="#ffffff26";ctx.fillRect(173,119,120,4);ctx.fillStyle="#ffd59a";ctx.fillRect(173,119,Math.round(120*part),4);
- const state=anim?(anim.name==="bath"?"idle":anim.name):night?"sleep":"idle";
- bigSprite(p,state,192,233,318,t,S.lvl===100,anim&&anim.food);
+ bigSprite(p,state,192,233,318,t,S.lvl===100,anim&&anim.food,costume);
  if(lvlFx){                                        // the small level-up burst
   const e=(now-lvlFx.t0)/1000;
   if(e>1.6)lvlFx=null;
@@ -373,12 +505,13 @@ function render(now){
    ctx.globalAlpha=1;
   }
  }
- if(anim&&anim.name==="bath"){ctx.strokeStyle="#cfe9ff";ctx.lineWidth=2;for(let i=0;i<9;i++){const k=((now/900)+i*0.37)%1;ctx.beginPath();ctx.arc(160+(i*37)%150,300-k*170,5+(i%3)*3,0,Math.PI*2);ctx.stroke();}}
+ if(anim&&anim.name==="bath"&&spooky){for(let i=0;i<9;i++){const k=((now/900)+i*0.37)%1;ghost(160+(i*37)%150,300-k*170,5+(i%3)*3,"#f4f0ffcc");}}   // little ghosts instead of bubbles
+ else if(anim&&anim.name==="bath"){ctx.strokeStyle="#cfe9ff";ctx.lineWidth=2;for(let i=0;i<9;i++){const k=((now/900)+i*0.37)%1;ctx.beginPath();ctx.arc(160+(i*37)%150,300-k*170,5+(i%3)*3,0,Math.PI*2);ctx.stroke();}}
  if(anim&&anim.stress)bubble(`« ${anim.stress.line} »`,(anim.factor>1?`STRESS ×${anim.factor} · `:"")+anim.stress.trigger.toUpperCase());
  else if(anim&&anim.line)bubble(anim.line);
  else{
   ctx.fillStyle=S.zero?"#ff9aa5":"#ffd59a";
-  fitLabel(night?(S.sleeping&&!isNight()?"Zzz… sieste en cours":"Zzz… il dort"):S.zero?`Jauge à zéro depuis ${S.zero} h : danger !`:S.form==="Excellente"?(S.streak>=6?`En pleine forme · série de ${S.streak} h`:"En pleine forme"):`Forme ${S.form.toLowerCase()}`,356);
+  fitLabel(night?(spooky?R.HALLOWEEN.sleep[S.camp]:S.sleeping&&!isNight()?"Zzz… sieste en cours":"Zzz… il dort"):S.zero?`Jauge à zéro depuis ${S.zero} h : danger !`:S.form==="Excellente"?(S.streak>=6?`En pleine forme · série de ${S.streak} h`:"En pleine forme"):`Forme ${S.form.toLowerCase()}`,356);
  }
 }
 
@@ -490,7 +623,7 @@ function drawScene(now){
 
 // ===================================================================== MINI-GAME: PONG OF ARGUMENTS
 const PONG={ms:20000,misses:3,speed:190,accel:1.06,maxSpeed:480,bubbleW:50,top:150,hitY:292,lost:390,wallL:80,wallR:386,dodge:0.75,dodgeGap:70,step:40};
-function pongText(mine){const side=mine?S.camp:S.camp==="left"?"right":"left",l=pongLines[side];return l[Math.floor(Math.random()*l.length)];}
+function pongText(mine){return R.pongLine(mine?S.camp:S.camp==="left"?"right":"left",season());}
 // The opponent aims each pique at a random spot, three times out of four away from the candidate: standing still
 // in the middle no longer returns anything (tuned by simulation: a still candidate makes ~2 returns, not ~6).
 function pongShoot(){
@@ -529,17 +662,19 @@ function stepPong(now){
  if(pong.by>PONG.lost){pong.missed++;pong.flashT=now;pongServe();}
 }
 function drawPong(now){
- const left=S.camp==="left";
+ const left=S.camp==="left",spooky=hw();
  sceneBackdrop(left);
- ctx.textAlign="center";ctx.fillStyle="#fff6ea";ctx.font="700 18px Fredoka, system-ui, sans-serif";ctx.fillText("PONG DES ARGUMENTS",233,72);
+ ctx.textAlign="center";ctx.fillStyle="#fff6ea";ctx.font="700 18px Fredoka, system-ui, sans-serif";ctx.fillText(spooky?"PONG DES REVENANTS":"PONG DES ARGUMENTS",233,72);
  ctx.fillStyle=left?"#7fa8f8":"#ef7c91";ctx.fillRect(198,104,70,26);ctx.fillStyle="#202330";ctx.fillRect(228,96,10,8);
  ctx.fillStyle="#202330";ctx.font="700 10px ui-monospace, monospace";ctx.fillText("ADVERSAIRE",233,121);
  bigSprite(look(),now-pong.hitT<400?"debate":"idle",96,pong.px,358,now);
  if(!pong.endT){
-  ctx.font="700 13px Inter, system-ui, sans-serif";const w=Math.max(70,ctx.measureText(pong.text).width+18);
+  // While Halloween lasts: an orange border and a tiny pumpkin before the words.
+  ctx.font="700 13px Inter, system-ui, sans-serif";const pad=spooky?16:0,w=Math.max(70,ctx.measureText(pong.text).width+18+pad);
   ctx.fillStyle=pong.mine?"#fff3cf":"#f8efdf";ctx.beginPath();ctx.roundRect(pong.bx-w/2,pong.by-14,w,28,12);ctx.fill();
-  ctx.strokeStyle=pong.mine?"#ffd59a":(left?"#7fa8f8":"#ef7c91");ctx.lineWidth=3;ctx.stroke();
-  ctx.fillStyle="#2a2230";ctx.fillText(pong.text,pong.bx,pong.by+5);
+  ctx.strokeStyle=spooky?"#ff9f43":pong.mine?"#ffd59a":(left?"#7fa8f8":"#ef7c91");ctx.lineWidth=3;ctx.stroke();
+  if(spooky)pumpkin(pong.bx-w/2+13,pong.by+1,6,-1);
+  ctx.fillStyle="#2a2230";ctx.fillText(pong.text,pong.bx+pad/2,pong.by+5);
  }
  if(pong.flashT&&now-pong.flashT<1200){ctx.fillStyle="#ff9aa5";ctx.font="700 16px Inter, sans-serif";ctx.fillText("Petite phrase reprise par la presse !",233,222);}
  ctx.fillStyle="#ffd59a";
@@ -603,7 +738,8 @@ document.addEventListener("keydown",e=>{
 
 // ===================================================================== HTML INTERFACE
 let toastTimer=0;
-function toast(text){const el=$("#toast");el.textContent=text;el.classList.add("show");clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove("show"),3800);}
+let toastAt=0;
+function toast(text){toastAt=Date.now();const el=$("#toast");el.textContent=text;el.classList.add("show");clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove("show"),3800);}
 const pad2=n=>String(n).padStart(2,"0");
 function clockLabel(){const v=vnow(),c=R.clockOf(v);return `Jour ${R.mandateDay(S,v)} · ${pad2(c.hour)}:${pad2(c.minute)}`;}
 const when=t=>new Date(t).toLocaleString("fr-FR",{timeZone:R.timeZone(),weekday:"short",hour:"2-digit",minute:"2-digit"});
@@ -618,6 +754,7 @@ function pill(t,c=""){const s=document.createElement("span");s.className=`pill $
 function refresh(){
  if(!S)return;
  document.body.dataset.camp=S.camp;
+ const sz=season();if(document.body.dataset.season!==sz)document.body.dataset.season=sz;
  const p=person();
  $("#chip-fm").textContent=`${S.fm} FM`;$("#chip-clock").textContent=clockLabel();
  $("#pname").textContent=p.name;$("#plvl").textContent=`Niveau ${S.lvl}/100`;$("#pdetail").textContent=p.detail;
@@ -744,7 +881,7 @@ function list(...els){const d=document.createElement("div");d.className="items";
 function shopList(kind){
  return list(...shop.filter(it=>it.kind===kind).map(it=>{
   const err=itemBlock(it);
-  return itemButton(it[S.camp],err||fxText(it.fx)+(it.note?` · ${it.note}`:""),it.price?`${it.price} FM`:"gratuit",!!err,()=>buy(it));
+  return itemButton(R.itemName(it,S.camp,season()),err||fxText(it.fx)+(it.note?` · ${it.note}`:""),it.price?`${it.price} FM`:"gratuit",!!err,()=>buy(it));
  }));
 }
 const fxText=R.fxText;
@@ -759,7 +896,7 @@ function armedButton(label,armedLabel,cls,onConfirm){
  return b;
 }
 // What a sheet's content depends on: when this changes while it is open, the sheet is redrawn in place.
-const sheetSig=()=>[S.fm,curIdx(),R.actsToday(S),R.actsThisVisit(S),S.energy<20,S.coffees,S.breadIdx,S.lvl,S.best,S.equipped[person().name]||0,isAsleep(),S.camp,!rematchBlock()].join("|");
+const sheetSig=()=>[S.fm,curIdx(),R.actsToday(S),R.actsThisVisit(S),S.energy<20,S.coffees,S.breadIdx,S.lvl,S.best,S.equipped[person().name]||0,isAsleep(),S.camp,!rematchBlock(),season(),S.treatDay].join("|");
 let shownSig="";
 function setBackgroundInert(on){for(const el of document.querySelectorAll(".topbar,.app,footer"))el.inert=on;}
 // An open sheet takes a history entry, so the phone's Back button closes it instead of leaving the game.
@@ -790,7 +927,12 @@ function renderSheet(kind,opener){
  sheetKind=kind;if(opener)sheetOpener=opener;shownSig=sheetSig();
  const body=$("#sheet-body"),p=person();body.replaceChildren();
  const set=(t,s)=>{$("#sheet-title").textContent=t;$("#sheet-sub").textContent=s;};
- if(kind==="food"){set("La Buvette",`${S.fm} FM (frais de mandat) en caisse · 2 FM gagnés par heure de vie`);body.append(shopList("food"));}
+ if(kind==="food"){
+  set("La Buvette",`${S.fm} FM (frais de mandat) en caisse · 2 FM gagnés par heure de vie`);
+  // Halloween's daily gift, the only thing the event changes in the game (rules.mjs treatBlock).
+  if(hw()){const e=R.treatBlock(S,season());body.append(list(itemButton("Des bonbons ou un amendement ?",e||`Cadeau d'Halloween : moral +${R.HALLOWEEN.treat.moral}, une fois par jour.`,"gratuit",!!e,()=>{closeSheet();send({type:"treat"});})));}
+  body.append(shopList("food"));
+ }
  if(kind==="care"){
   set("Soins",`Hygiène, repos et moral · ${S.fm} FM en caisse`);
   const light=isNight()
@@ -988,7 +1130,7 @@ function smallButton(label,cls,onClick,disabled=false){
 }
 function renderDuels(body,set){
  const d=duelData,why=R.duelBlock(S,d?.minLevel??R.DUEL.minLevel),D=R.DUEL;
- set("Duels",d?`Débat chrono en face à face · défis aujourd'hui : ${d.sent??0}/${d.perDay??D.perDay}`:"Débat chrono en face à face");
+ set(hw()?"Duels de minuit":"Duels",d?`Débat chrono en face à face · défis aujourd'hui : ${d.sent??0}/${d.perDay??D.perDay}`:"Débat chrono en face à face");
  if(!d){
   body.append(fine(duelErr||"Chargement des duels…"));
   if(duelErr){const row=document.createElement("div");row.className="btn-row";row.append(smallButton("Réessayer","",()=>duelsLoad()));body.append(row);}
@@ -1247,6 +1389,16 @@ async function logout(){
  endSession("À bientôt !");
 }
 
+// ---------- Halloween surprise ----------
+// The first sight of the haunted Republic, once a year on this device: a toast only, after the news and the scenes.
+let hwHello=false;
+function halloweenHello(){
+ hwHello=true;
+ const key=`politigo.halloween.${new Date(serverNow()).getFullYear()}`;
+ try{if(localStorage.getItem(key))return;localStorage.setItem(key,"1");}catch{}
+ toast("🎃 Joyeux Halloween ! La République est hantée jusqu'au 1er novembre : bonbons à la Buvette, costumes la nuit…");
+}
+
 // ===================================================================== LOOP
 let lastHud=0,lastDraw=0,lastFrame=0;
 let drawFailed=false,playing=false;
@@ -1267,6 +1419,7 @@ function tickFrame(now){
   if(pong||mini||scene||anim||lvlFx||now-lastDraw>=120){lastDraw=now;render(now);}
   if(now-lastHud>500){lastHud=now;refresh();liveSheet();}
   if(newsPending&&!scene){newsPending=false;maybeShowNews();}
+  if(hw()&&!hwHello&&!scene&&!pong&&!mini&&sheetKind!=="news"&&Date.now()-toastAt>4000)halloweenHello();
  }
 }
 
