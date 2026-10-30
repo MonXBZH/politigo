@@ -146,7 +146,8 @@ export const ANSWER_KINDS=["left","right","decoy"];
 // a state (advance, act); the browser imports the same module for the read-only checks it displays.
 export const H=3600000;
 export const ECO={income:2,cap:99,nightEnd:6,awake:{sat:13,moral:4,energy:8,hyg:6},night:{sat:4,moral:2,energy:-15,hyg:2}};
-// Tuned by simulation: 6 visits + 6 activities a day reach level 100 on day 15; 3 bare visits survive and reach it on day ~39.
+// Tuned by simulation: 6 visits + 6 activities a day reach level 100 on day 15 (mini-game bonuses aside: with good
+// scores, around day 11-13); 3 bare visits survive and reach it on day ~39.
 export const XP={base:5,visit:25,visitGap:2,visitsPerDay:8,activity:30,actsPerVisit:2,actsPerDay:8,deathHours:12,
  excellent:50,correct:25,a:17,b:1.15,streakStep:0.01,streakCap:0.25,stressMin:0.03,stressMax:0.15,napFactor:0.5};
 // The hourly stress risk follows his moral: 3 % at full moral, 15 % at rock bottom. A sulking candidate spirals.
@@ -155,15 +156,15 @@ export const stressChance=S=>XP.stressMin+(XP.stressMax-XP.stressMin)*(100-S.mor
 export const STRESS_HIT=5;
 export const DOUBLE={odds:0.5,moral:12,energy:12,window:H,stressFactor:2};
 // The Pong is played in the browser, so its result is checked: no more than ~1.5 returns a second, within 90 s.
-export const PONG_RULES={maxScore:30,minSeconds:2,timeoutSeconds:90,returnsPerSecond:1.5,bonusPerReturn:2,bonusCap:20};
+export const PONG_RULES={maxScore:30,minSeconds:2,timeoutSeconds:90,returnsPerSecond:1.5,bonusPerReturn:1,bonusCap:10};
 // Mini-games played in the browser (results checked like the Pong's): one per camp for the "Manif", and the
 // timed debate behind "Débattre". The bonus comes on top of the activity XP; a score is capped by duration, at a
 // human pace (the browser waits on the result screen at least 4 s before sending, which only adds margin): a
 // script can no longer claim the full bonus a few seconds after the start.
 export const MINI={
  debate:{label:"Débat chrono",camp:null,ms:15000,maxScore:60,perSecond:2.5,bonusRate:1,bonusCap:20,great:18},
- cortege:{label:"Le Cortège",camp:"left",ms:30000,maxScore:400,perSecond:8,bonusRate:0.2,bonusCap:20,great:100},
- epervier:{label:"L'Épervier",camp:"right",ms:35000,maxScore:150,perSecond:2,bonusRate:2,bonusCap:20,great:15}
+ cortege:{label:"Le Cortège",camp:"left",ms:30000,maxScore:400,perSecond:8,bonusRate:0.25,bonusCap:30,great:120},
+ epervier:{label:"L'Épervier",camp:"right",ms:35000,maxScore:150,perSecond:2,bonusRate:2,bonusCap:30,great:15}
 };
 // The debate's clock: a 1.3 s countdown, then 15 s of play; a wrong answer costs a second, and a pick shows for
 // 260 ms before the next one counts.

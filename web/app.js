@@ -3,6 +3,7 @@
 import * as R from "./rules.mjs";
 import {createMini,manifLabel} from "./minigames.mjs";
 import {missedEntries,latestEntry} from "./changelog.mjs";
+import {drawTest,verdict,randomCamp} from "./politest.mjs";
 const {people,personalItems,stresses,shop,pongLines,fxNames,XP,xpCost,xpFloor,stage}=R;
 const $=s=>document.querySelector(s);
 const motionQuery=matchMedia("(prefers-reduced-motion: reduce)");
@@ -33,8 +34,11 @@ async function api(method,path,body){
  const fallback=r.ok?"":r.status>=502?"Serveur en cours de redémarrage : réessaie dans un instant.":"Erreur du serveur.";
  return {...json,status:r.status,ok:r.ok&&json.ok!==false,error:json.error||fallback};
 }
+let skew=0;                                          // server clock minus this device's clock
+const serverNow=()=>Date.now()+skew;
 function applyMe(m,{replay=false}={}){
  if(!m||!m.state)return;
+ if(Number.isFinite(m.serverNow))skew=m.serverNow-Date.now();
  const first=!S||me!==m.name;
  // The action answer and the live stream race each other: an older copy of the state never replaces a newer one.
  if(!first&&m.state.lastReal<S.lastReal)return;
@@ -156,9 +160,19 @@ async function endMini(){
   const early=miniStartReal+R.MINI_RULES.minSeconds*1000+200-Date.now();if(!duel&&early>0)await new Promise(ok=>setTimeout(ok,early));
   // As for the Pong: the score must not be lost behind another request.
   for(const end=Date.now()+20000;busy&&Date.now()<end;)await new Promise(ok=>setTimeout(ok,100));
-  r=duel?await send({op:"submit",id:duel.id,picks},"/api/duel"):await send({type:"miniEnd",score});
+  if(duel){
+   for(let k=0;k<3;k++){
+    r=await send({op:"submit",id:duel.id,picks},"/api/duel");
+    if(!S||(r&&r.status!==0))break;
+    await new Promise(ok=>setTimeout(ok,2000));
+   }
+  }else r=await send({type:"miniEnd",score});
  }finally{miniEnding=false;}
- if(duel){if(r?.ok)duelDone(duel,r);duelsLoad();return;}
+ if(duel){
+  if(r?.ok)duelDone(duel,r);
+  else if(S&&(!r||r.status===0))toast(`Score du duel contre ${duel.vs} non envoyé : vérifie ta connexion. Sans score, ce duel sera compté comme abandonné.`);
+  duelsLoad();return;
+ }
  if(r?.ok){
   toast(key==="debate"?`${score} argument${score>1?"s":""} · +${r.bonus} XP d'éloquence. Quitte ou double possible dans Jouer.`:`${R.MINI[key].label} : +${r.bonus} XP`);
   if(r.bonus>=10)playAnim("win",3000);
@@ -548,7 +562,10 @@ document.addEventListener("keyup",e=>mini?.keyup(e.key));
 // Keys released elsewhere must not stay pressed; a hidden page (locked phone) ends the game rather than losing it
 // to the server's expiry, which keeps counting real time.
 addEventListener("blur",()=>mini?.release());
-document.addEventListener("visibilitychange",()=>{if(document.hidden&&mini){mini.release();mini.abort(miniClock);endMini();}});
+document.addEventListener("visibilitychange",()=>{
+ if(document.hidden&&mini){mini.release();mini.abort(miniClock);endMini();}
+ if(document.hidden&&pong)endPong();
+});
 // A finger held on the screen through the end of a game lifts as a click: not a pat on the shoulder.
 let miniHeld=false;
 // A tap skips a scene (a death goes on to its rebirth), steers the Pong, or pets the companion.
@@ -568,9 +585,9 @@ document.addEventListener("keydown",e=>{
   if(e.key==="Tab"){                                   // keep keyboard focus inside the open sheet
    const f=[...$(".sheet-card").querySelectorAll("button:not(:disabled),select,input:not(:disabled)")];
    if(!f.length)return;
-   const i=f.indexOf(document.activeElement);
-   if(e.shiftKey&&i<=0){e.preventDefault();f[f.length-1].focus();}
-   else if(!e.shiftKey&&(i===-1||i===f.length-1)){e.preventDefault();f[0].focus();}
+   const card=$(".sheet-card"),a=document.activeElement,i=f.indexOf(a),inside=i>=0||(a!==card&&card.contains(a));
+   if(e.shiftKey&&(i===0||!inside)){e.preventDefault();f[f.length-1].focus();}
+   else if(!e.shiftKey&&(i===f.length-1||!inside)){e.preventDefault();f[0].focus();}
   }
   return;
  }
@@ -762,6 +779,7 @@ function openSheet(kind,opener){
 // force: what changed is not in the state (the duels list, the push subscription).
 function liveSheet(force=false){
  if(!S||!sheetKind||$("#sheet").hidden||(!force&&sheetSig()===shownSig))return;
+ if(sheetKind==="test")return;                       // a test under way owes nothing to the state: never redrawn under the finger
  // Never under the player's fingers: an armed "tap again" button or a half-typed password survives updates.
  if($("#sheet-body .armed, #sheet-body form"))return;
  const card=$(".sheet-card"),top=card.scrollTop,f=[...card.querySelectorAll("button,select,input")],i=f.indexOf(document.activeElement);
@@ -788,8 +806,8 @@ function renderSheet(kind,opener){
   // The rematch only shows while it is on offer: right after a debate, for one hour of game time.
   const rm=rematchBlock()?[]:[itemButton("Quitte ou double !",`Revanche immédiate, 1 chance sur 2 : moral +${R.DOUBLE.moral} et énergie +${R.DOUBLE.energy}… ou un stress ×${R.DOUBLE.stressFactor} (moral −${R.STRESS_HIT*R.DOUBLE.stressFactor}).`,"50/50",false,rematch)];
   body.append(list(...rm,
-   itemButton("Pong des arguments",err||"Renvoie les piques de l'adversaire pendant 20 s (doigt, souris ou flèches). +2 XP par renvoi.",`+${XP.activity} XP`,!!err,startPong),
-   itemButton("Débattre",err||`Débat chrono : ${R.MINI.debate.ms/1000} s pour enchaîner les réponses de ta ligne (doigt, souris ou 1-2-3). Énergie −8, moral +10, +1 XP par bonne réponse (20 max).`,`+${XP.activity} XP`,!!err,()=>startMini("debate")),
+   itemButton("Pong des arguments",err||`Renvoie les piques de l'adversaire pendant 20 s (doigt, souris ou flèches). +${R.PONG_RULES.bonusPerReturn} XP par renvoi (${R.PONG_RULES.bonusCap} au plus).`,`+${XP.activity} XP`,!!err,startPong),
+   itemButton("Débattre",err||`Débat chrono : ${R.MINI.debate.ms/1000} s pour enchaîner les réponses de ta ligne (doigt, souris ou 1-2-3). Énergie −8, moral +10, +${R.MINI.debate.bonusRate} XP par bonne réponse (${R.MINI.debate.bonusCap} max).`,`+${XP.activity} XP`,!!err,()=>startMini("debate")),
    itemButton(`Manif : ${manifLabel(S.camp)}`,err||(S.camp==="left"
     ?"Tiens le cortège jusqu'à Nation en 30 s : esquive LBD et lacrymo, ramasse les tracts. Doigt, souris ou flèches ; parapluie avec un deuxième doigt ou Espace."
     :"Joue l'épervier 35 s avec un CRS : interpelle les manifestants, esquive pavés et molotovs. Gare aux journalistes et aux collègues infiltrés."),`+${XP.activity} XP`,!!err,()=>startMini("manifStart")),
@@ -798,12 +816,18 @@ function renderSheet(kind,opener){
   ));
  }
  if(kind==="duels")renderDuels(body,set);
+ if(kind==="test"){
+  set("Test politique","Cinq questions pour les indécis. Sans effet sur la partie : le dernier mot reste le tien.");
+  const box=document.createElement("div");box.className="quiz";box.id="sheet-quiz";body.append(box);
+  mountQuiz(box,sheetQuiz,(camp,sugg)=>armRestart(camp,sugg?`Verdict du test : la ${campWord(camp)}.`:`Va pour la ${campWord(camp)}, malgré le test.`),
+   ()=>{renderSheet("more");$("#sheet-body .restart-test").focus();});
+ }
  if(kind==="news"){
   const one=newsList.length===1;
   set(one?`Quoi de neuf dans PolitiGo ${newsList[0].version}`:"Quoi de neuf dans PolitiGo",one?`Mise à jour du ${newsDate(newsList[0].date)}`:`${newsList.length} mises à jour depuis ta dernière visite`);
   for(const e of newsList){
    if(!one)body.append(blockTitle(`Version ${e.version} · ${newsDate(e.date)}`));
-   for(const [title,items] of [["Nouveautés",e.added],["Corrections",e.fixed]]){
+   for(const [title,items] of [["Nouveautés",e.added],["Changements",e.changed],["Corrections",e.fixed]]){
     if(!items?.length)continue;
     const h=document.createElement("p");h.className="news-head";h.textContent=title;
     const ul=document.createElement("ul");ul.className="news";
@@ -842,8 +866,12 @@ function renderSheet(kind,opener){
   const warn=document.createElement("p");warn.className="fine";
   warn.textContent="Démissionner relance une partie au niveau 1. C'est compté comme une mort politique au classement (−150 points).";
   const row=document.createElement("div");row.className="btn-row";
-  for(const camp of R.CAMPS)row.append(armedButton(`Repartir à ${camp==="left"?"gauche":"droite"}`,"Confirmer : démissionner (−150 pts)","danger",()=>{closeSheet();send({type:"restart",camp});}));
-  body.append(warn,row);
+  for(const camp of R.CAMPS){const b=armedButton(`Repartir à ${campWord(camp)}`,"Confirmer : démissionner (−150 pts)","danger",()=>{closeSheet();send({type:"restart",camp});});b.dataset.restart=camp;row.append(b);}
+  // For the undecided: the dice or the test only pick the camp (see armRestart).
+  const undecided=document.createElement("div");undecided.className="btn-row";
+  undecided.append(diceButton(()=>{const c=randomCamp();armRestart(c,`Le hasard a choisi la ${campWord(c)}.`);}),smallButton("Passer mon test politique","restart-test",openQuiz));
+  const note=fine("");note.id="restart-note";note.setAttribute("aria-live","polite");
+  body.append(warn,row,undecided,note);
   body.append(blockTitle("Compte"));
   const who=document.createElement("p");who.className="fine";
   who.textContent=`Connecté en tant que ${me}.${SPEED>1?` Serveur de test : le temps y passe ${SPEED} fois plus vite.`:""}`;
@@ -922,7 +950,7 @@ $("#sheet-close").addEventListener("click",()=>closeSheet());
 let duelData=null,duelErr="",duelSeq=0,duelJournalT=0;
 const duelList=()=>Array.isArray(duelData?.duels)?duelData.duels.filter(x=>x&&typeof x==="object"&&typeof x.vs==="string"):[];
 const duelExp=x=>Number.isFinite(x.expires)?x.expires:(Number(x.created)||0)+R.DUEL.window;
-const isPending=x=>x.status==="pending"&&duelExp(x)>Date.now();
+const isPending=x=>x.status==="pending"&&duelExp(x)>serverNow();
 const incoming=()=>duelList().filter(x=>x.role==="defender"&&isPending(x));
 async function duelsLoad(){
  if(!S)return null;
@@ -934,7 +962,7 @@ async function duelsLoad(){
  return duelData;
 }
 function openDuels(){openSheet("duels");duelsLoad();}
-const remain=x=>{const m=Math.max(1,Math.round((duelExp(x)-Date.now())/60000));return m>=60?`${Math.floor(m/60)} h`:`${m} min`;};
+const remain=x=>{const m=Math.max(1,Math.round((duelExp(x)-serverNow())/60000));return m>=60?`${Math.floor(m/60)} h`:`${m} min`;};
 // One line per finished duel, from this player's side.
 function duelResult(x){
  const vs=x.vs,a=x.mine??"?",b=x.theirs??"?";
@@ -1039,13 +1067,14 @@ async function pushSync(key){
  const sub=await pushSub();if(!sub)return;
  const k=sub.options?.applicationServerKey,same=!key||!k||b64u(key).join()===new Uint8Array(k).join();
  if(!same){await sub.unsubscribe().catch(()=>{});pushOn=false;liveSheet(true);return;}
- const j=sub.toJSON();api("POST","/api/push/subscribe",{endpoint:j.endpoint,keys:{p256dh:j.keys?.p256dh,auth:j.keys?.auth}});
+ const j=sub.toJSON(),r=await api("POST","/api/push/subscribe",{endpoint:j.endpoint,keys:{p256dh:j.keys?.p256dh,auth:j.keys?.auth}});
+ if(!r.ok)pushSynced=false;
 }
 // The server first, then the device: once this returns, nothing is sent to this endpoint any more.
 async function pushDisable(){
  const sub=await pushSub();if(!sub)return "";
  await api("POST","/api/push/unsubscribe",{endpoint:sub.endpoint});
- await sub.unsubscribe().catch(()=>{});return "";
+ return await sub.unsubscribe().then(()=>"",()=>"Impossible de couper les notifications sur cet appareil : réessaie, ou retire l'autorisation dans les réglages du site.");
 }
 async function togglePush(){
  if(pushBusy)return;
@@ -1088,13 +1117,69 @@ function notifyHidden(body,id){
 }
 $("#sheet").addEventListener("click",e=>{if(e.target.id==="sheet")closeSheet();});
 
+// ---------- political test and dice ----------
+// For the undecided, at sign-up and at a resignation: "Au hasard" (politest.mjs randomCamp) or "Passer mon test
+// politique" (drawTest, one question at a time, then verdict). Both only pick a camp, shown and still changeable:
+// the usual flow (the sign-up form, the resignation's confirming tap) goes on from there.
+const campWord=c=>c==="left"?"gauche":"droite",otherCamp=c=>c==="left"?"right":"left";
+// "D'Olivier Faure à Jean-Luc Mélenchon", as on the sign-up cards.
+const campRange=c=>{const l=people[c],n=l[0].name,from=/^[aeiouyéèêî]/i.test(n)?`D'${n}`:`De ${n}`;return `${from} à ${l[l.length-1].name}`;};
+const newQuiz=()=>({items:drawTest(),kinds:[],v:null});
+function diceButton(onClick){const b=smallButton("Au hasard","",onClick),d=document.createElement("span");d.setAttribute("aria-hidden","true");d.textContent="🎲 ";b.prepend(d);return b;}
+// Draws the test's current step into box. Returns its heading, which takes the focus after each answer so that
+// the next question (or the verdict) is read out.
+function renderQuiz(box,q,on){
+ const h=Object.assign(document.createElement("h3"),{className:"quiz-q",tabIndex:-1}),step=fine(""),foot=document.createElement("div");
+ step.id=`${box.id}-step`;step.classList.add("quiz-step");h.setAttribute("aria-describedby",step.id);foot.className="btn-row";
+ const quit=smallButton("Quitter le test","",on.quit);
+ if(!q.v){
+  const i=q.kinds.length,n=q.items.length,it=q.items[i],bar=document.createElement("div"),fill=document.createElement("i");
+  step.textContent=`Question ${i+1}/${n}`;h.textContent=it.q;
+  bar.className="bar";bar.setAttribute("aria-hidden","true");fill.style.width=`${100*i/n}%`;bar.append(fill);   // CSSOM: allowed by the CSP
+  // A double tap must not answer the next question too: only the question on screen takes an answer.
+  const opts=list(...it.answers.map(a=>{
+   const b=Object.assign(document.createElement("button"),{type:"button",className:"item quiz-a",textContent:a.text});
+   b.addEventListener("click",()=>{if(q.v||q.items[q.kinds.length]!==it)return;q.kinds.push(a.kind);if(q.kinds.length===n)q.v=verdict(q.kinds);on.next();});
+   return b;
+  }));
+  foot.append(quit);box.replaceChildren(step,bar,h,opts,foot);
+ }else{
+  const {camp,left,right,none,tie,line}=q.v,other=otherCamp(camp);
+  step.textContent="Verdict";h.textContent=line;
+  const counts=fine(`${left} réponse${left>1?"s":""} à gauche, ${right} à droite, ${none} à côté de la plaque.`);
+  const card=document.createElement("div");card.className=`quiz-camp ${camp}`;
+  const c=document.createElement("canvas");c.width=c.height=64;c.setAttribute("aria-hidden","true");
+  const f=people[camp][0];sprite(c.getContext("2d"),{...f,prop:personalItems[f.name][0].prop},0,"win");
+  const txt=document.createElement("span"),k=document.createElement("small"),b=document.createElement("b"),sm=document.createElement("small");
+  k.textContent=tie?"Pile ou face a tranché pour la":"Le test te verrait bien dans la";b.textContent=`Collection ${campWord(camp)}`;sm.textContent=campRange(camp);
+  txt.append(k,b,sm);card.append(c,txt);
+  foot.append(smallButton(`Rejoindre la ${campWord(camp)}`,`go ${camp}`,()=>on.choose(camp,true)),smallButton(`Non merci, je préfère la ${campWord(other)}`,"",()=>on.choose(other,false)),quit);
+  box.replaceChildren(step,h,counts,card,foot);
+ }
+ return h;
+}
+function mountQuiz(box,q,choose,quit){const next=()=>renderQuiz(box,q,{choose,quit,next}).focus();return renderQuiz(box,q,{choose,quit,next});}
+// At a resignation, from the Dossier sheet.
+let sheetQuiz=null;
+function openQuiz(){sheetQuiz=newQuiz();renderSheet("test");$(".sheet-card").scrollTop=0;$("#sheet-quiz .quiz-q").focus();}
+// The camp picked by the dice or the test: as if its button had been tapped once, so the resignation still waits for
+// the confirming tap (and the server's one-an-hour limit). The sheet is drawn afresh first: a button already armed
+// by an earlier tap must never take this one as its confirmation.
+function armRestart(camp,text){
+ renderSheet("more");
+ const b=$(`#sheet-body [data-restart=${camp}]`),note=$("#restart-note");
+ note.textContent=`${text} Touche encore « Confirmer » pour démissionner, ou choisis l'autre camp.`;
+ b.setAttribute("aria-describedby","restart-note");b.click();
+ b.scrollIntoView({block:"center",behavior:reduced?"auto":"smooth"});b.focus({preventScroll:true});
+}
+
 // ---------- sign-in / sign-up ----------
 const authEl=$("#auth");
 let regCamp="left";
 function showAuth(message=""){
  closeSheet();es?.close();es=null;S=null;anim=pong=mini=scene=null;newsPending=false;duelData=null;duelErr="";duelSeq++;pushOn=null;pushSynced=false;setNet(true);$("#tips").hidden=true;
  authEl.hidden=false;setBackgroundInert(true);
- $("#auth-error").textContent=message;
+ $("#auth-error").textContent=message;regQuizShow(false);$("#camp-note").textContent="";document.body.dataset.camp=regCamp;
  document.querySelectorAll(".camp").forEach(b=>{
   const f=people[b.dataset.camp][0];
   sprite(b.querySelector("canvas").getContext("2d"),{...f,prop:personalItems[f.name][0].prop},0,"win");
@@ -1110,10 +1195,29 @@ function switchTab(which){
 }
 $("#tab-login").addEventListener("click",()=>switchTab("login"));
 $("#tab-register").addEventListener("click",()=>switchTab("register"));
-document.querySelectorAll(".camp").forEach(b=>b.addEventListener("click",()=>{
- regCamp=b.dataset.camp;document.body.dataset.camp=regCamp;
- document.querySelectorAll(".camp").forEach(x=>x.setAttribute("aria-pressed",String(x===b)));
-}));
+// The camp chosen at sign-up (a card, the dice or the test); the note says how, until a card is tapped again.
+function pickCamp(camp,note=""){
+ regCamp=camp;document.body.dataset.camp=camp;$("#camp-note").textContent=note;
+ document.querySelectorAll(".camp").forEach(x=>x.setAttribute("aria-pressed",String(x.dataset.camp===camp)));
+}
+document.querySelectorAll(".camp").forEach(b=>b.addEventListener("click",()=>pickCamp(b.dataset.camp)));
+$("#camp-dice").addEventListener("click",()=>{const c=randomCamp();pickCamp(c,`Le hasard a choisi la ${campWord(c)} : tu peux encore changer d'avis avant de commencer.`);});
+// The sign-up test takes the place of the camp cards, inside the form: what was typed stays, and the form cannot be
+// sent half-way through the test (its button is disabled, which also stops Enter in a field).
+const regQuizEl=$("#reg-quiz");
+function regQuizShow(on){
+ const form=$("#form-register");form.classList.toggle("quizzing",on);regQuizEl.hidden=!on;form.querySelector(".cta").disabled=on;
+ if(!on)regQuizEl.replaceChildren();
+}
+$("#camp-test").addEventListener("click",()=>{
+ regQuizShow(true);$("#camp-note").textContent="";
+ mountQuiz(regQuizEl,newQuiz(),(camp,sugg)=>{
+  regQuizShow(false);
+  pickCamp(camp,`${sugg?`Verdict du test : la ${campWord(camp)}.`:`Va pour la ${campWord(camp)}, malgré le test.`} Tu peux encore changer d'avis avant de commencer.`);
+  $(`.camp[data-camp=${camp}]`).focus();
+ },()=>{regQuizShow(false);$("#camp-test").focus();}).focus();
+});
+regQuizEl.addEventListener("keydown",e=>{if(e.key==="Escape"){e.preventDefault();regQuizShow(false);$("#camp-test").focus();}});
 async function submitAuth(e,path,extra){
  e.preventDefault();
  const form=e.currentTarget,data=Object.fromEntries(new FormData(form)),btn=form.querySelector("button[type=submit]");
@@ -1136,7 +1240,12 @@ $("#form-register").addEventListener("submit",e=>submitAuth(e,"/api/register",{c
 function endSession(message){me=null;board=[];feed=[];renderFeed();showAuth(message);}
 // The device's push subscription goes first, while the session still allows it: another account signing in here
 // must never receive the previous player's duel notifications.
-async function logout(){closeSheet();if(pushable())await pushDisable().catch(()=>{});await api("POST","/api/logout",{});endSession("À bientôt !");}
+async function logout(){
+ closeSheet();if(pushable())await pushDisable().catch(()=>{});
+ const r=await api("POST","/api/logout",{});
+ if(!r.ok&&r.status!==401){toast("Déconnexion impossible pour l'instant : vérifie ta connexion et réessaie.");return;}
+ endSession("À bientôt !");
+}
 
 // ===================================================================== LOOP
 let lastHud=0,lastDraw=0,lastFrame=0;

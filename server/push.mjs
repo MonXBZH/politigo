@@ -10,6 +10,11 @@ const unb64u=s=>typeof s==="string"&&s.length<=200&&B64U_RE.test(s)?Buffer.from(
 // Only the browsers' own push services: the server never posts to an address a player made up (SSRF).
 const PUSH_HOSTS=new Set(["fcm.googleapis.com","updates.push.services.mozilla.com","web.push.apple.com"]);
 const PUSH_SUFFIXES=[".push.apple.com",".notify.windows.com"];
+// The one spelling an endpoint is stored and compared in (host case, default port), or null for garbage.
+export function canonicalEndpoint(s){
+ if(typeof s!=="string"||s.length>1000)return null;
+ try{const h=new URL(s).href;return h.length<=1000?h:null;}catch{return null;}
+}
 export function validEndpoint(s){
  if(typeof s!=="string"||s.length>1000)return false;
  let u;try{u=new URL(s);}catch{return false;}
@@ -59,6 +64,7 @@ export function loadVapid(file,log=console){
   try{writeFileSync(file,JSON.stringify({publicKey:v.publicKey,privateKey:b64u(v.d)})+"\n",{mode:0o600,flag:"wx"});}
   catch(e){log.error(`VAPID key NOT saved (${e.message}): notifications set up before the next restart will stop.`);}
  }
+ else v.temp=true;
  return v;
 }
 // The VAPID token: signed by the server's key for one push service (aud), valid 12 h.

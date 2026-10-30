@@ -122,6 +122,7 @@ Si l'un de ses `location` utilise `add_header`, recopier la ligne HSTS dedans : 
 - **Sauvegarde** : le volume `politigo_politigo-data` contient `politigo.db` (comptes, parties, duels, fil) et `vapid.json`
   (la clé des notifications : à sauvegarder avec la base, sinon les téléphones abonnés ne reçoivent plus rien). Exemple :
   `docker run --rm -v politigo_politigo-data:/d -v "$PWD":/b alpine tar czf /b/politigo-$(date +%F).tgz -C /d .`
+  Les fichiers du volume sont privés (mode 0600, propriétaire `node`) : lis-les en root, comme dans cet exemple.
 - **Mise à jour** : `docker compose build --pull && docker compose up -d` (récupère aussi les correctifs de sécurité de nginx et Node). Les parties sont conservées. Pendant un arrêt, même de plusieurs jours, rien ne se joue : au redémarrage, chaque partie
   revient sur l'heure réelle (jour et nuit restent justes), et ses jauges sont inchangées (personne ne meurt ni n'a faim parce que
   le serveur était éteint). Le journal du joueur l'indique (« Maintenance du serveur (3 h) : ce temps est sauté… »), et les logs aussi.
@@ -226,7 +227,7 @@ interdire la suppression et le force push, exiger une pull request (0 approbatio
 ## 6. Tests
 
 ```bash
-bash tests/run-server.sh                       # 184 tests : règles (dont l'équilibrage J15) + mini-jeux + changelog + API + duels + notifications + outil d'admin, dans l'image Node de production
+bash tests/run-server.sh                       # 211 tests : règles (dont l'équilibrage J15) + mini-jeux + test politique + changelog + API + duels + notifications + migrations + outil d'admin, dans l'image Node de production
 docker compose restart api                     # remet à zéro les limites d'inscription avant l'e2e
 powershell -ExecutionPolicy Bypass -File tests\e2e.ps1   # parcours complet dans Chrome (crée deux joueurs de test)
 ```

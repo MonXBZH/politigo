@@ -9,9 +9,17 @@ export const CHANGELOG=[
    "Duels : défie un autre élu au Débat chrono, dans Jouer → Duels. Mêmes questions pour les deux, le meilleur score l'emporte. Tu joues d'abord, ton rival a 24 h pour relever le défi.",
    "Victoire : +40 XP, moral +10, énergie +5. Défaite : −15 XP, moral −10, énergie −5, sans jamais perdre de niveau ni descendre une jauge sous 25. Refuser ne coûte rien ; celui qui t'a défié gagne juste un peu de moral.",
    "Trois défis par jour, un seul duel à la fois contre le même rival, et pas deux contre lui en 24 h. Les duels s'ouvrent au niveau 5.",
-   "Notifications : active-les dans Dossier → Compte pour être prévenu d'un défi même jeu fermé. Sur iPhone, ajoute d'abord PolitiGo à l'écran d'accueil."
+   "Notifications : active-les dans Dossier → Compte pour être prévenu d'un défi ou d'un résultat, même jeu fermé. Sur iPhone, ajoute d'abord PolitiGo à l'écran d'accueil.",
+   "Indécis ? À l'inscription comme quand tu repars de zéro, laisse faire le hasard, ou passe ton test politique : cinq questions bien salées, et il te propose ton camp. Libre à toi de rejoindre l'autre bord."
   ],
-  fixed:[]},
+  changed:[
+   "Mini-jeux rééquilibrés : plus le jeu est difficile, plus il paie. Le bonus de score monte jusqu'à 10 XP au Pong, 20 au Débat chrono et 30 à la Manif (Le Cortège et L'Épervier), en plus des 30 XP de l'activité."
+  ],
+  fixed:[
+   "Pong des arguments : une partie interrompue par l'écran qui se verrouille est terminée et comptée, au lieu d'être perdue.",
+   "Déconnexion : si le serveur ne répond pas, tu restes connecté et le jeu te le dit, au lieu de faire semblant de te déconnecter.",
+   "Les pseudos qui imitent un autre avec des lettres sosies (« Mɑrine », « Marıne ») sont refusés à l'inscription."
+  ]},
  {version:"1.3.1",date:"2026-10-30",
   added:[
    "Pong des arguments : 28 nouvelles piques, de « Rendez l'ISF ! » à « Gauche caviar ! »."

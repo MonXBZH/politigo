@@ -11,6 +11,7 @@ import * as R from "./rules.mjs";
 import * as P from "./push.mjs";
 
 const env=process.env;
+process.umask(0o077);
 const PORT=Number(env.PORT||3000);
 // Baked into the image from git describe; anything that is not a plain version string is shown as "dev".
 const VERSION=/^[0-9A-Za-z._+-]{1,40}$/.test(env.POLITIGO_VERSION||"")?env.POLITIGO_VERSION:"dev";
@@ -61,6 +62,8 @@ if(!/^(mailto:|https:\/\/)[^\s]{3,200}$/.test(PUSH_CONTACT)){console.error("POLI
 // A short wait rather than an immediate "database is locked" when another process (a backup, a maintenance
 // command) holds the file for a moment.
 const db=new DatabaseSync(DB_PATH,{timeout:5000});
+// A database created by an older version (before the umask) is made private too; another owner's file is left alone.
+for(const f of [DB_PATH,DB_PATH+"-wal",DB_PATH+"-shm"]){try{chmodSync(f,0o600);}catch{}}
 db.exec(`PRAGMA journal_mode=WAL;PRAGMA foreign_keys=ON;
 CREATE TABLE IF NOT EXISTS players(id INTEGER PRIMARY KEY,name TEXT NOT NULL,name_key TEXT NOT NULL UNIQUE,pass TEXT NOT NULL,
  created INTEGER NOT NULL,state TEXT NOT NULL,score INTEGER NOT NULL DEFAULT 0,updated INTEGER NOT NULL,seen_version TEXT);
@@ -146,7 +149,8 @@ const players=new Map();
   if(!state){
    // The unreadable row is kept aside before the fresh game overwrites it, so a bug never silently erases a game.
    const backup=join(dirname(DB_PATH),`state-${row.id}-${now}.bad.json`);
-   try{writeFileSync(backup,row.state,{mode:0o600});}catch{}
+   try{writeFileSync(backup,row.state,{mode:0o600});}
+   catch(e){console.error(`player ${row.id}: unreadable state (${why||"rejected"}) and NO backup possible (${e.message}): left untouched, not loaded (this player cannot sign in until it is repaired)`);continue;}
    console.error(`player ${row.id}: unreadable state (${why||"rejected"}), saved to ${backup}, restarting their game`);
    state=R.newGame(camp,now);
   }
@@ -186,7 +190,7 @@ const scryptRaw=promisify(crypto.scrypt);
 // Each hash takes 32 MB: a burst of logins from many addresses is turned away instead of exhausting memory.
 let hashing=0;
 async function scrypt(...args){
- if(hashing>=16)throw new HttpError(503,"Serveur occupé, réessaie dans un instant.");
+ if(hashing>=6)throw new HttpError(503,"Serveur occupé, réessaie dans un instant.");
  hashing++;try{return await scryptRaw(...args);}finally{hashing--;}
 }
 async function hashPassword(pw){
@@ -203,7 +207,9 @@ async function checkPassword(pw,stored){
 const sameSecret=(a,b)=>crypto.timingSafeEqual(Buffer.from(sha256(a)),Buffer.from(sha256(b)));
 // Names: 3 to 20 Latin letters (accents welcome), digits, spaces, dots, dashes or underscores; starts and ends
 // with a letter or digit. Latin only, so that a Cyrillic "о" cannot pass for an "o" on the leaderboard.
-const NAME_RE=/^[\p{Script=Latin}\p{Nd}][\p{Script=Latin}\p{Nd} ._-]{1,18}[\p{Script=Latin}\p{Nd}]$/u;
+// Latin-1 and Latin Extended-A letters only, without the dotless ı, ĸ, ŉ and the long ſ: the IPA and small-capital
+// lookalikes ("Mɑrine", "Marıne") are refused.
+const NAME_RE=/^[A-Za-z0-9À-ÖØ-öø-ÿĀ-İĲ-ķĹ-ňŊ-ž][A-Za-z0-9À-ÖØ-öø-ÿĀ-İĲ-ķĹ-ňŊ-ž ._-]{1,18}[A-Za-z0-9À-ÖØ-öø-ÿĀ-İĲ-ķĹ-ňŊ-ž]$/u;
 const cleanName=n=>typeof n==="string"?n.normalize("NFC").trim().replace(/\s+/g," "):"";
 // The uniqueness key ignores case and accents: "Chloé" and "chloe" are the same player.
 const nameKey=n=>n.normalize("NFKD").replace(/\p{M}/gu,"").toLocaleLowerCase("fr");
@@ -233,7 +239,7 @@ function send(res,status,body,headers={}){
 }
 // Cross-site requests are refused twice over: SameSite=Lax cookies, and POSTs must be JSON from our own origin.
 async function readJson(req){
- if(!String(req.headers["content-type"]||"").startsWith("application/json"))throw new HttpError(415,"JSON attendu.");
+ if(!/^application\/json\s*(;|$)/i.test(String(req.headers["content-type"]||"")))throw new HttpError(415,"JSON attendu.");
  // The Origin must name this site. A proxy that forwards Host without its port (nginx's $host) is accepted
  // as long as the host name itself matches.
  const origin=req.headers.origin;
@@ -321,7 +327,7 @@ function notify(playerId,payload){
  let subs=[];try{subs=q.subsOf.all(playerId);}catch(e){console.error(`push, player ${playerId}: ${e.message}`);return;}
  for(const s of subs){
   P.sendPush(s,payload,{vapid:VAPID,contact:PUSH_CONTACT})
-   .then(st=>{if([401,403,404,410].includes(st))q.deleteSubId.run(s.id);else if(st>=400)console.error(`push, player ${playerId}: status ${st}`);})
+   .then(st=>{if((VAPID.temp?[404,410]:[401,403,404,410]).includes(st))q.deleteSubId.run(s.id);else if(st>=400)console.error(`push, player ${playerId}: status ${st}`);})
    .catch(e=>console.error(`push, player ${playerId}: ${e.message}`));
  }
 }
@@ -341,7 +347,8 @@ function duelFeed(player,text){
 // A player who deleted their account in the meantime is simply skipped.
 function duelFx(id,res,opts,now){
  const pl=players.get(id);if(!pl)return;
- try{update(pl,S=>{R.advance(S,now,SPEED,Math.random);return R.duelApply(S,res,opts);});}catch(e){console.error(`duel, player ${id}:`,e);}
+ try{update(pl,S=>{R.advance(S,now,SPEED,Math.random);return R.duelApply(S,res,opts);});}
+ catch(e){console.error(`duel result "${res}" NOT applied to player ${id} (the duel itself is closed):`,e);}
 }
 // The rules' own check (asleep, level), at the level this server is configured for.
 const playBlock=S=>R.duelBlock(S,DUEL_MIN_LEVEL);
@@ -444,7 +451,7 @@ async function duelRoute(req,res){
  const play=el-R.DEBATE.intro,valid=!!r&&play>=r.last&&el<=DUEL_TURN_MS&&r.points<=Math.ceil(Math.max(0,Math.min(play,R.MINI.debate.ms))/1000*R.MINI.debate.perSecond)+1;
  if(mineC){
   // A refused score voids the challenge: nobody was told yet, and nothing changes for anyone.
-  if(!valid){if(q.duelClose.run("void",now,dayNow(now),d.id,"c_play").changes)duelEvent(d,"void",[p.id]);throw refuse("Score refusé.");}
+  if(!valid){if(q.duelClose.run("void",now,dayNow(now),d.id,"c_play").changes)duelEvent(d,"void",[p.id]);throw refuse("Score refusé : le défi est annulé.");}
   q.duelPending.run(r.points,now+R.DUEL.window,d.id);
   const dn=nameOf(d.defender);
   duelFeed(p.name,`${p.name} défie ${dn} au Débat chrono.`);
@@ -454,20 +461,24 @@ async function duelRoute(req,res){
  }
  // The defender's refused score counts as 0: a broken or forged answer forfeits instead of stalling the duel.
  const out=resolveDuel(d,valid?r.points:0,now);
- if(!valid)throw refuse("Score refusé.");
+ // Said plainly: the duel is over and lost, it cannot be sent again.
+ if(!valid)return send(res,422,{ok:false,error:"Score refusé ou envoyé trop tard : duel perdu par forfait.",res:out,mine:0,theirs:d.c_score??0,me:mePayload(p)});
  return send(res,200,{ok:true,score:r.points,errors:r.errors,status:"done",mine:r.points,theirs:d.c_score??0,res:out,me:mePayload(p)});
 }
 async function pushRoute(req,res,path){
- const p=auth(req);if(limited("push:"+p.id,20,600e3))throw new HttpError(429,"Doucement : réessaie dans un instant.");
+ const p=auth(req),off=path==="/api/push/unsubscribe";
+ if(limited((off?"unpush:":"push:")+p.id,20,600e3))throw new HttpError(429,"Doucement : réessaie dans un instant.");
  const b=await readJson(req);
  if(!players.has(p.id))throw new HttpError(401,"Connexion requise.");   // deleted while the body was arriving
+ // Endpoints are stored in one spelling (case, default port), so one browser is one row.
+ const ep=P.canonicalEndpoint(b.endpoint);
  // Unsubscribing always works (even with notifications turned off since): only the caller's own row goes.
- if(path==="/api/push/unsubscribe"){if(typeof b.endpoint==="string"&&b.endpoint.length<=1000)q.deleteSub.run(b.endpoint,p.id);return send(res,200,{ok:true});}
+ if(off){if(!ep)throw new HttpError(400,"Abonnement inconnu.");q.deleteSub.run(ep,p.id);return send(res,200,{ok:true});}
  if(!VAPID)throw new HttpError(404,"Notifications désactivées sur ce serveur.");
  const keys=P.validKeys(b.keys);
- if(!P.validEndpoint(b.endpoint)||!keys)throw new HttpError(400,"Abonnement refusé.");
+ if(!P.validEndpoint(ep)||!keys)throw new HttpError(400,"Abonnement refusé.");
  // An endpoint belongs to one browser: signed in as someone else, it follows the new player. Five devices at most.
- q.upsertSub.run(p.id,b.endpoint,keys.p256dh,keys.auth,Date.now());q.trimSubs.run(p.id,p.id,5);
+ q.upsertSub.run(p.id,ep,keys.p256dh,keys.auth,Date.now());q.trimSubs.run(p.id,p.id,5);
  return send(res,200,{ok:true});
 }
 
