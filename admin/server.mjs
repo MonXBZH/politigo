@@ -115,7 +115,7 @@ async function status(srv,full=false){
  try{
   const s=await cmd(srv,{cmd:"stats"},4000);
   if(!srv.name&&typeof s.name==="string"&&s.name.trim())srv.label=s.name.trim().slice(0,40);
-  const o={id:srv.id,name:srv.label||"PolitiGo",up:true,version:s.version??null,players:s.players??null,online:s.online??null,active24h:s.active24h??null};
+  const o={id:srv.id,name:srv.label||"PolitiGo",up:true,version:s.version??null,players:s.players??null,online:s.online??null,active24h:s.active24h??null,chatRooms:s.chatRooms??null};
   if(full){
    const [rep,sch,inv]=await Promise.allSettled([cmd(srv,{cmd:"chat-reports"},4000),cmd(srv,{cmd:"schedule-list"},4000),cmd(srv,{cmd:"invite-get"},4000)]);
    o.invite=inv.status==="fulfilled"?{code:inv.value.invite||null,open:!!inv.value.open&&!!inv.value.invite}:null;   // sessions only: the copy button
@@ -134,7 +134,7 @@ const CMDS={
  announce:["text","to","camp"],"schedule-list":[],"schedule-add":["text","target","kind","at","time","days","until"],
  "schedule-delete":["id"],"schedule-toggle":["id","enabled"],"announce-history":[],"feed-list":["limit"],"feed-delete":["id"],
  "duels-list":[],"duel-cancel":["id"],"invite-get":[],"invite-regenerate":[],"registrations-set":["open"],"event-set":["mode"],
- bots:[],"chat-reports":[],"chat-media":["id"],"chat-delete":["id"],"chat-mute":[...WHO,"hours"],audit:["limit"],
+ bots:[],"chat-reports":[],"chat-media":["id"],"chat-delete":["id"],"chat-mute":[...WHO,"hours"],"chat-set":["global","camp"],audit:["limit"],
 };
 const pick=(b,keys)=>Object.fromEntries(keys.filter(k=>b[k]!==undefined).map(k=>[k,b[k]]));
 

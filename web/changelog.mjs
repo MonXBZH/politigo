@@ -7,6 +7,7 @@ export const CHANGELOG=[
  {version:"1.5.0",date:"2026-10-31",
   added:[
    "Le chat de la République : touche Chat sur l'écran principal. Un salon pour tout le monde, et un salon réservé à ton camp pour comploter entre camarades… ou entre amis de la majorité.",
+   "Le chat s'ouvre seulement si l'organisateur de ta partie l'active, salon par salon : les joueurs ne peuvent pas l'activer eux-mêmes. Pas de touche Chat ? C'est qu'il est fermé pour le moment.",
    "Emojis à volonté, et images ou GIF : colle celui de ton clavier, ou envoie un fichier de 2 Mo maximum.",
    "Un message déplacé ? Signale-le en un geste. Tu peux aussi effacer les tiens. Les messages disparaissent au bout de 7 jours.",
    "Pas de dérangement : une simple pastille compte les messages non lus, sans notification ni son, et rien ne s'affiche pendant un mini-jeu."

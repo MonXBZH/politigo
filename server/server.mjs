@@ -109,6 +109,13 @@ const setSetting=(k,v)=>db.prepare("INSERT INTO settings(key,value) VALUES(?,?) 
 let INVITE_SOURCE=env.POLITIGO_INVITE?"env":"file";
 {const v=getSetting("invite");if(v&&v.length>=16){INVITE=v;INVITE_SOURCE="admin";INVITE_GENERATED=false;}}
 let REG_OPEN=getSetting("registrations")!=="closed";
+// Chat rooms are off until the admin opens them. POLITIGO_CHAT (on | global | camp | off) only sets the starting point
+// while the settings are absent: handy for tests and a first deployment, the admin's choice wins afterwards.
+const CHAT_ENV=["on","global","camp"].includes(env.POLITIGO_CHAT)?env.POLITIGO_CHAT:"off";
+if(env.POLITIGO_CHAT&&CHAT_ENV!==env.POLITIGO_CHAT)console.error("POLITIGO_CHAT must be one of on, global, camp, off: using off.");
+const chatOn=(key,room)=>{const v=getSetting(key);return v===null?CHAT_ENV==="on"||CHAT_ENV===room:v==="on";};
+const CHAT={global:chatOn("chat_global","global"),camp:chatOn("chat_camp","camp")};
+const chatRooms=()=>({global:CHAT.global,camp:CHAT.camp});
 {const v=getSetting("event");if(R.EVENT_MODES.includes(v)&&v!==EVENT_MODE){EVENT_MODE=v;console.warn(`Seasonal event set by the admin: ${v}.`);}}
 const RELEASE=R.releaseOf(VERSION);   // "1.3.0" for v1.3.0-3-gabc1234, null on a dev server
 const q={
@@ -381,7 +388,7 @@ function publishBoard(force=false){
  if(force||json!==lastBoard){lastBoard=json;broadcast("board",rows);return true;}
  return false;
 }
-function mePayload(p){return {name:p.name,state:p.state,speed:SPEED,tz:R.timeZone(),serverNow:Date.now(),event:EVENT_MODE,version:VERSION,release:RELEASE,seenVersion:p.seen??null};}
+function mePayload(p){return {name:p.name,state:p.state,speed:SPEED,tz:R.timeZone(),serverNow:Date.now(),event:EVENT_MODE,version:VERSION,release:RELEASE,seenVersion:p.seen??null,chat:chatRooms()};}
 // The clock runs for everyone, connected or not: needs drain and deaths happen while the page is closed.
 setInterval(()=>{
  const now=Date.now();
@@ -592,7 +599,7 @@ async function pushRoute(req,res,path){
 }
 
 // ===================================================================== CHAT (server/chat.mjs)
-const chat=createChat({db,dataDir:dirname(DB_PATH),players,clients,sse,auth,limited,HttpError,send,readJson,checkOrigin,clientIp});
+const chat=createChat({db,dataDir:dirname(DB_PATH),players,clients,sse,auth,limited,HttpError,send,readJson,checkOrigin,clientIp,rooms:chatRooms});
 
 // ===================================================================== ROUTES
 async function route(req,res){
@@ -986,7 +993,7 @@ async function adminCommand(b){
   let chatStats={};try{chatStats=chat.admin.stats();}catch(e){console.error("chat stats:",e);}
   return {name:SERVER_NAME,players:players.size,online:on.size,active24h:active(now-864e5),active7d:active(now-7*864e5),pushSubs:q.countSubs.get().n,version:VERSION,release:RELEASE,
    uptimeS:Math.round(process.uptime()),dbBytes:Number(db.prepare("SELECT page_count*page_size AS n FROM pragma_page_count(),pragma_page_size()").get().n),
-   event:{mode:EVENT_MODE,current:eventNow()},registrations:{open:regOpen()},suspended:[...players.values()].filter(p=>p.suspended).length,chat:chatStats};
+   event:{mode:EVENT_MODE,current:eventNow()},registrations:{open:regOpen()},suspended:[...players.values()].filter(p=>p.suspended).length,chat:chatStats,chatRooms:chatRooms()};
  }
  if(cmd==="player")return {player:playerDetail(who(b))};
  if(cmd==="announce")return announce(b,via);
@@ -1081,6 +1088,18 @@ async function adminCommand(b){
  if(cmd==="chat-media"){
   const m=typeof b.id==="string"&&chat.admin.media?.(b.id);if(!m)throw new HttpError(404,"Image introuvable.");
   return {type:m.type,data:m.data};
+ }
+ if(cmd==="chat-set"){
+  const keys=["global","camp"].filter(k=>k in b);
+  if(!keys.length||!keys.every(k=>typeof b[k]==="boolean"))throw new HttpError(400,"global et/ou camp : true ou false.");
+  for(const k of keys){
+   CHAT[k]=b[k];setSetting(`chat_${k}`,b[k]?"on":"off");
+   audit(via,cmd,"",`Chat ${k==="global"?"pour tous":"de camp"} ${b[k]?"activé":"désactivé"}`);
+  }
+  // Every open screen shows or hides the chat at once.
+  for(const id of onlineIds()){const p=players.get(id);if(p)pushMe(p);}
+  console.log(`admin: chat rooms global ${CHAT.global?"on":"off"}, camp ${CHAT.camp?"on":"off"}`);
+  return {chat:chatRooms()};
  }
  if(cmd==="chat-mute"){
   const p=who(b),h=Number(b.hours);

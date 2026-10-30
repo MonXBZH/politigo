@@ -48,6 +48,7 @@ function applyMe(m,{replay=false}={}){
  const first=!S||me!==m.name;
  // The action answer and the live stream race each other: an older copy of the state never replaces a newer one.
  if(!first&&m.state.lastReal<S.lastReal)return;
+ chatFlags(m.chat);
  me=m.name;SPEED=m.speed||1;VERSION=m.version||"dev";R.setTimeZone(m.tz||"Europe/Paris");
  if("release" in m){RELEASE=m.release||null;SEEN=m.seenVersion||null;}
  S=m.state;syncReal=Date.now();syncV=S.vclock;
@@ -1138,7 +1139,16 @@ $("#sheet-close").addEventListener("click",()=>closeSheet());
 const chat=createChat({api,sheet:$("#sheet"),getCamp:()=>S?.camp||"left",getTz:()=>R.timeZone(),reduced:()=>reduced,onBadge(n){
  const b=$(".pad-btn[data-sheet=chat]");b.classList.toggle("alert",n>0);
  if(n>0){b.dataset.count=n>9?"9+":String(n);b.setAttribute("aria-label",`Chat (${n} message${n>1?"s":""} non lu${n>1?"s":""})`);}else{delete b.dataset.count;b.removeAttribute("aria-label");}
-}});
+},
+ // A 403 from a room closed meanwhile: the state is asked again, and its chat flags hide what was closed.
+ async onClosed(){const r=await api("GET","/api/me");if(r.ok&&S)applyMe(r);}});
+// The organisation opens the chat rooms (me.chat, off by default): no room open, no "Chat" button at all.
+function chatFlags(flags){
+ const any=flags?.global===true||flags?.camp===true,b=$(".pad-btn[data-sheet=chat]");
+ chat.setOpen(any?flags:null);
+ if(b.hidden!==!any){b.hidden=!any;$(".pad").classList.toggle("five",any);}
+ if(!any&&sheetKind==="chat")closeSheet();
+}
 
 // ---------- duels ----------
 // GET /api/duels: the challenges (each from this player's side: role, status, vs, mine, theirs, res), the opponents
@@ -1377,7 +1387,7 @@ function armRestart(camp,text){
 const authEl=$("#auth");
 let regCamp="left";
 function showAuth(message=""){
- closeSheet();chat.reset();es?.close();es=null;S=null;anim=pong=mini=scene=null;newsPending=false;toastQ.length=0;announceQ.length=0;$("#announce").hidden=true;duelData=null;duelErr="";duelSeq++;pushOn=null;pushSynced=false;setNet(true);$("#tips").hidden=true;
+ closeSheet();chat.reset();chatFlags(null);es?.close();es=null;S=null;anim=pong=mini=scene=null;newsPending=false;toastQ.length=0;announceQ.length=0;$("#announce").hidden=true;duelData=null;duelErr="";duelSeq++;pushOn=null;pushSynced=false;setNet(true);$("#tips").hidden=true;
  authEl.hidden=false;setBackgroundInert(true);
  $("#auth-error").textContent=message;regQuizShow(false);$("#camp-note").textContent="";document.body.dataset.camp=regCamp;
  document.querySelectorAll(".camp").forEach(b=>{

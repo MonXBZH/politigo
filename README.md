@@ -129,7 +129,7 @@ et toutes sont recensées, avec leurs références, dans **[docs/SOURCES.md](doc
   ni descendre une jauge sous 25. Dès le niveau 5, trois défis par jour.
 - 🔔 **Notifications** : sois prévenu d'un défi ou d'un résultat même le jeu fermé (Dossier → Compte).
   Sur iPhone, ajoute d'abord PolitiGo à l'écran d'accueil.
-- 💬 **Le chat** : un salon pour tout le monde et un salon réservé à ton camp. Emojis, images et GIF (colle celui de ton
+- 💬 **Le chat** (si l'organisateur l'ouvre, salon par salon) : un salon pour tout le monde et un salon réservé à ton camp. Emojis, images et GIF (colle celui de ton
   clavier ou envoie un fichier de 2 Mo), signalement en un geste, messages effacés au bout de 7 jours. Une pastille compte
   les non-lus, sans notification ni son, et rien ne s'affiche pendant un mini-jeu.
 - 📰 **Fil de la République** : les évolutions, les morts politiques et les beaux scores aux mini-jeux et les duels de chacun, en temps réel.
@@ -139,7 +139,7 @@ et toutes sont recensées, avec leurs références, dans **[docs/SOURCES.md](doc
 
 Une **interface d'administration** facultative, dans son propre conteneur, pour le réseau local : tableau de bord, fiches
 des joueurs (mot de passe, déblocage, renommage, suspension), **annonces** immédiates ou planifiées (à tous, à un camp, à un
-joueur), modération du chat et du fil, duels, code d'invitation en un clic, inscriptions et événements à chaud, sauvegarde,
+joueur), ouverture et modération du chat, modération du fil, duels, code d'invitation en un clic, inscriptions et événements à chaud, sauvegarde,
 **détection de bots**, journal des actions. Elle gère aussi plusieurs parties sur le même serveur.
 
 <p align="center">

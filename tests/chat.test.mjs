@@ -6,11 +6,12 @@ import {mkdtempSync,readdirSync} from "node:fs";
 import {DatabaseSync} from "node:sqlite";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
+import {Readable} from "node:stream";
 import {boot,stop,player,until,PW} from "./server-helpers.mjs";
 
 const PORT=3888,BASE=`http://127.0.0.1:${PORT}`;
 let proc,DB,DIR;
-before(async()=>{DIR=mkdtempSync(join(tmpdir(),"pgchat-"));proc=await boot(PORT,DIR);DB=new DatabaseSync(join(DIR,"t.db"),{timeout:5000});});
+before(async()=>{DIR=mkdtempSync(join(tmpdir(),"pgchat-"));proc=await boot(PORT,DIR,{POLITIGO_CHAT:"on"});DB=new DatabaseSync(join(DIR,"t.db"),{timeout:5000});});
 after(async()=>{try{DB.close();}catch{}await stop(proc);});
 
 const GIF=Buffer.from("47494638396101000100800000000000ffffff21f90401000000002c00000000010001000002024401003b","hex");
@@ -199,4 +200,62 @@ test("admin.media gives a posted image as base64; beforePlayerDelete tells the o
  const after=chat.beforePlayerDelete(1);db.prepare("DELETE FROM players WHERE id=1").run();chat.playerDeleted(1);after();
  assert.deepEqual(sent.filter(s=>s[1]==="chatDel").map(s=>[s[0],s[2].id]).sort(),[["r1",1],["r1",2],["r2",1]],"the camp message only to its camp");
  assert.equal(chat.admin.media(id),null);db.close();
+});
+
+// The rooms the organisation opens, switched live: route() driven directly with fake plumbing.
+test("rooms switched off: refused, silent and unread 0; switched back on: history is back",async()=>{
+ const {createChat}=await import(process.env.CHAT||"/app/chat.mjs");
+ const dir=mkdtempSync(join(tmpdir(),"pgchatr-")),db=new DatabaseSync(join(dir,"r.db"));
+ db.exec("PRAGMA foreign_keys=ON;CREATE TABLE players(id INTEGER PRIMARY KEY,name TEXT);INSERT INTO players(id,name) VALUES(1,'Un'),(2,'Deux'),(3,'Trois');");
+ const players=new Map([[1,{id:1,name:"Un",state:{camp:"left"}}],[2,{id:2,name:"Deux",state:{camp:"left"}}],[3,{id:3,name:"Trois",state:{camp:"right"}}]]);
+ const sent=[],clients=new Set([1,2,3].map(id=>({res:"r"+id,playerId:id})));
+ class HttpError extends Error{constructor(s,m){super(m);this.status=s;}}
+ let open={global:false,camp:false};
+ const chat=createChat({db,dataDir:dir,players,clients,sse:(res,ev,data)=>sent.push({res,ev,data}),auth:req=>players.get(req.pid),limited:()=>false,HttpError,
+  send:(res,status,body)=>{res.status=status;res.body=body;},readJson:async req=>req.body,checkOrigin(){},clientIp(){},rooms:()=>open});
+ // One call: {status, body, headers}; a refusal comes back as its status and message.
+ async function call(pid,method,path,body,{url=path,headers={},raw}={}){
+  const req=raw?Object.assign(Readable.from([raw]),{pid,url,headers}):{pid,url,headers,body},res={writeHead(s,h){this.status=s;this.headers=h;},end(){}};
+  try{assert.equal(await chat.route(req,res,path,method),true);}catch(e){if(!(e instanceof HttpError))throw e;return {status:e.status,body:{error:e.message}};}
+  return {status:res.status,body:res.body,headers:res.headers};
+ }
+ const get=(pid,room)=>call(pid,"GET","/api/chat",undefined,{url:`/api/chat?room=${room}`});
+ const CLOSED="Ce salon de discussion est fermé pour le moment.";
+ const now=Date.now(),ins=db.prepare("INSERT INTO chat_messages(room,player_id,t,text,media) VALUES(?,?,?,?,?)");
+ const mid="M".repeat(22);db.prepare("INSERT INTO chat_media(id,player_id,t,type,bytes,used) VALUES(?,1,?,'image/gif',?,1)").run(mid,now,GIF.length);
+ (await import("node:fs")).writeFileSync(join(dir,"chat-media",mid),GIF);
+ const g=Number(ins.run("global",1,now,"tous",null).lastInsertRowid),c=Number(ins.run("left",1,now,"gauche",mid).lastInsertRowid);
+ // Everything closed (also the default when no rooms() is given).
+ for(const r of [await get(2,"global"),await get(2,"camp"),await call(2,"POST","/api/chat",{room:"global",text:"x"}),await call(2,"POST","/api/chat",{room:"camp",text:"x"}),
+  await call(2,"POST","/api/chat/report",{id:g}),await call(1,"POST","/api/chat/delete",{id:c}),await call(2,"POST","/api/chat/read",{room:"camp",id:c}),
+  await call(1,"POST","/api/chat/media",undefined,{headers:{"content-type":"image/gif"},raw:GIF})])assert.deepEqual([r.status,r.body.error],[403,CLOSED]);
+ assert.equal((await call(2,"GET",`/api/chat/media/${mid}`)).status,404);assert.equal((await call(1,"GET",`/api/chat/media/${mid}`)).status,404);
+ chat.onStream({res:"r2"},players.get(2));assert.deepEqual(sent.pop(),{res:"r2",ev:"chatUnread",data:{global:0,camp:0}});
+ // Global open, camps closed.
+ open={global:true,camp:false};
+ const gl=await get(2,"global");assert.equal(gl.status,200);assert.deepEqual(gl.body.messages.map(m=>m.text),["tous"]);
+ assert.deepEqual(gl.body.unread,{global:1,camp:0});assert.deepEqual(gl.body.rooms,{global:true,camp:false});
+ assert.equal((await get(2,"camp")).status,403);
+ assert.equal((await call(2,"GET",`/api/chat/media/${mid}`)).status,404,"posted in a closed room");
+ sent.length=0;
+ assert.equal((await call(3,"POST","/api/chat",{room:"global",text:"salut"})).status,200);
+ assert.deepEqual(sent.filter(s=>s.ev==="chat").map(s=>s.res).sort(),["r1","r2","r3"]);
+ const up=await call(3,"POST","/api/chat/media",undefined,{headers:{"content-type":"image/png"},raw:PNG});assert.equal(up.status,200);
+ assert.equal((await call(3,"GET",`/api/chat/media/${up.body.id}`)).status,200,"one's own upload while a room is open");
+ // Camps reopened: the history is back, the image too, and live events flow for the camp room.
+ open={global:true,camp:true};
+ const cp=await get(2,"camp");assert.equal(cp.status,200);assert.deepEqual(cp.body.messages.map(m=>m.text),["gauche"]);assert.equal(cp.body.unread.camp,1);
+ const img=await call(2,"GET",`/api/chat/media/${mid}`);assert.equal(img.status,200);assert.equal(img.headers["Content-Type"],"image/gif");
+ assert.equal((await call(3,"GET",`/api/chat/media/${mid}`)).status,404,"still not the other camp's");
+ // Camps closed again, global still open: camp messages make no live event and no unread count.
+ open={global:true,camp:false};sent.length=0;
+ ins.run("left",2,Date.now(),"en douce",null);
+ assert.equal((await call(1,"POST","/api/chat/read",{room:"global",id:g})).status,200);
+ assert.deepEqual(sent.filter(s=>s.ev==="chatUnread").map(s=>s.data),[{global:1,camp:0}]);
+ assert.equal((await call(1,"POST","/api/chat",{room:"camp",text:"x"})).status,403);
+ assert.equal(sent.filter(s=>s.ev==="chat").length,0);
+ // Admin functions work whatever the switches.
+ open={global:false,camp:false};
+ assert.equal(chat.admin.deleteMessage(c),true);assert.equal(chat.admin.stats().messages7d,3);
+ db.close();
 });

@@ -180,3 +180,17 @@ test("emoji picker: about 80 emojis, political ones included, no duplicates",()=
  assert.equal(new Set(all).size,all.length);
  for(const e of ["🗳️","🏛️","📢","🎤","🌹","🇫🇷"])assert.ok(all.includes(e),e);
 });
+
+test("chatRooms and pickRoom: rooms opened by the organisation, closed by default",()=>{
+ assert.deepEqual(C.chatRooms(undefined),[]);
+ assert.deepEqual(C.chatRooms({}),[]);
+ assert.deepEqual(C.chatRooms({global:false,camp:false}),[]);
+ assert.deepEqual(C.chatRooms({global:true,camp:true}),["global","camp"]);
+ assert.deepEqual(C.chatRooms({camp:true}),["camp"]);
+ assert.deepEqual(C.chatRooms({global:"yes",camp:1}),[]);           // only a real true opens a room
+ assert.equal(C.pickRoom("global",["global","camp"]),"global");
+ assert.equal(C.pickRoom("camp",["global","camp"]),"camp");
+ assert.equal(C.pickRoom("global",["camp"]),"camp");               // the open room was closed: the other one
+ assert.equal(C.pickRoom("camp",["global"]),"global");
+ assert.equal(C.pickRoom("global",[]),null);
+});

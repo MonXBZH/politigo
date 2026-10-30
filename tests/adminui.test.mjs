@@ -128,6 +128,18 @@ test("several servers: listed with their names, unknown id 404, actions routed t
  assert.ok(audit.some(i=>i.cmd==="announce"&&i.via==="web"),"logged as a web action");
 });
 
+test("chat rooms: closed by default, switched one by one through the admin, on that server only",async()=>{
+ const b=browser();await b.login();
+ const rooms=async n=>(await b.call(n,"stats")).json.chatRooms;
+ assert.deepEqual(await rooms("test-e"),{global:false,camp:false});
+ const r=await b.call("test-e","chat-set",{global:true});
+ assert.equal(r.status,200,JSON.stringify(r.json));assert.deepEqual(r.json.chat,{global:true,camp:false});
+ assert.deepEqual(await rooms("test-e"),{global:true,camp:false});
+ assert.deepEqual(await rooms("prod"),{global:false,camp:false},"the other game stays closed");
+ assert.deepEqual((await b.call("test-e","chat-set",{camp:true,global:false})).json.chat,{global:false,camp:true});
+ assert.deepEqual((await b.call("test-e","chat-set",{camp:false})).json.chat,{global:false,camp:false});
+});
+
 test("backup: server 2's database is streamed as a SQLite file, then removed from its socket directory",async()=>{
  const b=browser();await b.login();
  const r=await b.req("/api/s/test-e/backup",{},{raw:true});

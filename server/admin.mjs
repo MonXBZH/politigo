@@ -5,6 +5,7 @@
 //   node admin.mjs unlock <pseudo>                 forgets the failed login attempts on that name
 //   node admin.mjs announce "<texte>" [--to <pseudo> | --camp gauche|droite]  a message to everyone (or one player, or one camp): banner, push, feed
 //   node admin.mjs stats                           the server at a glance
+//   node admin.mjs chat [on|off [--camp|--global]]  shows, opens or closes the chat rooms (no flag: both)
 //   node admin.mjs invite                          the invite code in force (or that registrations are closed)
 // It talks to the running server over its admin socket (POLITIGO_ADMIN_SOCKET), so the server itself hashes the
 // password, signs the player out everywhere and clears the login counters: no restart, no second database writer.
@@ -12,7 +13,7 @@ import net from "node:net";
 import crypto from "node:crypto";
 
 const SOCKET=process.env.POLITIGO_ADMIN_SOCKET||"/tmp/politigo-admin.sock";
-const USAGE="Usage : node admin.mjs list | reset-password <pseudo> [--stdin] | unlock <pseudo> | announce \"<texte>\" [--to <pseudo> | --camp gauche|droite] | stats | invite";
+const USAGE="Usage : node admin.mjs list | reset-password <pseudo> [--stdin] | unlock <pseudo> | announce \"<texte>\" [--to <pseudo> | --camp gauche|droite] | stats | invite | chat [on|off [--camp|--global]]";
 const fail=(msg,code=1)=>{console.error(msg);process.exit(code);};
 const check=r=>{if(!r?.ok)fail(r?.error||"Échec.");return r;};
 
@@ -82,6 +83,11 @@ try{
   console.log(`Joueurs : ${r.players} (${r.online} en ligne, ${r.active24h} actifs sur 24 h, ${r.active7d} sur 7 jours, ${r.suspended} suspendu(s))`);
   console.log(`Inscriptions : ${r.registrations.open?"ouvertes":"fermées"} · notifications : ${r.pushSubs} appareil(s) · événement : ${r.event.mode}${r.event.current?` (${r.event.current} en cours)`:""}`);
   console.log(`Base de données : ${(r.dbBytes/1048576).toFixed(1).replace(".",",")} Mo`);
+ }
+ else if(cmd==="chat"&&(name===undefined||(["on","off"].includes(name)&&rest.length<=1&&(!rest.length||["--camp","--global"].includes(rest[0]))))){
+  const on=name==="on",r=check(await call(name===undefined?{cmd:"stats"}:{cmd:"chat-set",...(rest[0]!=="--camp"?{global:on}:{}),...(rest[0]!=="--global"?{camp:on}:{})}));
+  const c=r.chatRooms??r.chat,w=v=>v?"ouvert":"fermé";
+  console.log(`Chat pour tous : ${w(c.global)} · chat de camp : ${w(c.camp)}`);
  }
  else if(cmd==="invite"&&name===undefined){
   const r=check(await call({cmd:"invite-get"})),src={env:"POLITIGO_INVITE",file:"fichier invite.txt",admin:"interface d'administration"}[r.source]??r.source;

@@ -203,7 +203,7 @@ compose ; supprimer le bloc `admin` et ses volumes pour s'en passer, le jeu n'en
 - **Chat** : messages signalés (avec l'image), suppression, privation de chat de l'auteur. **Fil** : supprimer une ligne.
   **Duels** : annuler un duel bloqué.
 - **Réglages** : code d'invitation (copier, régénérer), inscriptions ouvertes ou fermées, événement saisonnier (auto, désactivé,
-  forcé), à chaud. Ces réglages sont gardés dans la base et l'emportent ensuite sur `.env`.
+  forcé), chat pour tous et chat de camp (fermés par défaut), à chaud. Ces réglages sont gardés dans la base et l'emportent ensuite sur `.env`.
 - **Sauvegarde** : télécharge une copie cohérente de la base (`VACUUM INTO`), et à part `vapid.json`. Fichiers sensibles
   (empreintes des mots de passe, clé des notifications) : à garder hors d'Internet.
 - **Détection de bots** : sur 14 jours, pour chaque joueur, ses actions heure par heure, la part faite sans le jeu ouvert,
@@ -224,6 +224,12 @@ réseau local, ou derrière Nginx Proxy Manager en HTTPS (`POLITIGO_ADMIN_BIND=1
 
 ### Chat
 
+- **Fermé par défaut.** L'organisateur l'ouvre dans l'interface d'administration → Réglages, avec deux coches
+  indépendantes : « Chat pour tous » et « Chat de camp ». Les joueurs ne peuvent pas l'activer eux-mêmes : salon fermé,
+  onglet absent ; tout fermé, la touche Chat disparaît. Le changement s'applique tout de suite sur les écrans ouverts ;
+  les messages existants sont gardés (et toujours effacés au bout de 7 jours) et réapparaissent à la réouverture.
+  `POLITIGO_CHAT` (`on`, `global`, `camp` ; vide : fermé) ne sert que d'état initial d'une nouvelle partie, la coche
+  de l'administration l'emporte ensuite.
 - Un salon pour tous et un salon par camp (un joueur voit celui de son camp actuel). Texte de 500 caractères, emojis,
   images GIF, PNG, JPEG ou WebP de 2 Mo au plus (type vérifié sur le contenu, jamais sur le nom).
 - Messages et images effacés au bout de **7 jours** ; un joueur peut effacer les siens et signaler ceux des autres.
@@ -323,10 +329,10 @@ powershell -ExecutionPolicy Bypass -File tests\e2e.ps1   # parcours complet dans
 ## 7. Captures et sources du README
 
 ```bash
-# Captures d'écran (docs/images/*.png) : pile locale VIDE et lancée, en journée (heure de Paris), sans événement saisonnier
+# Captures d'écran (docs/images/*.png) : pile locale VIDE et lancée, en journée (heure de Paris), sans événement saisonnier et chat ouvert (POLITIGO_CHAT=on)
 powershell -ExecutionPolicy Bypass -File tools\screenshots.ps1 -AdminUrl http://localhost:8090/ -AdminPassword <mot de passe admin>
 # Sans toucher à sa pile locale : une pile jetable à part (PowerShell), puis docker compose -p politigo-shots down -v
-#   $env:COMPOSE_PROJECT_NAME="politigo-shots"; $env:POLITIGO_PORT="8081"; $env:POLITIGO_ADMIN_PORT="8091"; $env:POLITIGO_EVENT="off"
+#   $env:COMPOSE_PROJECT_NAME="politigo-shots"; $env:POLITIGO_PORT="8081"; $env:POLITIGO_ADMIN_PORT="8091"; $env:POLITIGO_EVENT="off"; $env:POLITIGO_CHAT="on"
 #   docker compose up -d --build, puis le script avec -Url http://localhost:8081/ -AdminUrl http://localhost:8091/
 # Page des sources (docs/SOURCES.md), à régénérer après toute modification d'un personnage ou d'une casserole
 docker run --rm -v "$PWD:/w" -w /w node:24-alpine node tools/make-sources.mjs

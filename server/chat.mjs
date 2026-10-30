@@ -34,7 +34,7 @@ function frDate(t){
  catch{return new Date(t).toLocaleString("fr-FR");}
 }
 
-export function createChat({db,dataDir,players,clients,sse,auth,limited,HttpError,send,readJson,checkOrigin}){
+export function createChat({db,dataDir,players,clients,sse,auth,limited,HttpError,send,readJson,checkOrigin,rooms}){
  // chat_media has no foreign key: when an account goes, its files must still be found (and deleted) from these rows.
  db.exec(`CREATE TABLE IF NOT EXISTS chat_messages(id INTEGER PRIMARY KEY,room TEXT NOT NULL,player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
  t INTEGER NOT NULL,text TEXT NOT NULL,media TEXT,deleted INTEGER NOT NULL DEFAULT 0);
@@ -90,9 +90,15 @@ CREATE TABLE IF NOT EXISTS chat_mutes(player_id INTEGER PRIMARY KEY REFERENCES p
  function dropMedia(id){if(!id)return;q.deleteMedia.run(id);dropFile(id);}
 
  const sees=(p,room)=>room==="global"||p.state.camp===room;
+ // Which rooms the organisation has opened, read at every use so a switch applies at once. Unknown = closed.
+ const opened=()=>{try{const r=rooms?.();return {global:r?.global===true,camp:r?.camp===true};}catch(e){console.error("chat rooms:",e);return {global:false,camp:false};}};
+ const isOpen=(o,room)=>room==="global"?o.global:o.camp;   // stored room: "left"/"right" are the camp rooms
+ const closed=()=>new HttpError(403,"Ce salon de discussion est fermé pour le moment.");
+ const mustOpen=room=>{if(!isOpen(opened(),room))throw closed();};
  const roomFor=(p,r)=>r==="global"?"global":r==="camp"?p.state.camp:null;
  const lastRead=(pid,room)=>q.read.get(pid,room)?.last_id??0;
- const unreadOf=p=>({global:q.unread.get("global",lastRead(p.id,"global"),p.id).n,camp:q.unread.get(p.state.camp,lastRead(p.id,p.state.camp),p.id).n});
+ const unreadIn=(p,room)=>q.unread.get(room,lastRead(p.id,room),p.id).n;
+ const unreadOf=(p,o=opened())=>({global:o.global?unreadIn(p,"global"):0,camp:o.camp?unreadIn(p,p.state.camp):0});
  const mutedUntil=pid=>{const u=q.muted.get(pid)?.until;return u&&u>Date.now()?u:null;};
  // One message as a given player sees it: their own room name, "mine" for them, the author's camp and presence now.
  function view(m,me,online){
@@ -102,13 +108,14 @@ CREATE TABLE IF NOT EXISTS chat_mutes(player_id INTEGER PRIMARY KEY REFERENCES p
  }
  const onlineIds=()=>new Set([...clients].map(c=>c.playerId));
  // Each open screen allowed to see the room, told in its own terms.
- function toRoom(room,fn){
+ function toRoom(room,fn,always=false){
+  if(!always&&!isOpen(opened(),room))return;   // a closed room says nothing live (deletions still go out: see softDelete)
   for(const c of clients){const p=players.get(c.playerId);if(p&&sees(p,room))fn(c,p);}
  }
  function softDelete(m){
   if(!q.softDelete.run(m.id).changes)return false;
   dropMedia(m.media);
-  toRoom(m.room,c=>sse(c.res,"chatDel",{id:m.id}));
+  toRoom(m.room,c=>sse(c.res,"chatDel",{id:m.id}),true);
   return true;
  }
  const body404=()=>new HttpError(404,"Message introuvable.");
@@ -130,10 +137,11 @@ CREATE TABLE IF NOT EXISTS chat_mutes(player_id INTEGER PRIMARY KEY REFERENCES p
    const p=auth(req);if(limited("chatget:"+p.id,120,60e3))throw new HttpError(429,"Doucement : réessaie dans un instant.");
    const u=new URL(req.url,"http://x"),r=u.searchParams.get("room")||"global",room=roomFor(p,r);
    if(!room)throw new HttpError(400,"Salon inconnu.");
+   const o=opened();if(!isOpen(o,room))throw closed();
    const b=u.searchParams.get("before"),before=b==null?Number.MAX_SAFE_INTEGER:Number(b);
    if(!Number.isSafeInteger(before)||before<1)throw new HttpError(400,"Page inconnue.");
    const on=onlineIds();
-   return send(res,200,{ok:true,room:r,messages:q.page.all(room,before).reverse().map(m=>view(m,p.id,on)),unread:unreadOf(p),mutedUntil:mutedUntil(p.id),lastRead:lastRead(p.id,room)}),true;
+   return send(res,200,{ok:true,room:r,messages:q.page.all(room,before).reverse().map(m=>view(m,p.id,on)),unread:unreadOf(p,o),rooms:o,mutedUntil:mutedUntil(p.id),lastRead:lastRead(p.id,room)}),true;
   }
   if(path==="/api/chat"&&method==="POST"){
    const p=auth(req);if(limited("chatmsg:"+p.id,8,20e3))throw new HttpError(429,"Doucement : trop de messages d'un coup.");
@@ -141,6 +149,7 @@ CREATE TABLE IF NOT EXISTS chat_mutes(player_id INTEGER PRIMARY KEY REFERENCES p
    if(!players.has(p.id))throw new HttpError(401,"Connexion requise.");   // deleted while the body was arriving
    const until=mutedUntil(p.id);if(until)throw new HttpError(403,`Tu es privé de chat jusqu'au ${frDate(until)}.`);
    const room=roomFor(p,b.room);if(!room)throw new HttpError(400,"Salon inconnu.");
+   mustOpen(room);
    const text=cleanText(b.text),media=b.media==null||b.media===""?null:b.media;
    if([...text].length>TEXT_MAX)throw new HttpError(400,`Message : ${TEXT_MAX} caractères maximum.`);
    if(media!==null&&(typeof media!=="string"||!ID_RE.test(media)))throw new HttpError(400,"Image introuvable, renvoie-la.");
@@ -158,6 +167,7 @@ CREATE TABLE IF NOT EXISTS chat_mutes(player_id INTEGER PRIMARY KEY REFERENCES p
   }
   if(path==="/api/chat/media"&&method==="POST"){
    const p=auth(req);checkOrigin(req);
+   {const o=opened();if(!o.global&&!o.camp)throw closed();}
    // image/* cannot be sent cross-site without a preflight (a form can only post text/plain, multipart or urlencoded).
    if(!/^image\/[a-z0-9.+-]+\s*(;|$)/i.test(String(req.headers["content-type"]||"")))throw new HttpError(415,"Image attendue (GIF, PNG, JPEG ou WebP).");
    if(limited("chatup:"+p.id,20,3600e3))throw new HttpError(429,"Trop d'images envoyées, réessaie dans un moment.");
@@ -183,8 +193,11 @@ CREATE TABLE IF NOT EXISTS chat_mutes(player_id INTEGER PRIMARY KEY REFERENCES p
   if(path.startsWith("/api/chat/media/")&&method==="GET"){
    const p=auth(req);if(limited("chatimg:"+p.id,600,60e3))throw new HttpError(429,"Doucement : réessaie dans un instant.");
    const id=path.slice(16),m=ID_RE.test(id)&&q.media.get(id);
-   // Seen by its uploader, or by whoever may read a room where it was posted; anyone else learns nothing (404).
-   if(!m||(m.player_id!==p.id&&!q.mediaRooms.all(id).some(r=>sees(p,r.room))))throw new HttpError(404,"Introuvable.");
+   // Seen by whoever may read an OPEN room where it was posted (its uploader included), or by its uploader before it is
+   // posted while any room is open; anyone else learns nothing (404).
+   const o=opened(),posted=m?q.mediaRooms.all(id):[];
+   if(!m||!(posted.some(r=>isOpen(o,r.room)&&(sees(p,r.room)||m.player_id===p.id))||(m.player_id===p.id&&!m.used&&(o.global||o.camp))))
+    throw new HttpError(404,"Introuvable.");
    let data;try{data=await readFile(fileOf(id));}catch{throw new HttpError(404,"Introuvable.");}
    res.writeHead(200,{"Content-Type":m.type,"Content-Length":data.length,"X-Content-Type-Options":"nosniff",
     "Content-Security-Policy":"default-src 'none'; sandbox","Cache-Control":"private, max-age=3600","Content-Disposition":"inline",
@@ -199,6 +212,7 @@ CREATE TABLE IF NOT EXISTS chat_mutes(player_id INTEGER PRIMARY KEY REFERENCES p
    if(op==="read"){
     const room=roomFor(p,b.room),id=Number.isSafeInteger(b.id)&&b.id>=0?b.id:null;
     if(!room||id===null)throw new HttpError(400,"Lecture inconnue.");
+    mustOpen(room);
     // Never past the room's last message: a client cannot mark the future as read.
     q.markRead.run(p.id,room,Math.min(id,q.maxId.get(room).n));
     const unread=unreadOf(p);for(const c of clients)if(c.playerId===p.id)sse(c.res,"chatUnread",unread);   // the player's other screens too
@@ -206,6 +220,7 @@ CREATE TABLE IF NOT EXISTS chat_mutes(player_id INTEGER PRIMARY KEY REFERENCES p
    }
    const id=msgId(b.id),m=id&&q.msg.get(id);
    if(!m||!sees(p,m.room))throw body404();
+   mustOpen(m.room);
    if(op==="report"){
     if(m.player_id===p.id)throw new HttpError(422,"Tu ne peux pas signaler ton propre message.");
     if(q.report.run(m.id,p.id,Date.now()).changes)console.log(`chat: message ${m.id} reported by player ${p.id}`);
@@ -226,7 +241,7 @@ CREATE TABLE IF NOT EXISTS chat_mutes(player_id INTEGER PRIMARY KEY REFERENCES p
  // Called just BEFORE the player row goes (the cascade then takes the messages): returns what tells the open screens.
  function beforePlayerDelete(id){
   const gone=q.liveOf.all(id);
-  return ()=>{for(const m of gone)toRoom(m.room,c=>sse(c.res,"chatDel",{id:m.id}));};
+  return ()=>{for(const m of gone)toRoom(m.room,c=>sse(c.res,"chatDel",{id:m.id}),true);};
  }
  // Called once the player row is gone (the foreign keys took the messages): their images follow, rows and files.
  function playerDeleted(id){

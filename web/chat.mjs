@@ -97,6 +97,10 @@ export function mergeLatest(list,page,limit=PAGE){
  const min=Math.min(...p.map(m=>m.id));
  return mergeMessages(list.filter(m=>m.id<min),p,Infinity);
 }
+// The rooms the organisation opened (me.chat {global,camp}, both closed by default), in tab order.
+export const chatRooms=flags=>ROOMS.filter(k=>flags?.[k]===true);
+// The room to show: the current one while it stays open, else the first open one, else none.
+export const pickRoom=(current,open)=>open.includes(current)?current:open[0]??null;
 export const unreadTotal=u=>(Number(u?.global)||0)+(Number(u?.camp)||0);
 const errFor=(status,error)=>status===413?"Image trop lourde : 2 Mo au maximum.":status===415?"Format non pris en charge : seulement des images GIF, PNG, JPEG ou WebP."
  :status===0?"Serveur injoignable : vérifie ta connexion.":error||"Erreur du serveur.";
@@ -104,14 +108,15 @@ const errFor=(status,error)=>status===413?"Image trop lourde : 2 Mo au maximum."
 // ===================================================================== UI (browser only)
 // api: app.js api(); sheet: the #sheet element; getCamp/getTz: the player's camp and the game's time zone;
 // onBadge(total): the pad button's badge; reduced(): reduced motion.
-export function createChat({api,sheet,getCamp,getTz,onBadge,reduced}){
+export function createChat({api,sheet,getCamp,getTz,onBadge,reduced,onClosed=()=>{}}){
  // Asked again at each use: a tablet gains or loses its keyboard and mouse.
  const touch=()=>isTouch({coarseNoHover:matchMedia("(hover:none) and (pointer:coarse)").matches,fineHover:matchMedia("(any-hover:hover) and (any-pointer:fine)").matches,maxTouchPoints:navigator.maxTouchPoints||0});
  const root=document.querySelector("#chat-tpl").content.firstElementChild.cloneNode(true);
  const q=s=>root.querySelector(s);
  const log=q(".chat-log"),listEl=q(".chat-list"),more=q(".chat-more"),pillBtn=q(".chat-pill"),form=q(".chat-form"),ta=q("textarea"),sendBtn=q(".chat-send");
  const emojiBtn=q(".chat-emoji-btn"),picker=q(".chat-emoji"),imgBtn=q(".chat-img-btn"),fileIn=q(".chat-file"),preview=q(".chat-preview"),previewImg=q(".chat-preview img");
- const errEl=q(".chat-error"),statusEl=q(".chat-status"),viewer=q(".chat-viewer"),viewerImg=q(".chat-viewer img"),tabs=[...root.querySelectorAll("[data-room]")];
+ const errEl=q(".chat-error"),statusEl=q(".chat-status"),viewer=q(".chat-viewer"),viewerImg=q(".chat-viewer img"),tabs=[...root.querySelectorAll("[data-room]")],tabBar=q(".chat-tabs"),solo=q(".chat-solo");
+ let open=[];                                                  // the rooms open right now (setOpen)
  const fresh=()=>({msgs:[],loaded:false,stale:false,more:true,loading:false,read:0});
  let rooms={global:fresh(),camp:fresh()},unread={global:0,camp:0},room="global",shown=false,campFor=null,pinned=true;
  let pending=null,previewUrl="",sending=false,mutedUntil=null,muteTimer=0,readTimer=0,menuOpen=null,viewerFrom=null,seq=0;
@@ -179,7 +184,8 @@ export function createChat({api,sheet,getCamp,getTz,onBadge,reduced}){
    if(pending){const u=await upload(pending);if(who!==seq)return;if(!u.ok){say(u.error);return;}media=u.id;}
    const r=await api("POST","/api/chat",{room:at,text,...(media?{media}:{})});
    if(who!==seq)return;                                      // signed out meanwhile
-   if(!r.ok){say(r.error);if(r.status===403&&Number.isFinite(r.mutedUntil))setMuted(r.mutedUntil);return;}
+   // 403: muted, or the room was just closed by the organisation (the state is asked again: it may hide it).
+   if(!r.ok){say(r.error);if(r.status===403){if(Number.isFinite(r.mutedUntil))setMuted(r.mutedUntil);else onClosed();}return;}
    if(ta.value===draft){ta.value="";grow();}            // what was typed during the upload stays
    clearMedia();showPicker(false);
    if(validMsg(r.message))add(at,[r.message]);
@@ -301,7 +307,7 @@ export function createChat({api,sheet,getCamp,getTz,onBadge,reduced}){
   r.loading=true;const first=!r.loaded;
   const who=seq,res=await api("GET",`/api/chat?room=${at}`);
   r.loading=false;if(who!==seq)return;
-  if(!res.ok){if(at===room&&shown){more.hidden=false;more.textContent=res.error;}return;}
+  if(!res.ok){if(at===room&&shown){more.hidden=false;more.textContent=res.error;}if(res.status===403)onClosed();return;}
   const page=Array.isArray(res.messages)?res.messages:[];
   r.more=page.length<PAGE?false:r.loaded?r.more:true;
   r.msgs=mergeLatest(r.loaded?r.msgs:[],page);r.loaded=true;r.stale=false;
@@ -313,7 +319,7 @@ export function createChat({api,sheet,getCamp,getTz,onBadge,reduced}){
  }
 
  // ---------- read marks and badge ----------
- function setUnread(u){for(const k of ROOMS)if(Number.isFinite(u?.[k]))unread[k]=Math.max(0,u[k]);badge();}
+ function setUnread(u){for(const k of ROOMS)if(Number.isFinite(u?.[k]))unread[k]=open.includes(k)?Math.max(0,u[k]):0;badge();}
  function badge(){
   const camp=getCamp();
   for(const b of tabs){
@@ -321,7 +327,10 @@ export function createChat({api,sheet,getCamp,getTz,onBadge,reduced}){
    b.querySelector(".chat-tab-name").textContent=roomLabel(k,camp);
    const c=b.querySelector(".chat-count");c.textContent=n?badgeText(n):"";c.hidden=!n;
    b.setAttribute("aria-label",`${roomLabel(k,camp)}${n?`, ${n} non lu${n>1?"s":""}`:""}`);
+   b.hidden=!open.includes(k);
   }
+  // A single open room: its name as a plain title rather than a one-tab bar.
+  tabBar.hidden=open.length<2;solo.hidden=open.length!==1;if(open.length===1)solo.textContent=roomLabel(open[0],camp);
   onBadge(unreadTotal(unread));
  }
  // The room on screen, scrolled to its end, with the page in sight: read up to its last message (debounced).
@@ -347,7 +356,7 @@ export function createChat({api,sheet,getCamp,getTz,onBadge,reduced}){
  function syncCamp(){
   const c=getCamp();if(c===campFor)return;
   const changed=campFor!==null;campFor=c;rooms.camp=fresh();unread.camp=0;
-  if(shown&&room==="camp")showRoom("camp");else{badge();if(changed)load("camp");}
+  if(shown&&room==="camp")showRoom("camp");else{badge();if(changed&&open.includes("camp"))load("camp");}
  }
 
  // ---------- full-size image ----------
@@ -376,7 +385,7 @@ export function createChat({api,sheet,getCamp,getTz,onBadge,reduced}){
   hide(){shown=false;closeMenu();closeViewer();showPicker(false);clearTimeout(readTimer);sheet.style.removeProperty("--vvh");sheet.style.removeProperty("--vvt");},
   // SSE "chat" {room,message}: never a toast nor a sound, only the badge.
   onChat(v){
-   if(!v||!ROOMS.includes(v.room)||!validMsg(v.message))return;
+   if(!v||!open.includes(v.room)||!validMsg(v.message))return;
    syncCamp();
    const r=rooms[v.room],m=v.message,seen=shown&&room===v.room&&pinned&&!document.hidden;
    if(r.loaded)add(v.room,[m]);
@@ -389,9 +398,18 @@ export function createChat({api,sheet,getCamp,getTz,onBadge,reduced}){
   // The live stream (re)connected: what was missed meanwhile is fetched again.
   resync(){for(const k of ROOMS)if(rooms[k].loaded)rooms[k].stale=true;if(shown)load(room);},
   syncCamp,
+  // me.chat changed (the organisation opens or closes rooms live): a closed room is emptied and leaves the screen.
+  setOpen(flags){
+   const now=chatRooms(flags);if(now.join()===open.join())return;
+   open=now;
+   for(const k of ROOMS)if(!open.includes(k)){rooms[k]=fresh();unread[k]=0;}
+   const next=pickRoom(room,open);
+   if(next&&next!==room){room=next;if(shown)showRoom(next);}
+   badge();
+  },
   // Sign-out: nothing of this player's chat stays on the device.
   reset(){
-   seq++;clearTimeout(readTimer);clearTimeout(muteTimer);rooms={global:fresh(),camp:fresh()};unread={global:0,camp:0};room="global";campFor=null;sending=false;sendBtn.disabled=false;
+   seq++;open=[];clearTimeout(readTimer);clearTimeout(muteTimer);rooms={global:fresh(),camp:fresh()};unread={global:0,camp:0};room="global";campFor=null;sending=false;sendBtn.disabled=false;
    ta.value="";grow();clearMedia();say("");setMuted(null);closeMenu();closeViewer();showPicker(false);listEl.replaceChildren();els.clear();onBadge(0);
   }
  };

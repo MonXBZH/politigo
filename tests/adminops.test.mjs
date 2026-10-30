@@ -266,6 +266,38 @@ test("feed-delete refreshes every screen; duel-cancel voids an open duel without
  sa.close();
 });
 
+test("chat rooms: off by default, each switched on its own, screens told at once; the CLI's chat",async()=>{
+ const a=await player(PORT,"Causeur");const s=stream(a);await until(()=>got(s,"me").length);
+ assert.deepEqual(got(s,"me")[0].chat,{global:false,camp:false});
+ assert.deepEqual((await ok({cmd:"stats"})).chatRooms,{global:false,camp:false});
+ for(const bad of [{},{global:"oui"},{camp:1},{global:true,camp:null}])assert.equal((await adm({cmd:"chat-set",...bad})).ok,false,JSON.stringify(bad));
+ assert.deepEqual((await ok({cmd:"chat-set",global:true,via:"web"})).chat,{global:true,camp:false});
+ assert.ok(await until(()=>got(s,"me").some(m=>m.chat?.global===true&&m.chat.camp===false)));
+ assert.deepEqual((await ok({cmd:"chat-set",camp:true})).chat,{global:true,camp:true});
+ assert.deepEqual((await ok({cmd:"chat-set",global:false})).chat,{global:false,camp:true});
+ assert.deepEqual((await a.call("GET","/api/me")).json.chat,{global:false,camp:true});
+ let c=await cli("chat");assert.equal(c.code,0,c.stderr);assert.match(c.stdout,/pour tous : fermé · chat de camp : ouvert/);
+ c=await cli("chat","on");assert.equal(c.code,0,c.stderr);assert.deepEqual((await ok({cmd:"stats"})).chatRooms,{global:true,camp:true});
+ c=await cli("chat","off","--camp");assert.match(c.stdout,/pour tous : ouvert · chat de camp : fermé/);
+ c=await cli("chat","off","--global");assert.deepEqual((await ok({cmd:"stats"})).chatRooms,{global:false,camp:false});
+ assert.equal((await cli("chat","peut-etre")).code,2);assert.equal((await cli("chat","on","--partout")).code,2);
+ const rows=(await audits()).filter(x=>x.cmd==="chat-set").map(x=>x.detail);
+ assert.ok(rows.includes("Chat pour tous activé")&&rows.includes("Chat de camp désactivé"));
+ s.close();
+});
+
+test("POLITIGO_CHAT only sets the starting point",async()=>{
+ const dir=mkdtempSync(join(tmpdir(),"pgops-chat-")),sock=join(dir,"admin.sock");
+ let p=await boot(SPEED_PORT,dir,{POLITIGO_ADMIN_SOCKET:sock,POLITIGO_CHAT:"camp"});
+ try{
+  assert.deepEqual((await ok({cmd:"stats"},sock)).chatRooms,{global:false,camp:true});
+  await ok({cmd:"chat-set",camp:false},sock);
+ }finally{await stop(p);}
+ p=await boot(SPEED_PORT,dir,{POLITIGO_ADMIN_SOCKET:sock,POLITIGO_CHAT:"on"});
+ try{assert.deepEqual((await ok({cmd:"stats"},sock)).chatRooms,{global:true,camp:false},"the saved choice wins, the env fills the rest");}
+ finally{await stop(p);}
+});
+
 test("chat hooks: reports, delete and mute go through chat.admin",async()=>{
  await player(PORT,"Bavard");
  assert.ok(Array.isArray((await ok({cmd:"chat-reports"})).items));

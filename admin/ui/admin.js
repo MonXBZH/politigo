@@ -33,6 +33,8 @@ const DUEL_RES={win:"victoire",loss:"défaite",tie:"égalité",chicken:"refusé 
 const EVENT={halloween:"Halloween"};
 const VIA={cli:"console",web:"web",schedule:"planif."};
 const FEED_KIND={announce:"annonce",duel:"duel"};
+// The two chat rooms, each switched on by the admin (closed by default).
+const chatState=r=>!r?"—":r.global&&r.camp?"Tous les salons":r.global?"Pour tous":r.camp?"De camp":"Fermé";
 const tr=(map,v)=>v==null?"—":map[v]??String(v);
 
 // ===================================================================== API
@@ -210,7 +212,7 @@ async function viewOverview(){
   h("div",{class:"grid wide"},servers.map(s=>h("div",{class:`card srv-card${s.up?"":" down"}`,onclick:e=>{if(!e.target.closest("button"))enter(s.id);}},
    h("h2",{},h("i",{class:`dot ${s.up?"up":"down"}`}),h("button",{class:"linkish",type:"button",onclick:()=>enter(s.id)},s.name)),
    s.up?inviteWidget(s.invite):null,
-   s.up?kv(["Version",s.version],["Joueurs",s.players],["Connectés",s.online],["Actifs 24 h",s.active24h],["Signalements chat",s.chatReports],
+   s.up?kv(["Version",s.version],["Joueurs",s.players],["Connectés",s.online],["Actifs 24 h",s.active24h],["Chat",chatState(s.chatRooms)],["Signalements chat",s.chatReports],
     ["Prochaine annonce",s.nextAnnounce?`${fmt(s.nextAnnounce.t)} : ${s.nextAnnounce.text}`:"aucune"])
    :h("p",{class:"err"},`Injoignable : ${s.error||"pas de réponse"}`)))),
   h("div",{class:"card"},h("h2",{},"Ajouter un serveur"),h("p",{class:"muted small"},
@@ -233,7 +235,7 @@ async function viewDashboard(){
   h("div",{class:"card"},inviteWidget(inv&&{code:inv.invite||null,open:!!inv.open&&!!inv.invite})),
   h("div",{class:"grid"},
    stat(s.players,"joueurs inscrits"),stat(s.online,"connectés maintenant"),stat(s.active24h,"actifs sur 24 h"),stat(s.active7d,"actifs sur 7 jours"),
-   stat(s.suspended,"suspendus"),stat(s.pushSubs,"abonnements notifications"),stat(s.registrations?(s.registrations.open?"ouvertes":"fermées"):"—","inscriptions"),
+   stat(s.suspended,"suspendus"),stat(s.pushSubs,"abonnements notifications"),stat(s.registrations?(s.registrations.open?"ouvertes":"fermées"):"—","inscriptions"),stat(chatState(s.chatRooms),"chat"),
    stat(s.event?(s.event.current?tr(EVENT,s.event.current):"aucun"):"—",`événement (mode ${{auto:"automatique",off:"désactivé",halloween:"forcé"}[s.event?.mode]??"?"})`)),
   h("div",{class:"grid wide"},
    h("div",{class:"card"},h("h2",{},"Serveur"),h("dl",{class:"kv"},
@@ -406,8 +408,10 @@ async function showMedia(btn,media){
 }
 const ROOM={global:"salon Tous",left:"salon Gauche",right:"salon Droite"};
 async function viewChat(){
- const {items}=await call("chat-reports");
- return [head("Chat · messages signalés",refreshBtn()),items.length?h("div",{class:"list"},items.map(m=>{
+ const [{items},st]=await Promise.all([call("chat-reports"),call("stats")]);
+ const closed=st.chatRooms&&!st.chatRooms.global&&!st.chatRooms.camp;
+ return [head("Chat · messages signalés",refreshBtn()),
+  closed?h("div",{class:"card notice"},h("b",{},"Le chat est fermé : "),"les signalements restent consultables. ",h("a",{href:"#reglages"},"Réglages →")):null,items.length?h("div",{class:"list"},items.map(m=>{
   const author=who(m.author),hrs=h("select",{"aria-label":"Durée"},[[24,"24 h"],[72,"3 jours"],[168,"7 jours"],[720,"30 jours"]].map(([v,t])=>h("option",{value:v},t)));
   const target=m.authorId!=null?{id:m.authorId}:{name:author};
   return h("div",{class:"card"},
@@ -441,6 +445,24 @@ async function viewDuels(){
 }
 
 // ===================================================================== Réglages
+// Two independent switches, saved on change; opening a room asks first (naming the server), closing does not.
+function chatSettings(rooms){
+ if(!rooms)return h("div",{class:"card"},h("h2",{},"Chat"),empty("Ce serveur ne gère pas encore l'ouverture du chat."));
+ const box=(key,label,ask)=>{
+  const c=h("input",{type:"checkbox",checked:!!rooms[key],onchange:async()=>{
+   const on=c.checked;
+   if(on&&!await confirmBox(ask,"Les joueurs concernés pourront écrire et envoyer des images tout de suite.","Ouvrir",false)){c.checked=false;return;}
+   c.disabled=true;
+   try{const r=await call("chat-set",{[key]:on});Object.assign(rooms,r.chat||{[key]:on});toast(`${label} : ${on?"ouvert":"fermé"}.`);}
+   catch(e){c.checked=!on;fail(e);}
+   finally{c.disabled=false;}
+  }});
+  return h("label",{class:"check"},c,label);
+ };
+ return h("div",{class:"card"},h("h2",{},"Chat"),
+  h("div",{},box("global","Chat pour tous","Ouvrir le chat pour tous ?"),box("camp","Chat de camp","Ouvrir le chat de camp ?")),
+  h("p",{class:"muted small"},"Désactivé par défaut ; les joueurs ne peuvent pas l'activer eux-mêmes. Les messages existants sont conservés et réapparaissent à la réouverture."));
+}
 async function viewSettings(){
  const [inv,s]=await Promise.all([call("invite-get"),call("stats")]);
  const open=s.registrations?.open??inv.open,code=h("input",{type:"text",readOnly:true,value:inv.invite||"(aucun)",spellcheck:false,"aria-label":"Code d'invitation"});
@@ -454,6 +476,7 @@ async function viewSettings(){
    h("p",{class:"muted small"},"Fermées : personne ne peut créer de compte, même avec le code."),
    h("div",{class:"btn-row"},h("button",{class:`btn small ${open?"danger":"go"}`,type:"button",onclick:e=>{const b=e.currentTarget;
     (open?confirmBox("Fermer les inscriptions ?","Plus aucun compte ne pourra être créé.","Fermer"):Promise.resolve(true)).then(ok=>ok&&act(b,()=>call("registrations-set",{open:!open}),open?"Inscriptions fermées.":"Inscriptions ouvertes."));}},open?"Fermer les inscriptions":"Ouvrir les inscriptions"))),
+  chatSettings(s.chatRooms),
   h("div",{class:"card"},h("h2",{},"Événement saisonnier"),h("p",{class:"muted small"},`En cours : ${s.event?.current?tr(EVENT,s.event.current):"aucun"}.`),ev,
    h("div",{class:"btn-row"},h("button",{class:"btn small go",type:"button",onclick:e=>act(e.currentTarget,()=>call("event-set",{mode:ev.value}),"Mode d'événement appliqué : les écrans changent tout de suite.")},"Appliquer"))))];
 }

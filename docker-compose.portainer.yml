@@ -42,6 +42,9 @@ services:
       POLITIGO_PUSH_CONTACT: ${POLITIGO_PUSH_CONTACT:-}
       # Seasonal events: empty = automatic (Halloween on 31 Oct-1 Nov); "off" switches them off, "halloween" forces it (tests).
       POLITIGO_EVENT: ${POLITIGO_EVENT:-}
+      # Chat: empty = closed. "on" (both rooms), "global" or "camp" = how a FRESH game starts; afterwards the
+      # admin interface's Réglages decide (this variable no longer changes anything once set there).
+      POLITIGO_CHAT: ${POLITIGO_CHAT:-}
       # Name of this game, shown in the admin interface (useful when it manages several games). Empty = "PolitiGo".
       POLITIGO_SERVER_NAME: ${POLITIGO_SERVER_NAME:-}
       # Admin socket (node admin.mjs, and the admin container through the shared volume below).

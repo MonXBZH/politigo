@@ -53,7 +53,10 @@ body.playing #screen{touch-action:none}
 @media(min-width:960px){:root{--dev:min(52vw,470px)}}
 
 /* action pad */
-.pad{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;width:min(100%,480px)}
+.pad{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;width:min(100%,440px)}
+/* The fifth button, "Chat", only while the organisation opened a room (app.js chatFlags). */
+.pad.five{grid-template-columns:repeat(5,1fr);width:min(100%,480px)}
+.pad-btn[hidden]{display:none}
 .pad-btn{display:flex;flex-direction:column;align-items:center;gap:7px;background:none;border:0;cursor:pointer;padding:4px 0;font:600 13px/1.2 Inter,sans-serif}
 .knob{width:64px;height:64px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(160deg,var(--glass-2),var(--glass));
  border:1px solid var(--line);box-shadow:0 10px 20px -10px #000c,inset 0 1px 0 #fff4;transition:transform .12s,background .2s}
@@ -67,8 +70,8 @@ body.playing #screen{touch-action:none}
 /* A challenge waits (app.js refresh): the "Jouer" icon gives a short clash wiggle every 4 s, still the rest of the time. */
 .pad-btn.clash .knob svg{animation:clash 4s ease-in-out infinite}
 /* Five buttons on a 360 px phone: smaller knobs, still well above the 44 px touch target. */
-@media(max-width:440px){.pad{gap:4px}.knob{width:54px;height:54px}.knob svg{width:25px;height:25px}.pad-btn{font-size:12px}}
-@media(max-width:340px){.knob{width:48px;height:48px}}
+@media(max-width:440px){.pad.five{gap:4px}.pad.five .knob{width:54px;height:54px}.pad.five .knob svg{width:25px;height:25px}.pad.five .pad-btn{font-size:12px}}
+@media(max-width:340px){.pad.five .knob{width:48px;height:48px}}
 @keyframes clash{0%,85%,100%{transform:none}88%{transform:rotate(-14deg) scale(1.1)}91%{transform:rotate(12deg) scale(1.1)}94%{transform:rotate(-8deg)}97%{transform:rotate(4deg)}}
 /* Pinned to the viewport, above sheets and the sign-in screen: always seen, wherever the page is scrolled. */
 .toast,.net{position:fixed;left:50%;z-index:40;margin:0;padding:11px 16px;border-radius:16px;border:1px solid var(--line);backdrop-filter:blur(10px);
@@ -266,7 +269,8 @@ footer{max-width:1120px;margin:0 auto;padding:0 max(16px,env(safe-area-inset-rig
 .chat{flex:1;min-height:0;display:flex;flex-direction:column;gap:8px;position:relative}
 .chat-tabs{margin:8px 0 0;flex:none}.chat-tabs button{min-height:40px;font-size:13px;display:flex;align-items:center;justify-content:center;gap:6px}
 .chat-count{min-width:20px;height:20px;padding:0 6px;border-radius:99px;background:var(--danger);color:#fff;font:700 11px/20px Inter,sans-serif}
-.chat-count[hidden]{display:none}
+.chat-count[hidden],.chat-tabs button[hidden],.chat-tabs[hidden],.chat-solo[hidden]{display:none}
+.chat-solo{margin:8px 0 0;flex:none;font:600 12px ui-monospace,monospace;letter-spacing:.14em;text-transform:uppercase;color:var(--accent-2)}
 .chat-wrap{flex:1;min-height:0;position:relative}
 .chat-log{position:absolute;inset:0;overflow-y:auto;overscroll-behavior:contain;padding:4px 2px;border-radius:16px;scrollbar-width:thin;scrollbar-color:#ffffff30 transparent}
 .chat-log:focus-visible{outline-offset:-3px}

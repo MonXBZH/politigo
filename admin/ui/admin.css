@@ -154,6 +154,8 @@ img.reported{display:block;max-width:min(100%,320px);max-height:320px;border-rad
 .offscreen{position:fixed;left:-9999px;top:0;opacity:0}
 .srv-card .invite{margin:4px 0 10px}
 
+.notice{border-color:#ffd59a77;background:#ffd59a14}
+
 /* dialog and toast */
 .dlg{border:0;padding:0;background:none;color:var(--ink);width:min(92vw,460px);max-height:90vh}
 .dlg::backdrop{background:#05030acc;backdrop-filter:blur(3px)}

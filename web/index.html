@@ -30,7 +30,7 @@
    <button class="pad-btn" type="button" data-sheet="care"><span class="knob"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.6L18 9.4l-4.2 1.8L12 16l-1.8-4.8L6 9.4l4.2-1.8z"/><path d="M19 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></svg></span>Soins</button>
    <button class="pad-btn" type="button" data-sheet="play"><span class="knob"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="7" width="20" height="11" rx="5"/><path d="M7 11v4M5 13h4M15.5 12h.01M18 14h.01"/></svg></span>Jouer</button>
    <button class="pad-btn" type="button" data-sheet="more"><span class="knob"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h6l2 2h8v12H4z"/><path d="M8 12h8M8 15h5"/></svg></span>Dossier</button>
-   <button class="pad-btn" type="button" data-sheet="chat"><span class="knob"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H10l-5 4v-4H4z"/><path d="M8.5 10.5h.01M12 10.5h.01M15.5 10.5h.01"/></svg></span>Chat</button>
+   <button class="pad-btn" type="button" data-sheet="chat" hidden><span class="knob"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H10l-5 4v-4H4z"/><path d="M8.5 10.5h.01M12 10.5h.01M15.5 10.5h.01"/></svg></span>Chat</button>
   </nav>
  </section>
 
@@ -94,6 +94,7 @@
   <button type="button" data-room="global" aria-pressed="true"><span class="chat-tab-name">Tous</span><span class="chat-count" aria-hidden="true" hidden></span></button>
   <button type="button" data-room="camp" aria-pressed="false"><span class="chat-tab-name">Mon camp</span><span class="chat-count" aria-hidden="true" hidden></span></button>
  </div>
+ <p class="chat-solo" hidden></p>
  <div class="chat-wrap">
   <div class="chat-log" role="log" aria-live="polite" aria-label="Messages" tabindex="0">
    <p class="fine chat-more" hidden></p>
