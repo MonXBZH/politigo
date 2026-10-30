@@ -30,6 +30,7 @@
    <button class="pad-btn" type="button" data-sheet="care"><span class="knob"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.6L18 9.4l-4.2 1.8L12 16l-1.8-4.8L6 9.4l4.2-1.8z"/><path d="M19 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></svg></span>Soins</button>
    <button class="pad-btn" type="button" data-sheet="play"><span class="knob"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="7" width="20" height="11" rx="5"/><path d="M7 11v4M5 13h4M15.5 12h.01M18 14h.01"/></svg></span>Jouer</button>
    <button class="pad-btn" type="button" data-sheet="more"><span class="knob"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h6l2 2h8v12H4z"/><path d="M8 12h8M8 15h5"/></svg></span>Dossier</button>
+   <button class="pad-btn" type="button" data-sheet="chat"><span class="knob"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H10l-5 4v-4H4z"/><path d="M8.5 10.5h.01M12 10.5h.01M15.5 10.5h.01"/></svg></span>Chat</button>
   </nav>
  </section>
 
@@ -85,6 +86,37 @@
   <div id="sheet-body"></div>
  </div>
 </div>
+
+<!-- The chat sheet's content (web/chat.mjs): cloned once, then updated in place, never redrawn. -->
+<template id="chat-tpl">
+<div class="chat">
+ <div class="tabs small chat-tabs" role="group" aria-label="Salon">
+  <button type="button" data-room="global" aria-pressed="true"><span class="chat-tab-name">Tous</span><span class="chat-count" aria-hidden="true" hidden></span></button>
+  <button type="button" data-room="camp" aria-pressed="false"><span class="chat-tab-name">Mon camp</span><span class="chat-count" aria-hidden="true" hidden></span></button>
+ </div>
+ <div class="chat-wrap">
+  <div class="chat-log" role="log" aria-live="polite" aria-label="Messages" tabindex="0">
+   <p class="fine chat-more" hidden></p>
+   <ol class="chat-list"></ol>
+  </div>
+  <button class="chat-pill" type="button" hidden>↓ Nouveaux messages</button>
+ </div>
+ <form class="chat-form" novalidate>
+  <div class="chat-emoji" id="chat-emoji" hidden></div>
+  <div class="chat-preview" hidden><img alt="Image jointe"><button class="icon-btn" type="button" aria-label="Retirer l'image">✕</button></div>
+  <div class="chat-row">
+   <button class="icon-btn chat-emoji-btn" type="button" aria-label="Émojis" aria-expanded="false" aria-controls="chat-emoji"><span aria-hidden="true">😊</span></button>
+   <button class="icon-btn chat-img-btn" type="button" aria-label="Joindre une image ou un GIF"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 8"/></svg></button>
+   <input class="chat-file" type="file" accept="image/gif,image/png,image/jpeg,image/webp" hidden tabindex="-1">
+   <textarea rows="1" maxlength="1000" placeholder="Écris un message…" aria-label="Ton message" aria-describedby="chat-error chat-status"></textarea>
+   <button class="icon-btn chat-send" type="submit" aria-label="Envoyer"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12l16-8-6 16-3-6z"/><path d="M11 14l9-10"/></svg></button>
+  </div>
+  <p class="form-error inline chat-error" id="chat-error" role="alert"></p>
+  <p class="fine chat-status" id="chat-status" role="status"></p>
+ </form>
+ <div class="chat-viewer" role="dialog" aria-modal="true" aria-label="Image en grand" hidden><img alt=""><button class="icon-btn chat-viewer-close" type="button" aria-label="Fermer l'image">✕</button></div>
+</div>
+</template>
 
 <div class="onboard" id="auth" hidden>
  <div class="onboard-card">

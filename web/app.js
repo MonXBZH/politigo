@@ -4,6 +4,7 @@ import * as R from "./rules.mjs";
 import {createMini,manifLabel} from "./minigames.mjs";
 import {missedEntries,latestEntry} from "./changelog.mjs";
 import {drawTest,verdict,randomCamp} from "./politest.mjs";
+import {createChat} from "./chat.mjs";
 const {people,personalItems,stresses,shop,fxNames,XP,xpCost,xpFloor,stage}=R;
 const $=s=>document.querySelector(s);
 const motionQuery=matchMedia("(prefers-reduced-motion: reduce)");
@@ -728,7 +729,8 @@ document.addEventListener("keydown",e=>{
  if(!$("#sheet").hidden){
   if(e.key==="Escape"){closeSheet();return;}
   if(e.key==="Tab"){                                   // keep keyboard focus inside the open sheet
-   const f=[...$(".sheet-card").querySelectorAll("button:not(:disabled),select,input:not(:disabled)")];
+   // Only what is on screen: a hidden file input or a closed menu cannot take the focus.
+   const f=[...$(".sheet-card").querySelectorAll("button:not(:disabled),select,input:not(:disabled),textarea:not(:disabled),[tabindex='0']")].filter(el=>el.getClientRects().length);
    if(!f.length)return;
    const card=$(".sheet-card"),a=document.activeElement,i=f.indexOf(a),inside=i>=0||(a!==card&&card.contains(a));
    if(e.shiftKey&&(i===0||!inside)){e.preventDefault();f[f.length-1].focus();}
@@ -774,7 +776,7 @@ for(const g of GAUGES){
 function pill(t,c=""){const s=document.createElement("span");s.className=`pill ${c}`;s.textContent=t;return s;}
 function refresh(){
  if(!S)return;
- document.body.dataset.camp=S.camp;
+ document.body.dataset.camp=S.camp;chat.syncCamp();
  const sz=season();if(document.body.dataset.season!==sz)document.body.dataset.season=sz;
  const p=person();
  $("#chip-fm").textContent=`${S.fm} FM`;$("#chip-clock").textContent=clockLabel();
@@ -874,11 +876,15 @@ function connectLive(){
  on("feed",v=>{if(!Array.isArray(v))return;for(const f of v)feed.unshift(f);feed.length=Math.min(feed.length,60);renderFeed();});
  on("duel",v=>{if(v&&typeof v==="object")duelEvent(v);});
  on("announce",v=>{if(typeof v?.text!=="string"||!v.text.trim())return;announceQ.push(v.text.slice(0,240));if(announceQ.length>3)announceQ.shift();showAnnounce();});
+ // The chat: the badge on "Chat" only, never a toast, a sound or a notification (chat.mjs).
+ on("chat",v=>chat.onChat(v));
+ on("chatDel",v=>chat.onDel(v));
+ on("chatUnread",v=>chat.onUnread(v));
  on("ping",()=>{});
  // Pushed out by a newer tab or device of the same player: this one stays quiet until it is looked at again.
  on("bye",()=>{es?.close();es=null;});
  // Each (re)connection reloads the duels too: the badge on "Jouer" must not miss a challenge sent meanwhile.
- es.onopen=()=>{lastLive=Date.now();setNet(true);duelsLoad();};
+ es.onopen=()=>{lastLive=Date.now();setNet(true);duelsLoad();chat.resync();};
  // A closed stream is either an expired session (the check below shows the login) or a server restart.
  es.onerror=()=>{if(!es)return;setNet(false);if(es.readyState===EventSource.CLOSED){es=null;retryLive();}};
 }
@@ -956,6 +962,7 @@ function openSheet(kind,opener){
 function liveSheet(force=false){
  if(!S||!sheetKind||$("#sheet").hidden||(!force&&sheetSig()===shownSig))return;
  if(sheetKind==="test")return;                       // a test under way owes nothing to the state: never redrawn under the finger
+ if(sheetKind==="chat")return;                       // built once and updated in place (chat.mjs): the composer keeps focus and text
  // Never under the player's fingers: an armed "tap again" button or a half-typed password survives updates.
  if($("#sheet-body .armed, #sheet-body form"))return;
  const card=$(".sheet-card"),top=card.scrollTop,f=[...card.querySelectorAll("button,select,input")],i=f.indexOf(document.activeElement);
@@ -966,6 +973,9 @@ function renderSheet(kind,opener){
  sheetKind=kind;if(opener)sheetOpener=opener;shownSig=sheetSig();
  const body=$("#sheet-body"),p=person();body.replaceChildren();
  const set=(t,s)=>{$("#sheet-title").textContent=t;$("#sheet-sub").textContent=s;};
+ if(sheetKind!=="chat")chat.hide();
+ $("#sheet").classList.toggle("chat",kind==="chat");
+ if(kind==="chat")chat.mount(body,set);
  if(kind==="food"){
   set("La Buvette",`${S.fm} FM (frais de mandat) en caisse · 2 FM gagnés par heure de vie`);
   // Halloween's daily gift, the only thing the event changes in the game (rules.mjs treatBlock).
@@ -1114,7 +1124,7 @@ function closeSheet(fromBack=false){
  if($("#sheet").hidden)return;
  if(sheetKind==="news"&&newsAuto){newsAuto=false;SEEN=RELEASE;markNewsSeen();}
  if(!fromBack&&sheetInHistory){sheetInHistory=false;pendingBack=true;history.back();}
- $("#sheet").hidden=true;sheetKind=null;setBackgroundInert(false);
+ $("#sheet").hidden=true;sheetKind=null;setBackgroundInert(false);chat.hide();$("#sheet").classList.remove("chat");
  if(authEl.hidden)(sheetOpener||cv).focus();
 }
 document.querySelectorAll("[data-sheet]").forEach(b=>b.addEventListener("click",()=>{
@@ -1123,6 +1133,12 @@ document.querySelectorAll("[data-sheet]").forEach(b=>b.addEventListener("click",
  skipScene();openSheet(b.dataset.sheet,b);
 }));
 $("#sheet-close").addEventListener("click",()=>closeSheet());
+// ---------- chat ----------
+// The unread count sits on the "Chat" button like the challenges on "Jouer": a badge, nothing that pops up.
+const chat=createChat({api,sheet:$("#sheet"),getCamp:()=>S?.camp||"left",getTz:()=>R.timeZone(),reduced:()=>reduced,onBadge(n){
+ const b=$(".pad-btn[data-sheet=chat]");b.classList.toggle("alert",n>0);
+ if(n>0){b.dataset.count=n>9?"9+":String(n);b.setAttribute("aria-label",`Chat (${n} message${n>1?"s":""} non lu${n>1?"s":""})`);}else{delete b.dataset.count;b.removeAttribute("aria-label");}
+}});
 
 // ---------- duels ----------
 // GET /api/duels: the challenges (each from this player's side: role, status, vs, mine, theirs, res), the opponents
@@ -1361,7 +1377,7 @@ function armRestart(camp,text){
 const authEl=$("#auth");
 let regCamp="left";
 function showAuth(message=""){
- closeSheet();es?.close();es=null;S=null;anim=pong=mini=scene=null;newsPending=false;toastQ.length=0;announceQ.length=0;$("#announce").hidden=true;duelData=null;duelErr="";duelSeq++;pushOn=null;pushSynced=false;setNet(true);$("#tips").hidden=true;
+ closeSheet();chat.reset();es?.close();es=null;S=null;anim=pong=mini=scene=null;newsPending=false;toastQ.length=0;announceQ.length=0;$("#announce").hidden=true;duelData=null;duelErr="";duelSeq++;pushOn=null;pushSynced=false;setNet(true);$("#tips").hidden=true;
  authEl.hidden=false;setBackgroundInert(true);
  $("#auth-error").textContent=message;regQuizShow(false);$("#camp-note").textContent="";document.body.dataset.camp=regCamp;
  document.querySelectorAll(".camp").forEach(b=>{

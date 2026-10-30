@@ -53,7 +53,7 @@ body.playing #screen{touch-action:none}
 @media(min-width:960px){:root{--dev:min(52vw,470px)}}
 
 /* action pad */
-.pad{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;width:min(100%,440px)}
+.pad{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;width:min(100%,480px)}
 .pad-btn{display:flex;flex-direction:column;align-items:center;gap:7px;background:none;border:0;cursor:pointer;padding:4px 0;font:600 13px/1.2 Inter,sans-serif}
 .knob{width:64px;height:64px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(160deg,var(--glass-2),var(--glass));
  border:1px solid var(--line);box-shadow:0 10px 20px -10px #000c,inset 0 1px 0 #fff4;transition:transform .12s,background .2s}
@@ -66,6 +66,9 @@ body.playing #screen{touch-action:none}
 .pad-btn.alert[data-count] .knob::after{content:attr(data-count);top:-2px;right:-2px;width:20px;height:20px;font:700 12px/20px Inter,sans-serif;color:#fff;text-align:center}
 /* A challenge waits (app.js refresh): the "Jouer" icon gives a short clash wiggle every 4 s, still the rest of the time. */
 .pad-btn.clash .knob svg{animation:clash 4s ease-in-out infinite}
+/* Five buttons on a 360 px phone: smaller knobs, still well above the 44 px touch target. */
+@media(max-width:440px){.pad{gap:4px}.knob{width:54px;height:54px}.knob svg{width:25px;height:25px}.pad-btn{font-size:12px}}
+@media(max-width:340px){.knob{width:48px;height:48px}}
 @keyframes clash{0%,85%,100%{transform:none}88%{transform:rotate(-14deg) scale(1.1)}91%{transform:rotate(12deg) scale(1.1)}94%{transform:rotate(-8deg)}97%{transform:rotate(4deg)}}
 /* Pinned to the viewport, above sheets and the sign-in screen: always seen, wherever the page is scrolled. */
 .toast,.net{position:fixed;left:50%;z-index:40;margin:0;padding:11px 16px;border-radius:16px;border:1px solid var(--line);backdrop-filter:blur(10px);
@@ -251,4 +254,64 @@ footer{max-width:1120px;margin:0 auto;padding:0 max(16px,env(safe-area-inset-rig
 .quiz-camp canvas{flex:none;width:72px;height:72px;image-rendering:pixelated}
 .quiz-camp b{display:block;font:600 19px Fredoka,sans-serif}
 .quiz-camp small{display:block;color:var(--muted);font-size:13px}
+/* Chat sheet (chat.mjs): full height on a phone, following the visual viewport (--vvh/--vvt) above the keyboard. */
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.sheet.chat{bottom:auto;top:var(--vvt,0px);height:var(--vvh,100dvh)}
+.sheet.chat .sheet-card{height:100%;max-height:none;display:flex;flex-direction:column;overflow:hidden;border-radius:0;padding:max(4px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(8px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left))}
+.sheet.chat .grabber{display:none}
+.sheet.chat .sheet-head h2{font-size:21px}
+.sheet.chat .sheet-sub{font-size:12px}
+@media(min-width:700px){.sheet.chat{top:0;height:100dvh}.sheet.chat .sheet-card{height:min(780px,92dvh);border-radius:26px;padding:6px 18px 14px}.sheet.chat .grabber{display:block}}
+.sheet.chat #sheet-body{flex:1;min-height:0;display:flex;flex-direction:column}
+.chat{flex:1;min-height:0;display:flex;flex-direction:column;gap:8px;position:relative}
+.chat-tabs{margin:8px 0 0;flex:none}.chat-tabs button{min-height:40px;font-size:13px;display:flex;align-items:center;justify-content:center;gap:6px}
+.chat-count{min-width:20px;height:20px;padding:0 6px;border-radius:99px;background:var(--danger);color:#fff;font:700 11px/20px Inter,sans-serif}
+.chat-count[hidden]{display:none}
+.chat-wrap{flex:1;min-height:0;position:relative}
+.chat-log{position:absolute;inset:0;overflow-y:auto;overscroll-behavior:contain;padding:4px 2px;border-radius:16px;scrollbar-width:thin;scrollbar-color:#ffffff30 transparent}
+.chat-log:focus-visible{outline-offset:-3px}
+.chat-more{text-align:center;margin:4px 0 8px}.chat-more[hidden]{display:none}
+.chat-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.chat-msg{display:flex;align-items:flex-start;gap:2px;max-width:92%}
+.chat-msg.mine{align-self:flex-end;flex-direction:row-reverse}
+.chat-bubble{flex:0 1 auto;min-width:0;padding:7px 12px 8px;border-radius:16px 16px 16px 4px;background:var(--glass-2);border:1px solid var(--line);-webkit-touch-callout:none}
+.chat-msg.mine .chat-bubble{border-radius:16px 16px 4px 16px;background:color-mix(in srgb,var(--accent) 22%,transparent);border-color:color-mix(in srgb,var(--accent) 45%,transparent)}
+@media(pointer:coarse){.chat-bubble{user-select:none;-webkit-user-select:none}}
+.chat-meta{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);min-width:0}
+.chat-meta .presence{margin-left:0;width:7px;height:7px}
+.chat-author{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:14em}
+.chat-author.left{color:#ff9db0}.chat-author.right{color:#9cc0ff}
+.chat-meta time{font:11px ui-monospace,monospace;white-space:nowrap}
+.chat-text{margin:2px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:15px;line-height:1.4}
+.chat-pic{display:block;margin-top:6px;padding:0;border:0;background:none;cursor:zoom-in;border-radius:12px;overflow:hidden;max-width:240px}
+.chat-pic img{display:block;max-width:min(240px,100%);max-height:240px;min-width:60px;min-height:40px;object-fit:contain;background:#ffffff0d}
+.chat-pic.broken{display:none}
+.chat-more-btn{flex:none;align-self:center;width:32px;height:44px;border:0;border-radius:12px;background:none;color:var(--muted);font-size:18px;cursor:pointer;opacity:.6}
+.chat-msg:hover .chat-more-btn,.chat-more-btn:focus-visible,.chat-more-btn[aria-expanded=true]{opacity:1}
+.chat-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.chat-msg.mine .chat-actions{justify-content:flex-end}
+.chat-actions .btn{padding:10px 14px;min-height:44px;font-size:13px}
+.chat-pill{position:absolute;left:50%;bottom:10px;transform:translateX(-50%);padding:10px 16px;min-height:44px;border-radius:99px;border:1px solid var(--accent);background:var(--bg1);color:var(--ink);font-weight:600;font-size:13px;cursor:pointer;box-shadow:0 6px 18px #0009}
+.chat-pill[hidden]{display:none}
+.chat-form{flex:none;display:flex;flex-direction:column;gap:6px}
+.chat-row{display:flex;align-items:flex-end;gap:6px}
+.chat-row textarea{flex:1;min-width:0;min-height:44px;max-height:132px;resize:none;overflow-y:auto;padding:11px 14px;border-radius:22px;border:1px solid var(--line);background:#ffffff12;color:var(--ink);font:16px/1.35 Inter,system-ui,sans-serif}
+.chat-row textarea:focus{outline:2px solid var(--accent);outline-offset:1px}
+.chat-row .icon-btn{display:grid;place-items:center;padding:0}
+.chat-row .icon-btn svg{width:22px;height:22px;stroke:var(--accent);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.chat-send{background:color-mix(in srgb,var(--accent) 25%,transparent)}
+.icon-btn:disabled{opacity:.45;cursor:not-allowed}
+.chat-emoji{max-height:min(220px,32dvh);overflow-y:auto;padding:6px 8px;border-radius:16px;background:#00000040;border:1px solid var(--line)}
+.chat-emoji[hidden],.chat-preview[hidden],.chat-viewer[hidden]{display:none}
+.chat-emoji-cat{margin:6px 2px 2px;font:600 11px ui-monospace,monospace;letter-spacing:.12em;text-transform:uppercase;color:var(--accent-2)}
+.chat-emoji-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(44px,1fr))}
+.chat-emoji-grid button{height:44px;border:0;border-radius:12px;background:none;font-size:24px;cursor:pointer}
+.chat-emoji-grid button:hover{background:var(--glass-2)}
+.chat-preview{display:flex;align-items:flex-start;gap:8px}
+.chat-preview img{max-width:120px;max-height:90px;border-radius:12px;border:1px solid var(--line);object-fit:contain}
+.chat-error,.chat-status{margin:0}.chat-status:empty{display:none}
+.chat.drop .chat-wrap{outline:2px dashed var(--accent);outline-offset:-2px;border-radius:16px}
+.chat-viewer{position:fixed;inset:0;z-index:50;display:grid;place-items:center;padding:max(16px,env(safe-area-inset-top)) 16px max(16px,env(safe-area-inset-bottom));background:#000000e6}
+.chat-viewer img{max-width:100%;max-height:100%;object-fit:contain;border-radius:8px}
+.chat-viewer-close{position:absolute;top:max(12px,env(safe-area-inset-top));right:max(12px,env(safe-area-inset-right));background:#000a}
 @media(prefers-reduced-motion:reduce){.blob{animation:none}.sheet-card{animation:none}.presence.on,.pad-btn.clash .knob svg{animation:none}*{transition:none!important}}
