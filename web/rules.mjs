@@ -93,17 +93,119 @@ export const shop=[
  {key:"garden",kind:"care",anim:"win",price:4,left:"Jardin partagé",right:"Promenade au jardin municipal",fx:{moral:30}}
 ];
 export const pongLines={
- left:["Et les riches ?","Réac !","Et le climat ?","Cadeaux fiscaux !","Et vos affaires ?","Les patrons d'abord ?"],
- right:["Et la dette ?","Utopiste !","Et l'insécurité ?","Assistanat !","Bobo !","Vous taxez tout !"]
+ left:["Et les riches ?","Réac !","Et le climat ?","Cadeaux fiscaux !","Et vos affaires ?","Les patrons d'abord ?",
+  "Rendez l'ISF !","Ultralibéral !","Et les profs ?","Et les retraites ?","Valet du CAC 40 !","Paradis fiscaux !","Droite rance !",
+  "Ruisselle ? Où ça ?","Et l'hôpital ?","Privatiseur !","Encore un 49.3 ?","Et les superprofits ?","Climatosceptique !","Et les mal-logés ?"],
+ right:["Et la dette ?","Utopiste !","Et l'insécurité ?","Assistanat !","Bobo !","Vous taxez tout !",
+  "Wokiste !","Et les impôts ?","Allez bosser !","Comme au Venezuela !","Laxiste !","Khmer vert !","Et l'autorité ?",
+  "Zadiste !","Et la valeur travail ?","Gréviste !","Bisounours !","Gauche caviar !","Planche à billets !","Et nos frontières ?"]
 };
 export const fxNames={sat:"satiété",moral:"moral",energy:"énergie",hyg:"hygiène"};
+// The timed debate's questions, here because the server deals and replays duels: the left answer, the right
+// answer, and a decoy that is wrong for everyone.
+export const QUESTIONS=[
+ ["Programme économique ?","Taxer les riches","Taxer les pauvres","Taxer les politiques"],
+ ["Le chômage ?","Partager le temps de travail","Supprimer les allocs","Interdire les lundis"],
+ ["La retraite ?","À 60 ans, en fanfare","À 70 ans, en forme","À 18 ans, puis on verra"],
+ ["L'école ?","Plus de profs","Plus d'uniformes","Plus de récré"],
+ ["Les frontières ?","Ouvertes à tous","Fermées à double tour","Une frontière avec la Lune"],
+ ["La sécurité ?","Plus de prévention","Plus de police","Un vigile par habitant"],
+ ["L'écologie ?","Vélo pour tous","Nucléaire pour tous","Trottinette pour les ministres"],
+ ["Les services publics ?","Tout nationaliser","Tout privatiser","Tout vendre aux enchères"],
+ ["La cantine ?","Menu végé","Entrecôte obligatoire","Menu tofu-merguez"],
+ ["Le SMIC ?","Augmenter le SMIC","Baisser les charges","Payer en tickets resto"],
+ ["La voiture ?","Transports gratuits","Autoroute à 150","Voitures à pédales"],
+ ["L'impôt sur la fortune ?","Rétablir l'ISF","Supprimer l'ISF","Impôt sur la moustache"],
+ ["Le temps de travail ?","Semaine de 32 h","Travailler plus","Semaine de 8 jours"],
+ ["Les banques ?","Les nationaliser","Les rassurer","Sous le matelas"],
+ ["L'Europe ?","Europe sociale","Europe des nations","Europe en karaoké"],
+ ["Le logement ?","Encadrer les loyers","Défiscaliser les proprios","Tous en camping-car"],
+ ["La culture ?","Subventionner les artistes","Défendre le patrimoine","Remplacer l'opéra par du karting"],
+ ["Les grèves ?","Soutien total","Service minimum","Grève de la grève"],
+ ["L'héritage ?","Taxer l'héritage","Protéger l'héritage","Hériter de ses voisins"],
+ ["La santé ?","Hôpital public","Mutuelles privées","Tisane remboursée"],
+ ["La justice ?","Réinsertion","Tolérance zéro","Pierre-feuille-ciseaux"],
+ ["Le budget ?","Dépenser pour relancer","Couper dans les dépenses","Imprimer des billets à la cave"],
+ // The rawer ones: café-du-commerce caricatures, as unfair to both sides.
+ ["Les patrons ?","Tous des voleurs","Tous des héros","Tous en slip"],
+ ["Les fonctionnaires ?","Des héros sous-payés","Une armée de planqués","Des robots en kit"],
+ ["Les riches ?","Qu'ils crachent au bassinet !","Qu'on leur fiche la paix !","Qu'ils adoptent un député"],
+ ["Les syndicats ?","Le sel de la terre","Une bande de feignants","Un club de pétanque"],
+ ["Les flics ?","Désarmer la police","Ils ont toujours raison","Les remplacer par des mimes"],
+ ["Le cannabis ?","Légaliser le joint","Prison au premier pétard","Remboursé par la Sécu"],
+ ["Les assistés ?","Ça n'existe pas","Au boulot, les fainéants !","Assistés par ordinateur"],
+ ["Les bobos ?","Notre électorat","Des rebelles en trottinette","Un pansement et ça passe"],
+ ["Le service militaire ?","Jamais de la vie","Obligatoire, en rangers","En pyjama, le dimanche"],
+ ["La fraude ?","La fraude fiscale d'abord","La fraude aux allocs d'abord","Frauder au loto"]
+];
+// What each answer of a question is, in QUESTIONS order.
+export const ANSWER_KINDS=["left","right","decoy"];
+
+// ===================================================================== SEASONAL EVENTS
+// Halloween: 31 October and 1 November in the game's time zone, then gone by itself. The server's POLITIGO_EVENT
+// can force it ("halloween", to test) or switch it off early ("off"); "auto" follows the calendar. Everything is a
+// costume (names, drawings, lines) with the same prices and effects, except the daily treat below.
+export const EVENT_MODES=["auto","off","halloween"];
+export function eventAt(ms,mode="auto"){
+ if(mode==="halloween")return "halloween";
+ if(mode!=="auto"||!Number.isFinite(ms))return "";
+ const p=parts(ms),md=Number(p.month)*100+Number(p.day);
+ return md===1031||md===1101?"halloween":"";
+}
+export const HALLOWEEN={
+ // Same keys, prices and effects as the shop: only the names change, as unfair to both camps.
+ shop:{
+  bread:{left:"Quignon à l'ail de la cantine",right:"Quignon du manoir"},
+  soup:{left:"Soupe populaire au potiron",right:"Velouté de potimarron à la truffe"},
+  snack:{left:"Bonbons de la kermesse",right:"Pralines du chocolatier"},
+  coffee:{left:"Potion de la sorcière bio",right:"Potion du chaudron du château"},
+  meal:{left:"Couscous à la citrouille",right:"Gratin de potiron du banquet"},
+  banquet:{left:"Banquet des morts-vivants de l'Huma",right:"Dîner des sommets hantés"},
+  soap:{left:"Bain d'eau bénite de la coopérative",right:"Bain anti-malédiction de l'artisan"},
+  rest:{left:"Hamac entre deux tombes",right:"Cercueil capitonné du dimanche"},
+  garden:{left:"Balade au cimetière du Père-Lachaise",right:"Promenade au manoir hanté"}
+ },
+ // What each camp throws at the other in the Pong, on top of the usual lines.
+ pong:{
+  left:["Vampire du CAC 40 !","Suceur de niches fiscales !","Rends l'argent, Dracula !","Momie du Sénat !","Même mort, tu votes à droite !",
+   "Des bonbons ou un 49.3 ?","Fantôme de l'ISF !","Loup-garou du patronat !","Ton programme fait peur !","Zombie du ruissellement !","Citrouille libérale !","Tu fais peur aux pauvres !"],
+  right:["Zombie de l'assistanat !","Tu fais plus peur que la dette !","Sorcière fiscale !","Le spectre du communisme !","Momie de 68 !",
+   "Des bonbons gratuits pour tous ?","Fantôme du plein-emploi !","Loup-garou des impôts !","Ton budget fait peur !","Même mort, tu fais grève !","Revenant de la planche à billets !","Citrouille woke !"]
+ },
+ // Solo debate only: a duel deals from QUESTIONS alone, so a duel played across the event's end replays the same.
+ questions:[
+  ["Halloween ?","Fête païenne et populaire","Vive la Toussaint française","Fête nationale du potiron"],
+  ["Les bonbons ?","Gratuits pour tous les enfants","Pour ceux qui les méritent","Remboursés par la Sécu"],
+  ["Les vampires ?","Taxer leur sang","Ils créent de l'emploi","Les inviter au Sénat"],
+  ["Les zombies ?","Régulariser les morts-vivants","Expulser les morts-vivants","Les élire au Parlement"],
+  ["La maison hantée ?","La réquisitionner","Respecter la propriété","La louer aux touristes"],
+  ["Les sorcières ?","Des héroïnes féministes","Contrôle des balais","Balais électriques"],
+  ["La citrouille ?","Potager collectif","Agriculture française d'abord","Carrosse de fonction"],
+  ["Le couvre-feu ?","Liberté de hanter","Couvre-feu à minuit","Réservé aux chauves-souris"]
+ ],
+ sleep:{left:"Zzz… demain je plante le CAC 40…",right:"Zzz… je ne mords que les niches fiscales…"},
+ ghost:{left:"Un spectre hante l'Europe…",right:"Bouh ! 3 000 milliards de dette !"},
+ // "Des bonbons ou un amendement ?": once a day while the event lasts, awake, the same gift in both camps.
+ treat:{moral:5,lines:{
+  left:["Bonbons partagés avec toute la cantine : ça, c'est la redistribution.","Sachet de bonbons nationalisé, réparti équitablement.","Un camarade t'offre des bonbons sans patron ni colorant."],
+  right:["Bonbons mérités, avec un chocolat suisse en prime.","Bonbons défiscalisés : pas un centime pour l'État.","Un donateur t'offre des pralines : du pur mécénat."]
+ }}
+};
+// A shop item's name, in costume while an event lasts.
+export const itemName=(it,camp,event="")=>event==="halloween"&&HALLOWEEN.shop[it.key]?HALLOWEEN.shop[it.key][camp]:it[camp];
+// A line for one camp: half of them from the event's while it lasts.
+export function pongLine(camp,event="",random=Math.random){
+ const l=event==="halloween"&&random()<0.5?HALLOWEEN.pong[camp]:pongLines[camp];
+ return l[Math.floor(random()*l.length)];
+}
 
 // ===================================================================== RULES
 // Everything below takes the companion state S as an argument. The server is the only one that MUTATES
 // a state (advance, act); the browser imports the same module for the read-only checks it displays.
 export const H=3600000;
 export const ECO={income:2,cap:99,nightEnd:6,awake:{sat:13,moral:4,energy:8,hyg:6},night:{sat:4,moral:2,energy:-15,hyg:2}};
-// Tuned by simulation: 6 visits + 6 activities a day reach level 100 on day 15; 3 bare visits survive and reach it on day ~39.
+// Tuned by simulation: 6 visits + 6 activities a day reach level 100 on day 15 (mini-game bonuses aside: with good
+// scores, around day 11-13); 3 bare visits survive and reach it on day ~39.
 export const XP={base:5,visit:25,visitGap:2,visitsPerDay:8,activity:30,actsPerVisit:2,actsPerDay:8,deathHours:12,
  excellent:50,correct:25,a:17,b:1.15,streakStep:0.01,streakCap:0.25,stressMin:0.03,stressMax:0.15,napFactor:0.5};
 // The hourly stress risk follows his moral: 3 % at full moral, 15 % at rock bottom. A sulking candidate spirals.
@@ -112,16 +214,24 @@ export const stressChance=S=>XP.stressMin+(XP.stressMax-XP.stressMin)*(100-S.mor
 export const STRESS_HIT=5;
 export const DOUBLE={odds:0.5,moral:12,energy:12,window:H,stressFactor:2};
 // The Pong is played in the browser, so its result is checked: no more than ~1.5 returns a second, within 90 s.
-export const PONG_RULES={maxScore:30,minSeconds:2,timeoutSeconds:90,returnsPerSecond:1.5,bonusPerReturn:2,bonusCap:20};
+export const PONG_RULES={maxScore:30,minSeconds:2,timeoutSeconds:90,returnsPerSecond:1.5,bonusPerReturn:1,bonusCap:10};
 // Mini-games played in the browser (results checked like the Pong's): one per camp for the "Manif", and the
 // timed debate behind "Débattre". The bonus comes on top of the activity XP; a score is capped by duration, at a
 // human pace (the browser waits on the result screen at least 4 s before sending, which only adds margin): a
 // script can no longer claim the full bonus a few seconds after the start.
 export const MINI={
  debate:{label:"Débat chrono",camp:null,ms:15000,maxScore:60,perSecond:2.5,bonusRate:1,bonusCap:20,great:18},
- cortege:{label:"Le Cortège",camp:"left",ms:30000,maxScore:400,perSecond:8,bonusRate:0.2,bonusCap:20,great:100},
- epervier:{label:"L'Épervier",camp:"right",ms:35000,maxScore:150,perSecond:2,bonusRate:2,bonusCap:20,great:15}
+ cortege:{label:"Le Cortège",camp:"left",ms:30000,maxScore:400,perSecond:8,bonusRate:0.25,bonusCap:30,great:120},
+ epervier:{label:"L'Épervier",camp:"right",ms:35000,maxScore:150,perSecond:2,bonusRate:2,bonusCap:30,great:15}
 };
+// The debate's clock: a 1.3 s countdown, then 15 s of play; a wrong answer costs a second, and a pick shows for
+// 260 ms before the next one counts.
+export const DEBATE={intro:1300,penalty:1000,flash:260};
+// Duels (PvP, played one after the other within 24 h): both players get the same debate, dealt from a seed the
+// server draws, and the server replays each player's picks. A duel score is computed, never taken on trust.
+// A win pays at most paidWins times a day; a lost duel never costs a level nor pushes a gauge under "floor".
+export const DUEL={game:"debate",win:{xp:40,moral:10,energy:5},loss:{xp:-15,moral:-10,energy:-5},tie:{moral:5},chicken:{moral:3},
+ floor:25,perDay:3,paidWins:3,minLevel:5,minAgeMs:864e5,window:864e5,maxPicks:80,minGap:250};
 // A great score is announced in the public feed at most once per game hour and player.
 const greatAnnounced=S=>S.journal.some(j=>j.k==="mini"&&j.d?.great===true&&S.vclock-j.t<H);
 export const MINI_RULES={minSeconds:3,graceSeconds:75};   // expiry = ms/1000 + graceSeconds after the start
@@ -146,6 +256,10 @@ function parts(ms){
 export const clockOf=ms=>{const p=parts(ms);return {hour:Number(p.hour),minute:Number(p.minute)};};
 export const hodOf=idx=>Number(parts(idx*H).hour);
 export const dayKey=idx=>{const p=parts(idx*H);return Number(p.year)*10000+Number(p.month)*100+Number(p.day);};
+// The day of the mandate counts calendar days in the game's time zone: day 1 is the day of birth, and the next one
+// starts at midnight, like the daily limits (visits, activities, coffees), not 24 h after the birth hour.
+const civilDay=ms=>{const p=parts(ms);return Date.UTC(Number(p.year),Number(p.month)-1,Number(p.day))/864e5;};
+export const mandateDay=(S,now=S.vclock)=>Math.max(1,civilDay(now)-civilDay(S.born)+1);
 export const curIdx=S=>Math.floor(S.vclock/H);
 export const isNight=S=>hodOf(curIdx(S))<ECO.nightEnd;
 // Asleep = the night (forced) or a nap the player started by switching the light off.
@@ -166,7 +280,7 @@ export function freshState(camp,now){
  return {v:2,camp,vclock:now,lastReal:now,hourIdx:Math.floor(now/H),born:now,
   fm:10,sat:80,moral:80,energy:80,hyg:80,xp:0,lvl:1,best:1,streak:0,bestStreak:0,neg:0,zero:0,form:"Excellente",mult:1.25,
   lastVisit:-99,visitDay:-1,visitsToday:0,actsToday:0,actsVisit:0,actWindow:-99,breadIdx:-1,coffeeDay:-1,coffees:0,petIdx:-1,
-  sleeping:false,equipped:{},deaths:0,jn:0,journal:[],pong:null,mini:null,rematchT:-1,diedAt:-1};
+  sleeping:false,equipped:{},deaths:0,jn:0,journal:[],pong:null,mini:null,rematchT:-1,diedAt:-1,treatDay:-1};
 }
 export function newGame(camp,now){
  const S=freshState(camp,now);
@@ -187,7 +301,7 @@ export function sanitize(s,now){
  for(const k of ["streak","bestStreak","neg","zero","deaths","jn"])o[k]=int(s[k],0,1e9,0);
  o.bestStreak=Math.max(o.bestStreak,o.streak);
  for(const k of ["lastVisit","actWindow","breadIdx","petIdx"])o[k]=int(s[k],-99,1e9,-99);
- for(const k of ["visitDay","coffeeDay"])o[k]=int(s[k],-1,1e9,-1);
+ for(const k of ["visitDay","coffeeDay","treatDay"])o[k]=int(s[k],-1,1e9,-1);
  for(const k of ["visitsToday","actsToday","actsVisit","coffees"])o[k]=int(s[k],0,50,0);
  o.form=FORMS.includes(s.form)?s.form:"Correcte";o.mult=num(s.mult,-0.5,1.25,1);o.sleeping=s.sleeping===true;
  if(s.equipped&&typeof s.equipped==="object")for(const name of Object.keys(personalItems))if(s.equipped[name]===1)o.equipped[name]=1;
@@ -225,6 +339,13 @@ export function rematchBlock(S){
  if(isNight(S))return "Chut, il dort.";
  if(S.sleeping)return "Il fait la sieste : rallume la lumière d'abord.";
  if(S.rematchT<0||S.vclock-S.rematchT>=DOUBLE.window)return "Le quitte ou double se joue juste après un débat.";
+ return "";
+}
+// Why the Halloween treat cannot be taken now ("" when it can).
+export function treatBlock(S,event=""){
+ if(event!=="halloween")return "Plus de bonbons : Halloween est fini.";
+ if(isAsleep(S))return "Chut, il dort : les bonbons attendront.";
+ if(S.treatDay===dayKey(curIdx(S)))return "Déjà servi aujourd'hui : reviens demain.";
  return "";
 }
 export function itemBlock(S,it){
@@ -288,7 +409,7 @@ function stressHit(S,random,factor=1){
 }
 // A death (or a resignation) restarts at level 1 in place: the object identity is kept for the server cache.
 function die(S,reason,camp=S.camp){
- const name=person(S).name,keep={journal:S.journal,jn:S.jn,deaths:S.deaths+1,best:S.best,bestStreak:S.bestStreak,equipped:S.equipped};
+ const name=person(S).name,keep={journal:S.journal,jn:S.jn,deaths:S.deaths+1,best:S.best,bestStreak:S.bestStreak,equipped:S.equipped,treatDay:S.treatDay};
  const fresh=Object.assign(freshState(camp,S.vclock),keep,{lastReal:S.lastReal,diedAt:S.vclock});
  for(const k of Object.keys(S))delete S[k];
  Object.assign(S,fresh);
@@ -327,8 +448,9 @@ function duration(ms){
  return [d&&`${d} j`,h&&`${h} h`,min&&`${min} min`].filter(Boolean).join(" ");
 }
 const fail=error=>({ok:false,error}),done=(info={})=>({ok:true,...info});
-// Every player action goes through here, on the server, after bringing the state up to date.
-export function act(S,a,{now,speed=1,random=Math.random}){
+// Every player action goes through here, on the server, after bringing the state up to date. event: the seasonal
+// event running now on the server's clock (eventAt), "" outside one.
+export function act(S,a,{now,speed=1,random=Math.random,event=""}){
  advance(S,now,speed,random);
  const type=a&&typeof a.type==="string"?a.type:"";
  switch(type){
@@ -336,14 +458,14 @@ export function act(S,a,{now,speed=1,random=Math.random}){
   const it=shop.find(i=>i.key===a.key);if(!it)return fail("Article inconnu.");
   const e=itemBlock(S,it);if(e)return fail(e+".");
   applyItem(S,it);const visit=registerVisit(S);
-  log(S,"buy",`${it[S.camp]} : ${it.price?"−"+it.price+" FM":"gratuit"}, ${fxText(it.fx)}${visit?`, visite +${XP.visit} XP`:""}.`,{key:it.key,visit});
+  log(S,"buy",`${itemName(it,S.camp,event)} : ${it.price?"−"+it.price+" FM":"gratuit"}, ${fxText(it.fx)}${visit?`, visite +${XP.visit} XP`:""}.`,{key:it.key,visit});
   return done({visit});
  }
  case "debate":case "pongStart":{
   const e=activityBlock(S);if(e)return fail(e);
   const visit=registerVisit(S);spendActivity(S);
   if(type==="debate"){
-   const l=pongLines[S.camp],line=l[Math.floor(random()*l.length)];
+   const line=pongLine(S.camp,event,random);
    S.rematchT=S.vclock;S.mini={k:"debate",t:now};S.pong=null;
    log(S,"act",`Débat chrono : +${XP.activity} XP, énergie −8, moral +10${visit?`, visite +${XP.visit} XP`:""}.`,{kind:"debate",line,visit});
   }else{
@@ -375,7 +497,7 @@ export function act(S,a,{now,speed=1,random=Math.random}){
   S.rematchT=-1;
   if(random()<DOUBLE.odds){
    S.moral=clamp(S.moral+DOUBLE.moral);S.energy=clamp(S.energy+DOUBLE.energy);
-   const l=pongLines[S.camp],line=l[Math.floor(random()*l.length)];
+   const line=pongLine(S.camp,event,random);
    log(S,"act",`Quitte ou double gagné ! Moral +${DOUBLE.moral}, énergie +${DOUBLE.energy}.`,{kind:"rematch",line});
    return done({win:true});
   }
@@ -417,8 +539,80 @@ export function act(S,a,{now,speed=1,random=Math.random}){
   if(S.diedAt>=0&&S.vclock-S.diedAt<H)return fail("Une démission par heure, pas plus : laisse-lui le temps de faire campagne.");
   die(S,"resign",a.camp);return done();
  }
+ case "treat":{
+  // The day is kept across a resignation (die keeps treatDay): one treat a day, whatever happens.
+  const e=treatBlock(S,event);if(e)return fail(e);
+  S.treatDay=dayKey(curIdx(S));S.moral=clamp(S.moral+HALLOWEEN.treat.moral);
+  const l=HALLOWEEN.treat.lines[S.camp],line=l[Math.floor(random()*l.length)];
+  log(S,"treat",`Des bonbons ou un amendement ? ${line} Moral +${HALLOWEEN.treat.moral}.`,{line});
+  return done();
+ }
  default:return fail("Action inconnue.");
  }
+}
+
+// ===================================================================== DUELS
+// A small seeded generator (mulberry32): the same seed deals the same debate in the browser and on the server.
+export function seeded(seed){
+ let a=seed>>>0;
+ return ()=>{a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return ((t^t>>>14)>>>0)/4294967296;};
+}
+// The rounds of a debate: question i, and the order its answers show in (indexes into ANSWER_KINDS). Dealt like a
+// deck: every question once before any comes back, and never the same one twice running across a reshuffle.
+// count: how many questions the deck holds (more than QUESTIONS only for a solo debate in costume).
+export function debateRounds(random,n=DUEL.maxPicks+1,count=QUESTIONS.length){
+ const shuffle=a=>{for(let i=a.length-1;i>0;i--){const j=Math.floor(random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;};
+ const out=[];let deck=[],last=-1;
+ while(out.length<n){
+  if(!deck.length)deck=shuffle(Array.from({length:count},(_,i)=>i).filter(i=>i!==last));
+  last=deck.pop();out.push({i:last,order:shuffle([0,1,2])});
+ }
+ return out;
+}
+// Replays a duel debate: picks = [[answer shown 0-2, ms since play started], ...], as the browser recorded them.
+// Picks after the final whistle are not counted. Returns null when the picks cannot come from the game (bad shape,
+// faster than the screen allows, too many).
+export function replayDebate(seed,camp,picks){
+ if(!Array.isArray(picks)||picks.length>DUEL.maxPicks)return null;
+ const rounds=debateRounds(seeded(seed),picks.length);
+ let lost=0,prev=-Infinity,points=0,errors=0,last=0;
+ for(let k=0;k<picks.length;k++){
+  const p=picks[k];
+  if(!Array.isArray(p)||p.length!==2)return null;
+  const [n,t]=p;
+  if(!Number.isInteger(n)||n<0||n>2||!Number.isInteger(t)||t<0||t-prev<DUEL.minGap)return null;
+  prev=t;
+  if(MINI.debate.ms-lost-t<=0)continue;
+  last=t;
+  if(ANSWER_KINDS[rounds[k].order[n]]===camp)points++;else{errors++;lost+=DEBATE.penalty;}
+ }
+ return {points,errors,last};
+}
+// Why this candidate cannot play a duel right now ("" when he can).
+export function duelBlock(S,minLevel=DUEL.minLevel){
+ if(isNight(S))return "Chut, il dort.";
+ if(S.sleeping)return "Il fait la sieste : rallume la lumière d'abord.";
+ if(S.lvl<minLevel)return `Les duels s'ouvrent au niveau ${minLevel}.`;
+ return "";
+}
+// A duel's outcome on one candidate: "win" (its XP only when paid), "loss", "tie", or "chicken" (the challenged
+// player refused or let it expire). The text says what really changed, after the level and gauge floors.
+export function duelApply(S,res,{vs="?",mine=0,theirs=0,paid=true}={}){
+ const before={xp:S.xp,moral:S.moral,energy:S.energy};
+ const lower=(k,v)=>{if(S[k]>DUEL.floor)S[k]=Math.max(DUEL.floor,S[k]+v);};
+ if(res==="win"){addXp(S,paid?DUEL.win.xp:0);S.moral=clamp(S.moral+DUEL.win.moral);S.energy=clamp(S.energy+DUEL.win.energy);}
+ else if(res==="loss"){addXp(S,DUEL.loss.xp);lower("moral",DUEL.loss.moral);lower("energy",DUEL.loss.energy);}
+ else if(res==="tie")S.moral=clamp(S.moral+DUEL.tie.moral);
+ else if(res==="chicken")S.moral=clamp(S.moral+DUEL.chicken.moral);
+ else return false;
+ const dxp=Math.round(S.xp-before.xp),fx={moral:Math.round(S.moral-before.moral),energy:Math.round(S.energy-before.energy)};
+ const parts=[dxp&&`${dxp>0?"+":"−"}${Math.abs(dxp)} XP`,fxText(Object.fromEntries(Object.entries(fx).filter(([,v])=>v)))].filter(Boolean).join(", ")||"rien ne bouge";
+ const text=res==="win"?`Duel gagné contre ${vs} au Débat chrono, ${mine} à ${theirs} : ${parts}.`
+  :res==="loss"?`Duel perdu contre ${vs} au Débat chrono, ${mine} à ${theirs} : ${parts}.`
+  :res==="tie"?`Match nul contre ${vs} au Débat chrono, ${mine} partout : ${parts}.`
+  :`${vs} a esquivé ton défi : ${parts}.`;
+ log(S,"duel",text,{res,vs,mine,theirs});
+ return true;
 }
 
 // "v1.3.0", "1.3.0" and "v1.3.0-3-gabc1234" (a commit after the tag) are the same release; "dev" is none.

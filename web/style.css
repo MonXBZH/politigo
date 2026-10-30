@@ -6,6 +6,8 @@
  --dev:min(86vw,420px);--radius:22px;
 }
 body[data-camp=right]{--accent:#9cc0ff;--bg1:#0b1530;--bg2:#1b3566;--bg3:#2f5b9a}
+/* Halloween (set by app.js from rules.mjs eventAt): a purple and pumpkin night for both camps. */
+body[data-season=halloween],body[data-camp][data-season=halloween]{--accent:#ff9f43;--accent-2:#ffd27a;--bg1:#150a20;--bg2:#3a1747;--bg3:#7a3a1e}
 *{box-sizing:border-box}
 html,body{margin:0;min-height:100%}
 body{background:var(--bg1);color:var(--ink);font:16px/1.45 Inter,system-ui,sans-serif;overflow-x:hidden;transition:background-color .6s;-webkit-tap-highlight-color:transparent}
@@ -60,6 +62,8 @@ body.playing #screen{touch-action:none}
 .knob svg{width:28px;height:28px;stroke:var(--accent);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .knob{position:relative}
 .pad-btn.alert .knob::after{content:"";position:absolute;top:2px;right:2px;width:14px;height:14px;border-radius:50%;background:var(--danger);box-shadow:0 0 0 2px var(--bg1)}
+/* Challenges waiting: the dot carries their count. */
+.pad-btn.alert[data-count] .knob::after{content:attr(data-count);top:-2px;right:-2px;width:20px;height:20px;font:700 12px/20px Inter,sans-serif;color:#fff;text-align:center}
 /* Pinned to the viewport, above sheets and the sign-in screen: always seen, wherever the page is scrolled. */
 .toast,.net{position:fixed;left:50%;z-index:40;margin:0;padding:11px 16px;border-radius:16px;border:1px solid var(--line);backdrop-filter:blur(10px);
  font-size:14px;text-align:center;width:min(92vw,440px);transform:translateX(-50%)}
@@ -135,6 +139,17 @@ select option{background:#1d1a2a}
 .news-head{font-weight:700;margin:16px 0 4px}
 .news{margin:0;padding-left:20px;line-height:1.5}
 .news li{margin:6px 0}
+/* Duels */
+.duel{padding:12px 14px;border-radius:14px;background:var(--glass);border:1px solid var(--line);margin-top:8px;font-size:13px}
+.duel b{display:block;font-size:15px}
+.duel small{color:var(--muted)}
+.duel .btn-row{margin-top:10px}
+.btn.go{border-color:var(--accent);background:#ffffff1c}
+.btn:disabled{opacity:.55;cursor:not-allowed}
+.fine.warn{color:#ffd4d9}
+.item.opp.left small::before{content:"● ";color:#ff9db0}.item.opp.right small::before{content:"● ";color:#9cc0ff}
+.duel-log{max-height:none}
+.duel-log li.win{color:#d9ffe6}.duel-log li.loss{color:#ffd4d9}
 
 /* onboarding */
 .onboard{position:fixed;inset:0;z-index:30;overflow:auto;display:grid;grid-template-columns:minmax(0,1fr);place-items:center;padding:24px max(16px,env(safe-area-inset-right)) 24px max(16px,env(safe-area-inset-left));background:radial-gradient(110% 80% at 50% 0%,var(--bg2),var(--bg1) 72%)}
@@ -185,7 +200,7 @@ select option{background:#1d1a2a}
 .board .row.left .who small::before{content:"● ";color:#ff9db0}.board .row.right .who small::before{content:"● ";color:#9cc0ff}
 .board .val{font:700 13px ui-monospace,monospace;white-space:nowrap}
 .feed li b{color:var(--ink)}
-.feed li.death{color:#ffc7ce}.feed li.evolve,.feed li.legend{color:#ffe6b8}
+.feed li.death{color:#ffc7ce}.feed li.evolve,.feed li.legend{color:#ffe6b8}.feed li.duel{color:#d6e4ff}
 .btn-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
 .inline-form{display:flex;flex-wrap:wrap;gap:8px;width:100%}.inline-form input{flex:1 1 180px}
 .btn.armed{background:#ff6b7a33}
@@ -197,4 +212,22 @@ footer{max-width:1120px;margin:0 auto;padding:0 max(16px,env(safe-area-inset-rig
 .camp-label{margin:10px 0 0;font-weight:600;color:var(--ink)}
 .form-error.inline{margin:8px 0 0;width:100%}
 .inline-form .fine{width:100%;margin:0}
+/* For the undecided: dice and political test, at sign-up (in place of the camp cards) and in the Dossier sheet */
+.camp-extra{justify-content:center;margin:0}
+.camp-note{margin:0;text-align:center;font-size:13px;color:var(--ink)}.camp-note:empty{margin-top:-12px}
+.auth-form.quizzing>:is(.camps,.camp-extra,.camp-note,.howto,.cta){display:none}
+.quiz{text-align:left}.quiz[hidden]{display:none}
+#sheet-quiz{margin-top:16px}
+.quiz .btn.go.left{border-color:#ff9db0;background:#ff9db01f}.quiz .btn.go.right{border-color:#9cc0ff;background:#9cc0ff1f}
+#reg-quiz{padding:16px;border-radius:var(--radius);background:var(--glass);border:1px solid var(--line)}
+.fine.quiz-step{margin:0 0 8px;font:600 12px ui-monospace,monospace;letter-spacing:.14em;text-transform:uppercase;color:var(--accent-2)}
+.quiz .bar{height:6px}
+.quiz-q{font:600 20px/1.3 Fredoka,sans-serif;margin:14px 0 0}
+.quiz-q:focus{outline:none}
+.quiz .items{margin-top:12px}
+.quiz-camp{display:flex;align-items:center;gap:14px;margin:12px 0 4px;padding:12px 14px;border-radius:18px;border:2px solid var(--line);background:var(--glass)}
+.quiz-camp.left{border-color:#ff9db0;background:#ff9db01f}.quiz-camp.right{border-color:#9cc0ff;background:#9cc0ff1f}
+.quiz-camp canvas{flex:none;width:72px;height:72px;image-rendering:pixelated}
+.quiz-camp b{display:block;font:600 19px Fredoka,sans-serif}
+.quiz-camp small{display:block;color:var(--muted);font-size:13px}
 @media(prefers-reduced-motion:reduce){.blob{animation:none}.sheet-card{animation:none}*{transition:none!important}}

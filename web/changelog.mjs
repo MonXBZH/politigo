@@ -4,10 +4,35 @@
 import {cmpRelease} from "./rules.mjs";
 
 export const CHANGELOG=[
+ {version:"1.4.0",date:"2026-10-30",
+  added:[
+   "Duels : défie un autre élu au Débat chrono, dans Jouer → Duels. Mêmes questions pour les deux, le meilleur score l'emporte. Tu joues d'abord, ton rival a 24 h pour relever le défi.",
+   "Victoire : +40 XP, moral +10, énergie +5. Défaite : −15 XP, moral −10, énergie −5, sans jamais perdre de niveau ni descendre une jauge sous 25. Refuser ne coûte rien ; celui qui t'a défié gagne juste un peu de moral.",
+   "Trois défis par jour, un seul duel à la fois contre le même rival, et pas deux contre lui en 24 h. Les duels s'ouvrent au niveau 5.",
+   "Notifications : active-les dans Dossier → Compte pour être prévenu d'un défi ou d'un résultat, même jeu fermé. Sur iPhone, ajoute d'abord PolitiGo à l'écran d'accueil.",
+   "🎃 Ce soir à minuit, quelque chose d'étrange va se passer dans la République… Reviens jeter un œil, si tu l'oses. 👻",
+   "Indécis ? À l'inscription comme quand tu repars de zéro, laisse faire le hasard, ou passe ton test politique : cinq questions bien salées, et il te propose ton camp. Libre à toi de rejoindre l'autre bord."
+  ],
+  changed:[
+   "Mini-jeux rééquilibrés : plus le jeu est difficile, plus il paie. Le bonus de score monte jusqu'à 10 XP au Pong, 20 au Débat chrono et 30 à la Manif (Le Cortège et L'Épervier), en plus des 30 XP de l'activité."
+  ],
+  fixed:[
+   "Pong des arguments : une partie interrompue par l'écran qui se verrouille est terminée et comptée, au lieu d'être perdue.",
+   "Déconnexion : si le serveur ne répond pas, tu restes connecté et le jeu te le dit, au lieu de faire semblant de te déconnecter.",
+   "Les pseudos qui imitent un autre avec des lettres sosies (« Mɑrine », « Marıne ») sont refusés à l'inscription."
+  ]},
+ {version:"1.3.1",date:"2026-10-30",
+  added:[
+   "Pong des arguments : 28 nouvelles piques, de « Rendez l'ISF ! » à « Gauche caviar ! »."
+  ],
+  fixed:[
+   "Pong des arguments : l'adversaire vise maintenant à droite et à gauche. Rester immobile au centre ne suffit plus pour renvoyer ses piques.",
+   "Le compteur « Jour » suit maintenant le calendrier : il passe au jour suivant à minuit, en même temps que les visites, les activités et les cafés, au lieu d'attendre 24 heures après le début du mandat."
+  ]},
  {version:"1.3.0",date:"2026-10-30",
   added:[
    "Débat chrono : « Débattre » devient un jeu de 15 secondes. Réponds dans la ligne de ton camp à 32 questions tirées au hasard ; une erreur coûte une seconde, et chaque bonne réponse rapporte 1 XP (20 au plus).",
-   "Manif, un mini-jeu par camp. À gauche, Le Cortège : tiens le défilé jusqu'à Nation en esquivant LBD et lacrymo, avec un parapluie pour parer. À droite, L'Épervier : interpelle les manifestants avec ton CRS, esquive pavés et molotovs, et gare aux journalistes et aux collègues infiltrés.",
+   "Manif : deux mini-jeux exclusifs, un pour chaque bord politique. Réservé à la gauche, Le Cortège : tiens le défilé jusqu'à Nation en esquivant LBD et lacrymo, avec un parapluie pour parer. Réservé à la droite, L'Épervier : interpelle les manifestants avec ton CRS, esquive pavés et molotovs, et gare aux journalistes et aux collègues infiltrés.",
    "Les beaux scores des mini-jeux sont annoncés dans le fil de la République.",
    "Mot de passe oublié ou compte bloqué après trop d'essais : l'organisateur peut maintenant le réinitialiser ou le débloquer tout de suite, sans redémarrer le jeu.",
    "Cette fenêtre de nouveautés, à chaque mise à jour. Elle reste consultable dans Dossier → Compte."

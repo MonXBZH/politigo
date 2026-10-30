@@ -7,7 +7,7 @@
   <img alt="Node 24" src="https://img.shields.io/badge/node-24%20LTS-5fa04e">
   <img alt="Aucune dépendance" src="https://img.shields.io/badge/d%C3%A9pendances-0-success">
   <img alt="Docker" src="https://img.shields.io/badge/docker-compose%20%7C%20Portainer-2496ed">
-  <img alt="148 tests" src="https://img.shields.io/badge/tests-148-brightgreen">
+  <img alt="239 tests" src="https://img.shields.io/badge/tests-239-brightgreen">
   <img alt="Satire" src="https://img.shields.io/badge/genre-satire-ff9db0">
 </p>
 
@@ -49,8 +49,10 @@ On joue **entre amis**, chacun sur son téléphone : un serveur fait tourner tou
 
 ### Deux collections, vingt figures
 
-Au début, tu choisis un camp. Ton élu traverse ensuite sa collection, une nouvelle figure tous les 10 niveaux,
-jusqu'à la **légende** du niveau 100.
+Au début, tu choisis un camp. Indécis ? Laisse faire le **hasard** 🎲, ou passe ton **test politique** :
+cinq questions bien salées (« Un milliardaire s'offre un troisième yacht. Ta réaction ? »), trois réponses chacune,
+et le test te propose ton camp. Libre à toi de rejoindre l'autre bord.
+Ton élu traverse ensuite sa collection, une nouvelle figure tous les 10 niveaux, jusqu'à la **légende** du niveau 100.
 
 | Niveaux | 🌹 Collection gauche | 🔵 Collection droite |
 |:---:|---|---|
@@ -96,7 +98,8 @@ de renaissance propre à chaque camp (la *primaire unitaire* à gauche, *le part
 
 - ⏰ **Le jeu suit l'heure réelle** (Paris). La nuit, de 0 h à 6 h, ton élu dort et récupère.
 - 👋 **Passe le voir** : chaque visite rapporte de l'XP, une fois toutes les 2 heures, 8 fois par jour au maximum.
-- 🎮 **Trois mini-jeux** : 2 activités par visite, 8 par jour, chacune +30 XP plus un bonus selon le score (20 XP au plus).
+- 🎮 **Trois mini-jeux** : 2 activités par visite, 8 par jour, chacune +30 XP plus un bonus selon le score,
+  d'autant plus gros que le jeu est difficile : **10 XP** au plus pour le Pong, **20** pour le Débat chrono, **30** pour la Manif.
   - 🎤 **Débat chrono** : 15 secondes pour enchaîner les réponses de ta ligne, tirées dans le désordre parmi 32 questions.
     « Programme économique ? » : à gauche on taxe les riches, à droite les pauvres, et « taxer les politiques » est hors sujet pour tout le monde.
     Une erreur coûte une seconde.
@@ -108,7 +111,8 @@ de renaissance propre à chaque camp (la *primaire unitaire* à gauche, *le part
   Perdue : un **stress ×2**.
 - 💼 **Frais de mandat (FM)** : la monnaie du jeu, 2 FM gagnés par heure de vie. **Aucun achat réel, jamais.**
 - 📈 **La forme compte** : bien soigné, il gagne de l'XP plus vite et enchaîne les séries. Négligé, il régresse.
-  Avec six visites et quelques activités par jour, le niveau 100 se gagne en une quinzaine de jours.
+  Avec six visites et quelques activités par jour, le niveau 100 se gagne en une quinzaine de jours,
+  un peu moins si tu brilles aux mini-jeux.
 
 ### Les casseroles
 
@@ -119,7 +123,13 @@ et toutes sont recensées, avec leurs références, dans **[docs/SOURCES.md](doc
 ### Entre amis
 
 - 🏆 **Classement en direct** : score, niveau, série record, survie.
-- 📰 **Fil de la République** : les évolutions, les morts politiques et les beaux scores aux mini-jeux de chacun, en temps réel.
+- ⚔️ **Duels** : défie un autre élu au Débat chrono. Mêmes questions pour les deux, le meilleur score gagne.
+  Tu joues d'abord, ton rival a 24 h pour relever le défi ou le refuser (sans rien perdre).
+  Victoire : **+40 XP**, moral +10, énergie +5. Défaite : −15 XP, moral −10, énergie −5, sans jamais perdre de niveau
+  ni descendre une jauge sous 25. Dès le niveau 5, trois défis par jour.
+- 🔔 **Notifications** : sois prévenu d'un défi ou d'un résultat même le jeu fermé (Dossier → Compte).
+  Sur iPhone, ajoute d'abord PolitiGo à l'écran d'accueil.
+- 📰 **Fil de la République** : les évolutions, les morts politiques et les beaux scores aux mini-jeux et les duels de chacun, en temps réel.
 - 🔐 **Sur invitation** : un code donné par l'organisateur, et le nombre de comptes plafonné.
 
 ---

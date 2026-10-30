@@ -1,0 +1,11 @@
+{
+ "name": "PolitiGo",
+ "short_name": "PolitiGo",
+ "description": "Le tamagotchi satirique : élève ton petit élu jusqu'au niveau 100.",
+ "lang": "fr",
+ "start_url": "/",
+ "scope": "/",
+ "display": "standalone",
+ "background_color": "#1d0f24",
+ "theme_color": "#1d0f24"
+}

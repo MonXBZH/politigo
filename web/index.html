@@ -9,6 +9,8 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='15' fill='%23ff9db0'/%3E%3Ccircle cx='16' cy='16' r='10' fill='%231d0f24'/%3E%3C/svg%3E">
 <link rel="preload" href="fonts/fredoka-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin>
+<!-- Needed on iPhone to install the game on the home screen, where Web Push (duel notifications) works. -->
+<link rel="manifest" href="manifest.webmanifest">
 <link rel="stylesheet" href="style.css">
 </head>
 <body data-camp="left">
@@ -103,6 +105,9 @@
     <button class="camp" type="button" data-camp="left" aria-pressed="true"><canvas width="64" height="64" aria-hidden="true"></canvas><b>Collection gauche</b><small>D'Olivier Faure à Jean-Luc Mélenchon</small></button>
     <button class="camp" type="button" data-camp="right" aria-pressed="false"><canvas width="64" height="64" aria-hidden="true"></canvas><b>Collection droite</b><small>De Valérie Pécresse à Marine Le Pen</small></button>
    </div>
+   <div class="btn-row camp-extra"><button class="btn" type="button" id="camp-dice"><span aria-hidden="true">🎲 </span>Au hasard</button><button class="btn" type="button" id="camp-test">Passer mon test politique</button></div>
+   <p class="fine camp-note" id="camp-note" aria-live="polite"></p>
+   <div class="quiz" id="reg-quiz" role="group" aria-label="Test politique" hidden></div>
    <ul class="howto">
     <li><b>Passe le voir</b> au moins 3 fois par jour : chaque visite rapporte de l'XP.</li>
     <li><b>Nourris-le et soigne-le</b> avec les frais de mandat gagnés en restant en vie.</li>

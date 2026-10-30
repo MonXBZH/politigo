@@ -99,9 +99,9 @@ for(const [ago,p,k,t] of [
  [36*H,N.zoe,'evolve','Passation de pouvoir : Marine Tondelier laisse la place \u00e0 Fran\u00e7ois Ruffin au niveau 30.'],
  [20*H,N.hugo,'evolve','Passation de pouvoir : \u00c9douard Philippe laisse la place \u00e0 Laurent Wauquiez au niveau 40.'],
  [7*H,N.camille,'stress','Stress de Marine Tondelier : Veste verte au pressing. \u00ab Sans ma veste, plus personne ne me reconna\u00eet ! \u00bb (moral \u22125)'],
- [3*H,N.malik,'pong','Fin du d\u00e9bat : 11 renvois, bonus d\u2019\u00e9loquence +20 XP.'],
+ [3*H,N.malik,'pong','Fin du d\u00e9bat : 11 renvois, bonus d\u2019\u00e9loquence +10 XP.'],
  [80*60000,N.zoe,'stress','Stress de Fran\u00e7ois Ruffin : Appel de Jean-Luc. \u00ab Ne pas d\u00e9crocher. Surtout, ne pas d\u00e9crocher. \u00bb (moral \u22125)'],
- [40*60000,N.ines,'pong','Fin du d\u00e9bat : 14 renvois, bonus d\u2019\u00e9loquence +20 XP.'],
+ [40*60000,N.ines,'pong','Fin du d\u00e9bat : 9 renvois, bonus d\u2019\u00e9loquence +9 XP.'],
  [12*60000,N.malik,'stress','Stress de Val\u00e9rie P\u00e9cresse : Meeting au Z\u00e9nith. \u00ab Je lis mon discours avec l\u2019\u00e9nergie d\u2019un RER B en panne. \u00bb (moral \u22125)']
 ])feed.run(now-ago,p,k,t);
 console.log('setup done');

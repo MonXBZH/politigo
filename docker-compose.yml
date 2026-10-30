@@ -43,6 +43,11 @@ services:
       COOKIE_SECURE: ${COOKIE_SECURE:-1}
       PROXY_HOPS: ${PROXY_HOPS:-2}
       MAX_PLAYERS: ${MAX_PLAYERS:-50}
+      # Duel notifications (Web Push): "off" disables them; the contact (mailto: or https: URL) is sent to the push services.
+      POLITIGO_PUSH: ${POLITIGO_PUSH:-}
+      POLITIGO_PUSH_CONTACT: ${POLITIGO_PUSH_CONTACT:-}
+      # Seasonal events: empty = automatic (Halloween on 31 Oct-1 Nov); "off" switches them off, "halloween" forces it (tests).
+      POLITIGO_EVENT: ${POLITIGO_EVENT:-}
     volumes:
       - politigo-data:/data
     restart: unless-stopped

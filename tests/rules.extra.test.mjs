@@ -519,3 +519,25 @@ test("the resignation cooldown survives a journal flooded with forty other entri
  const old=game();play(old,{type:"restart",camp:"left"},10);delete old.diedAt;
  assert.equal(R.sanitize(JSON.parse(JSON.stringify(old)),at(10.1)).diedAt,old.journal[0].t);
 });
+
+test("the mandate day follows the calendar: day 2 starts at midnight, not 24 h after the birth",()=>{
+ const S=R.newGame("left",at(15));                                   // born at 15:00
+ assert.equal(R.mandateDay(S,at(15)),1);assert.equal(R.mandateDay(S,at(23.99)),1);
+ assert.equal(R.mandateDay(S,at(24)),2,"midnight");assert.equal(R.mandateDay(S,at(32.5)),2,"8:30 the next morning");
+ assert.equal(R.mandateDay(S,at(24*7+0.5)),8);
+ assert.equal(R.mandateDay(S),1,"defaults to the state's own clock");
+ const late=R.newGame("right",at(23.98));assert.equal(R.mandateDay(late,at(24.01)),2,"born a minute before midnight");
+ assert.equal(R.mandateDay(S,at(10)),1,"never below 1, even with a clock behind the birth");
+});
+
+test("the mandate day survives the daylight-saving changes and follows the game's time zone",()=>{
+ // Paris: summer time starts on 2026-03-29 (02:00 → 03:00) and ends on 2026-10-25 (03:00 → 02:00).
+ const spring=R.newGame("left",Date.UTC(2026,2,28,14)),autumn=R.newGame("left",Date.UTC(2026,9,24,14));
+ assert.equal(R.mandateDay(spring,Date.UTC(2026,2,28,23,30)),2,"00:30 summer time on the 29th");
+ assert.equal(R.mandateDay(spring,Date.UTC(2026,2,29,21,59)),2);assert.equal(R.mandateDay(spring,Date.UTC(2026,2,29,22,0)),3);
+ assert.equal(R.mandateDay(autumn,Date.UTC(2026,9,24,22,0)),2);assert.equal(R.mandateDay(autumn,Date.UTC(2026,9,25,22,59)),2);
+ assert.equal(R.mandateDay(autumn,Date.UTC(2026,9,25,23,0)),3,"midnight in winter time");
+ R.setTimeZone("America/New_York");
+ try{assert.equal(R.mandateDay(R.newGame("left",Date.UTC(2026,0,5,4)),Date.UTC(2026,0,5,5)),2,"23:00 → 00:00 in New York");}
+ finally{R.setTimeZone("Europe/Paris");}
+});

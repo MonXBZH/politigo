@@ -27,6 +27,8 @@ function run(camp,start,ms,score){
 test("the contract: one mini-game per camp plus the debate, with the agreed numbers",()=>{
  assert.deepEqual(Object.keys(MINI),["debate","cortege","epervier"]);
  assert.deepEqual(MINI_RULES,{minSeconds:3,graceSeconds:75});
+ assert.deepEqual([R.PONG_RULES.bonusCap,MINI.debate.bonusCap,MINI.cortege.bonusCap,MINI.epervier.bonusCap],[10,20,30,30]);
+ for(const k of ["cortege","epervier"])assert.equal(Math.floor(MINI[k].great*MINI[k].bonusRate),MINI[k].bonusCap,`${k}: full bonus at the great score`);
  assert.equal(R.manifGame({camp:"left"}),"cortege");assert.equal(R.manifGame({camp:"right"}),"epervier");
  assert.equal(game().mini,null);
 });
@@ -107,8 +109,8 @@ test("a score that is too fast, too early or malformed is refused and consumes t
 
 test("valid scores give the right capped bonus for each game",()=>{
  const cases=[["left","debate",15000,12,12],["left","debate",15000,30,20],["left","debate",15000,0,0],["left","debate",15000,1,1],
-  ["left","manifStart",30000,124,20],["left","manifStart",30000,50,10],["left","manifStart",30000,4,0],["left","manifStart",30000,5,1],
-  ["right","manifStart",35000,6,12],["right","manifStart",35000,14,20],["right","manifStart",35000,0,0]];
+  ["left","manifStart",30000,124,30],["left","manifStart",30000,50,12],["left","manifStart",30000,3,0],["left","manifStart",30000,4,1],["left","manifStart",30000,119,29],
+  ["right","manifStart",35000,6,12],["right","manifStart",35000,14,28],["right","manifStart",35000,16,30],["right","manifStart",35000,0,0]];
  for(const [camp,start,ms,score,bonus] of cases){
   const {S,r,gain}=run(camp,start,ms,score);
   assert.ok(r.ok,`${camp} ${start} ${score}`);assert.equal(r.bonus,bonus,`${camp} ${start} ${score}`);assert.equal(gain,bonus);
@@ -123,13 +125,13 @@ test("the journal text and the great flag",()=>{
  ({S}=run("left","debate",15000,18));
  assert.equal(S.journal[0].text,"Débat chrono : 18 arguments dans la ligne, bonus d'éloquence +18 XP.");assert.equal(S.journal[0].d.great,true);
  ({S}=run("left","debate",15000,17));assert.equal(S.journal[0].d.great,false);
- ({S}=run("left","manifStart",30000,100));
- assert.equal(S.journal[0].text,"Le Cortège : score 100, bonus de terrain +20 XP.");assert.equal(S.journal[0].d.great,true);
- ({S}=run("left","manifStart",30000,99));assert.equal(S.journal[0].d.great,false);
+ ({S}=run("left","manifStart",30000,120));
+ assert.equal(S.journal[0].text,"Le Cortège : score 120, bonus de terrain +30 XP.");assert.equal(S.journal[0].d.great,true);
+ ({S}=run("left","manifStart",30000,119));assert.equal(S.journal[0].d.great,false);
  ({S}=run("right","manifStart",35000,1));
  assert.equal(S.journal[0].text,"L'Épervier : 1 point, bonus d'ordre public +2 XP.");
  ({S}=run("right","manifStart",35000,15));
- assert.equal(S.journal[0].text,"L'Épervier : 15 points, bonus d'ordre public +20 XP.");assert.equal(S.journal[0].d.great,true);
+ assert.equal(S.journal[0].text,"L'Épervier : 15 points, bonus d'ordre public +30 XP.");assert.equal(S.journal[0].d.great,true);
  ({S}=run("right","manifStart",35000,14));assert.equal(S.journal[0].d.great,false);
 });
 
@@ -220,7 +222,7 @@ test("over HTTP: a great score reaches the public feed, a small one does not",as
  assert.equal((await small.act({type:"manifStart"})).status,200);
  await new Promise(r=>setTimeout(r,7200));   // 15 Épervier points need 7 s at a human pace
  const g=await great.act({type:"miniEnd",score:15}),p=await small.act({type:"miniEnd",score:3});
- assert.equal(g.status,200);assert.equal(g.json.bonus,20);assert.equal(p.status,200);assert.equal(p.json.bonus,6);
+ assert.equal(g.status,200);assert.equal(g.json.bonus,30);assert.equal(p.status,200);assert.equal(p.json.bonus,6);
  const feed=(await great.call("GET","/api/board")).json.feed;
  const mine=feed.filter(f=>f.kind==="mini");
  assert.ok(mine.some(f=>f.player==="Grande"&&/^L'Épervier : 15 points/.test(f.text)),"great score published");
