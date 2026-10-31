@@ -36,6 +36,8 @@ const FEED_KIND={announce:"annonce",duel:"duel"};
 // The two chat rooms, each switched on by the admin (closed by default).
 const chatState=r=>!r?"—":r.global&&r.camp?"Tous les salons":r.global?"Pour tous":r.camp?"De camp":"Fermé";
 const tr=(map,v)=>v==null?"—":map[v]??String(v);
+// The admin log's "Par": the channel, and the moderator's name when one acted (the owner's own actions: no name).
+const byWho=(via,by)=>by?`${tr(VIA,via)} · modo ${by}`:tr(VIA,via);
 
 // ===================================================================== API
 class Unauthorized extends Error{}
@@ -46,6 +48,16 @@ async function api(path,body={}){
  if(!r.ok||!j?.ok)throw new Error(j?.error||`Erreur ${r.status}`);
  return j;
 }
+// ===================================================================== who is signed in
+// The owner sees everything; a moderator only the panels (sees) and actions (can) the owner gave, on their servers.
+// The page only hides what is not theirs: admin/server.mjs refuses it anyway.
+let me={role:"owner"};
+const owner=()=>me.role==="owner";
+const sees=p=>owner()||!!me.panels?.includes(p);
+const can=a=>owner()||!!me.actions?.includes(a);
+const isMe=id=>!owner()&&id!=null&&me.self?.[cur]===id;   // their own player account on this server: no action on it
+const OWNER_ONLY=new Set(["reglages","sauvegarde","modos"]);
+
 // ===================================================================== game servers
 // Every game action goes to /api/s/<server>/...: the server is part of the URL, chosen in the top bar and remembered.
 let servers=[],cur=null;
@@ -93,10 +105,10 @@ function toast(msg,bad=false){const t=$("#toast");t.textContent=msg;t.classList.
 const fail=e=>{if(!(e instanceof Unauthorized))toast(e.message||String(e),true);};
 // One <dialog> for every question; resolves with the OK value (or null when cancelled / Escape).
 // Every question names the game server it acts on ("Suspendre le compte sur « Prod » ?"), so nothing hits the wrong game.
-function dialog({title,body=[],ok="Confirmer",cancel="Annuler",danger=false,value=()=>true,focus}){
+function dialog({title,body=[],ok="Confirmer",cancel="Annuler",danger=false,value=()=>true,focus,server=true}){
  const d=$("#dlg"),okB=$("#dlg-ok"),noB=$("#dlg-cancel"),name=srvName();
- $("#dlg-title").textContent=/ \?$/.test(title)?title.replace(/ \?$/,` sur « ${name} » ?`):`${title} · « ${name} »`;
- $("#dlg-body").replaceChildren(h("span",{class:"srv-tag dlg-srv"},`Serveur : ${name}`),...[body].flat().map(b=>typeof b==="string"?h("p",{},b):b));
+ $("#dlg-title").textContent=!server?title:/ \?$/.test(title)?title.replace(/ \?$/,` sur « ${name} » ?`):`${title} · « ${name} »`;
+ $("#dlg-body").replaceChildren(server?h("span",{class:"srv-tag dlg-srv"},`Serveur : ${name}`):"",...[body].flat().map(b=>typeof b==="string"?h("p",{},b):b));
  okB.textContent=ok;okB.className=`btn ${danger?"danger":"go"}`;noB.textContent=cancel;noB.hidden=cancel===null;
  return new Promise(res=>{
   const done=v=>{okB.onclick=noB.onclick=d.oncancel=null;d.close();res(v);};
@@ -112,11 +124,11 @@ async function promptBox(title,label,init=""){
  return v||null;
 }
 async function copy(text,inp){if(await copyText(text))toast("Copié !");else{inp?.select();toast("Copie impossible : sélectionne le texte.",true);}}
-function secretBox(title,intro,secret){
+function secretBox(title,intro,secret,server=true){
  const inp=h("input",{type:"text",value:secret,readOnly:true,spellcheck:false,"aria-label":"Secret"});
  inp.addEventListener("focus",()=>inp.select());
  return dialog({title,body:[intro,h("div",{class:"secret"},inp,h("button",{class:"btn small",type:"button",onclick:()=>copy(secret,inp)},"Copier")),
-  h("p",{class:"muted small"},"Il n'est affiché qu'une fois : transmets-le par un canal privé.")],ok:"J'ai noté",cancel:null,focus:inp});
+  h("p",{class:"muted small"},"Il n'est affiché qu'une fois : transmets-le par un canal privé.")],ok:"J'ai noté",cancel:null,focus:inp,server});
 }
 // Runs an action button: disabled while it runs, toast on the outcome, then refresh.
 async function act(btn,fn,okMsg,after=render){
@@ -127,17 +139,19 @@ async function act(btn,fn,okMsg,after=render){
 }
 
 // ===================================================================== login
-function showLogin(){stopRefresh();stopAlerts();$("#app").hidden=true;$("#login").hidden=false;$("#login-pw").value="";setTimeout(()=>$("#login-pw").focus(),0);}
+function showLogin(){stopRefresh();stopAlerts();me={role:"owner"};$("#app").hidden=true;$("#login").hidden=false;$("#login-pw").value="";setTimeout(()=>$(($("#login-name").value?"#login-pw":"#login-name")).focus(),0);}
 async function showApp(){
+ try{me=await api("/api/me");}catch(e){if(e instanceof Unauthorized)return;me={role:"mod",panels:[],actions:[]};fail(e);}   // unknown: the least
  $("#login").hidden=true;$("#app").hidden=false;
+ const w=$("#who");w.hidden=owner();w.textContent=owner()?"":`Modo · ${me.name}`;
  try{await loadServers();}catch(e){fail(e);}
- startAlerts();
- if(!location.hash)location.hash=multi()?"#apercu":"#tableau";
+ if(sees("traiter"))startAlerts();
+ if(!location.hash||route().id!==location.hash.slice(1).split("/")[0])location.hash=`#${route().id}`;
  buildNav();await render();
 }
 $("#login-form").addEventListener("submit",async e=>{
  e.preventDefault();const btn=e.submitter||$("#login-form .btn"),err=$("#login-err");err.textContent="";btn.disabled=true;
- try{await api("/api/login",{password:$("#login-pw").value});await showApp();}
+ try{await api("/api/login",{name:$("#login-name").value.trim(),password:$("#login-pw").value});await showApp();}
  catch(x){err.textContent=x.message;$("#login-pw").select();}
  finally{btn.disabled=false;}
 });
@@ -147,11 +161,11 @@ $("#logout").addEventListener("click",async()=>{try{await api("/api/logout");}ca
 const SECTIONS=[
  ["apercu","Vue d'ensemble",viewOverview],["tableau","Tableau de bord",viewDashboard],["traiter","À traiter",viewAlerts],["joueurs","Joueurs",viewPlayers],["annonces","Annonces",viewAnnounces],
  ["chat","Chat",viewChat],["fil","Fil",viewFeed],["duels","Duels",viewDuels],["reglages","Réglages",viewSettings],
- ["sauvegarde","Sauvegarde",viewBackup],["bots","Détection de bots",viewBots],["journal","Journal d'admin",viewAudit],
+ ["sauvegarde","Sauvegarde",viewBackup],["bots","Détection de bots",viewBots],["journal","Journal d'admin",viewAudit],["modos","Modérateurs",viewMods],
 ];
-// With a single server the overview is skipped altogether.
-const sections=()=>SECTIONS.filter(x=>x[0]!=="apercu"||multi());
-const route=()=>{const [s,...rest]=location.hash.slice(1).split("/");return {id:sections().some(x=>x[0]===s)?s:multi()?"apercu":"tableau",arg:rest.join("/")};};
+// With a single server the overview is skipped altogether; a moderator only gets their panels.
+const sections=()=>SECTIONS.filter(([k])=>k==="apercu"?multi():OWNER_ONLY.has(k)?owner():sees(k));
+const route=()=>{const [s,...rest]=location.hash.slice(1).split("/"),list=sections();return {id:list.some(x=>x[0]===s)?s:list[0]?.[0]??"apercu",arg:rest.join("/")};};
 function buildNav(){
  const {id}=route();
  $("#nav").replaceChildren(...sections().map(([k,label])=>h("a",{href:`#${k}`,"aria-current":k===id?"page":null},label)));
@@ -162,7 +176,7 @@ const stopRefresh=()=>{clearInterval(refreshT);refreshT=null;};
 async function render(){
  const {id,arg}=route(),seq=++renderSeq,view=$("#view");stopRefresh();
  for(const a of $("#nav").children){if(a.getAttribute("href")===`#${id}`)a.setAttribute("aria-current","page");else a.removeAttribute("aria-current");}
- const fn=SECTIONS.find(x=>x[0]===id)[2];
+ const fn=sections().find(x=>x[0]===id)?.[2]??(()=>h("div",{class:"card"},empty("Aucun panneau ne t'est ouvert : demande à l'organisateur.")));
  try{
   const nodes=await fn(arg);
   if(seq!==renderSeq)return;   // a newer navigation won the race
@@ -197,7 +211,7 @@ const alertCount=()=>[...alerts.values()].reduce((n,s)=>n+s.items.length,0);
 function drawAlertCount(){
  const n=alertCount(),a=$('#nav a[href="#traiter"]');
  document.title=n?`(${n}) ${BASE_TITLE}`:BASE_TITLE;
- if(a)a.replaceChildren("À traiter",n?h("span",{class:"badge bad"},String(n)):null);
+ if(a)a.replaceChildren("À traiter",...(n?[h("span",{class:"badge bad"},String(n))]:[]));
 }
 const srvCall=(id,cmd,args={})=>api(`/api/s/${encodeURIComponent(id)}/call`,{cmd,...args});
 async function pollAlerts(redraw=true){
@@ -233,13 +247,13 @@ async function viewAlerts(){
  const blocks=servers.map(s=>{
   const st=alerts.get(s.id)||{items:[],acked:0},items=st.items;
   return h("div",{class:"card"},
-   h("div",{class:"btn-row"},h("h2",{},multi()?s.name:"Alertes"),items.length>1?h("button",{class:"btn small",type:"button",onclick:e=>ack(s.id,items.map(a=>a.key),e.currentTarget)},"Tout marquer comme vu"):null),
+   h("div",{class:"btn-row"},h("h2",{},multi()?s.name:"Alertes"),items.length>1&&can("alerts-ack")?h("button",{class:"btn small",type:"button",onclick:e=>ack(s.id,items.map(a=>a.key),e.currentTarget)},"Tout marquer comme vu"):null),
    st.error?h("p",{class:"err"},st.error):null,
    items.length?h("div",{class:"list"},items.map(a=>h("div",{class:"alert-item"},
     h("div",{class:"btn-row"},h("span",{class:`badge ${a.kind==="chat"?"warn":"bad"}`},KIND[a.kind]||a.kind),h("b",{},a.title),a.t?h("span",{class:"muted small"},fmt(a.t)):null),
     a.detail?h("p",{class:"wrap muted small"},a.detail):null,
     h("div",{class:"btn-row"},h("button",{class:"btn small go",type:"button",onclick:()=>open(s.id,a)},"Ouvrir"),
-     h("button",{class:"btn small",type:"button",onclick:e=>ack(s.id,[a.key],e.currentTarget)},"Vu"))))):empty("Rien à traiter."),
+     can("alerts-ack")&&h("button",{class:"btn small",type:"button",onclick:e=>ack(s.id,[a.key],e.currentTarget)},"Vu"))))):empty("Rien à traiter."),
    st.acked?h("p",{class:"muted small"},`${st.acked} déjà vue${st.acked>1?"s":""} : elle${st.acked>1?"s":""} ne compte${st.acked>1?"nt":""} plus pendant 30 jours.`):null);
  });
  return [h("div",{class:"view-head"},h("h1",{},"À traiter"),h("div",{class:"btn-row"},h("span",{class:"muted small"},"vérifié toutes les 20 s, sur tous les serveurs"),refreshBtn())),
@@ -287,7 +301,7 @@ async function viewOverview(){
   h("div",{class:"view-head"},h("h1",{},"Vue d'ensemble"),h("div",{class:"btn-row"},h("span",{class:"muted small"},"actualisée toutes les 15 s"),refreshBtn())),
   h("div",{class:"grid wide"},servers.map(s=>h("div",{class:`card srv-card${s.up?"":" down"}`,onclick:e=>{if(!e.target.closest("button"))enter(s.id);}},
    h("h2",{},h("i",{class:`dot ${s.up?"up":"down"}`}),h("button",{class:"linkish",type:"button",onclick:()=>enter(s.id)},s.name)),
-   s.up?inviteWidget(s.invite):null,
+   s.up&&can("invite")?inviteWidget(s.invite):null,
    s.up?kv(["Version",s.version],["Joueurs",s.players],["Connectés",s.online],["Actifs 24 h",s.active24h],["Chat",chatState(s.chatRooms)],["Signalements chat",s.chatReports],
     ["Prochaine annonce",s.nextAnnounce?`${fmt(s.nextAnnounce.t)} : ${s.nextAnnounce.text}`:"aucune"])
    :h("p",{class:"err"},`Injoignable : ${s.error||"pas de réponse"}`)))),
@@ -300,7 +314,7 @@ async function viewOverview(){
 
 // ===================================================================== Tableau de bord
 async function viewDashboard(){
- const [s,l,inv]=await Promise.all([call("stats"),call("list"),call("invite-get").catch(()=>null)]);
+ const [s,l,inv]=await Promise.all([call("stats"),call("list"),can("invite")?call("invite-get").catch(()=>null):null]);
  const online=l.players.filter(p=>p.online);
  const stat=(v,k)=>h("div",{class:"card stat"},h("div",{class:"v"},v??"—"),h("div",{class:"k"},k));
  const ch=s.chat||{};
@@ -308,7 +322,7 @@ async function viewDashboard(){
  refreshT=setInterval(()=>{if(!document.hidden&&route().id==="tableau")render();},15000);
  return [
   head("Tableau de bord",h("span",{class:"muted small"},"actualisé toutes les 15 s"),refreshBtn()),
-  h("div",{class:"card"},inviteWidget(inv&&{code:inv.invite||null,open:!!inv.open&&!!inv.invite})),
+  can("invite")?h("div",{class:"card"},inviteWidget(inv&&{code:inv.invite||null,open:!!inv.open&&!!inv.invite})):null,
   h("div",{class:"grid"},
    stat(s.players,"joueurs inscrits"),stat(s.online,"connectés maintenant"),stat(s.active24h,"actifs sur 24 h"),stat(s.active7d,"actifs sur 7 jours"),
    stat(s.suspended,"suspendus"),stat(s.pushSubs,"abonnements notifications"),stat(s.registrations?(s.registrations.open?"ouvertes":"fermées"):"—","inscriptions"),stat(chatState(s.chatRooms),"chat"),
@@ -358,17 +372,19 @@ async function viewPlayer(id){
  const by={id:p.id},muted=p.chatMutedUntil>Date.now();
  const muteSel=h("select",{"aria-label":"Durée"},[[1,"1 heure"],[24,"24 heures"],[72,"3 jours"],[168,"7 jours"],[720,"30 jours"]].map(([v,t])=>h("option",{value:v},t)));
  const btn=(label,cls,fn)=>h("button",{class:`btn small ${cls||""}`,type:"button",onclick:e=>fn(e.currentTarget)},label);
+ const self=isMe(p.id),ok=a=>can(a)&&!self;
  const actions=h("div",{class:"btn-row"},
-  btn("Déconnecter partout","",b=>confirmBox("Déconnecter partout ?",`${p.name} sera déconnecté de tous ses appareils.`,"Déconnecter").then(ok=>ok&&act(b,()=>call("signout",by),"Sessions fermées."))),
-  btn("Réinitialiser le mot de passe","danger",b=>confirmBox("Réinitialiser le mot de passe ?",`Un nouveau mot de passe est généré pour ${p.name} ; ses sessions sont fermées partout.`,"Réinitialiser").then(ok=>ok&&act(b,
+  self?h("p",{class:"muted small"},"C'est ton propre compte : aucune action possible dessus."):null,
+  ok("signout")&&btn("Déconnecter partout","",b=>confirmBox("Déconnecter partout ?",`${p.name} sera déconnecté de tous ses appareils.`,"Déconnecter").then(ok=>ok&&act(b,()=>call("signout",by),"Sessions fermées."))),
+  ok("reset-password")&&btn("Réinitialiser le mot de passe","danger",b=>confirmBox("Réinitialiser le mot de passe ?",`Un nouveau mot de passe est généré pour ${p.name} ; ses sessions sont fermées partout.`,"Réinitialiser").then(ok=>ok&&act(b,
    async()=>{const r=await api(sp("reset-password"),{name:p.name});await secretBox("Nouveau mot de passe",`Mot de passe de ${r.name} :`,r.password);},null))),
-  btn("Débloquer la connexion","",b=>act(b,()=>call("unlock",{name:p.name}),r=>`Essais de connexion remis à zéro (${r.cleared??0}).`)),
-  btn("Renommer","",async b=>{const n=await promptBox("Renommer",`Nouveau pseudo pour ${p.name}`,p.name);if(n&&n!==p.name)act(b,()=>call("rename",{...by,newName:n}),r=>`Renommé en ${r.name}.`);}),
-  p.suspended?btn("Réactiver le compte","",b=>confirmBox("Réactiver ?",`${p.name} pourra se reconnecter ; son compagnon reprend sans rattrapage du temps passé.`,"Réactiver",false).then(ok=>ok&&act(b,()=>call("suspend",{...by,on:false}),"Compte réactivé.")))
+  ok("unlock")&&btn("Débloquer la connexion","",b=>act(b,()=>call("unlock",{name:p.name}),r=>`Essais de connexion remis à zéro (${r.cleared??0}).`)),
+  ok("rename")&&btn("Renommer","",async b=>{const n=await promptBox("Renommer",`Nouveau pseudo pour ${p.name}`,p.name);if(n&&n!==p.name)act(b,()=>call("rename",{...by,newName:n}),r=>`Renommé en ${r.name}.`);}),
+  !ok("suspend")?null:p.suspended?btn("Réactiver le compte","",b=>confirmBox("Réactiver ?",`${p.name} pourra se reconnecter ; son compagnon reprend sans rattrapage du temps passé.`,"Réactiver",false).then(ok=>ok&&act(b,()=>call("suspend",{...by,on:false}),"Compte réactivé.")))
    :btn("Suspendre","danger",b=>confirmBox("Suspendre le compte ?",`${p.name} est déconnecté, ne peut plus se connecter, disparaît du classement ; son compagnon est figé et ses duels ouverts sont annulés.`,"Suspendre").then(ok=>ok&&act(b,()=>call("suspend",{...by,on:true}),"Compte suspendu."))));
- const chat=h("div",{class:"btn-row"},muted?h("span",{class:"badge warn"},`chat coupé jusqu'au ${fmt(p.chatMutedUntil)}`):h("span",{class:"muted small"},"Chat autorisé"),muteSel,
-  btn("Couper le chat","danger",b=>{const hrs=+muteSel.value;confirmBox("Couper le chat ?",`${p.name} ne pourra plus écrire dans le chat pendant ${muteSel.selectedOptions[0].textContent}.`,"Couper").then(ok=>ok&&act(b,()=>call("chat-mute",{...by,hours:hrs}),"Chat coupé."));}),
-  muted?btn("Rétablir le chat","",b=>act(b,()=>call("chat-mute",{...by,hours:0}),"Chat rétabli.")):null);
+ const chat=h("div",{class:"btn-row"},muted?h("span",{class:"badge warn"},`chat coupé jusqu'au ${fmt(p.chatMutedUntil)}`):h("span",{class:"muted small"},"Chat autorisé"),ok("chat-mute")&&muteSel,
+  ok("chat-mute")&&btn("Couper le chat","danger",b=>{const hrs=+muteSel.value;confirmBox("Couper le chat ?",`${p.name} ne pourra plus écrire dans le chat pendant ${muteSel.selectedOptions[0].textContent}.`,"Couper").then(ok=>ok&&act(b,()=>call("chat-mute",{...by,hours:hrs}),"Chat coupé."));}),
+  muted&&ok("chat-mute")?btn("Rétablir le chat","",b=>act(b,()=>call("chat-mute",{...by,hours:0}),"Chat rétabli.")):null);
  const kv=(...pairs)=>h("dl",{class:"kv"},pairs.filter(Boolean).flatMap(([k,v])=>[h("dt",{},k),h("dd",{},v??"—")]));
  return [
   h("div",{class:"view-head"},h("div",{class:"btn-row"},h("a",{class:"btn small",href:"#joueurs"},"← Joueurs"),h("h1",{},p.name),srvTag(),campBadge(p.camp),dots(p),p.suspended?h("span",{class:"badge bad"},"suspendu"):null),refreshBtn()),
@@ -382,7 +398,7 @@ async function viewPlayer(id){
    h("thead",{},h("tr",{},["Date","Contre","Rôle","Statut","Résultat","Signaux",""].map(t=>h("th",{},t)))),
    h("tbody",{},p.duels.map(d=>h("tr",{},h("td",{class:"nowrap"},fmt(d.created)),h("td",{},who(d.vs)),h("td",{},d.role==="challenger"?"lanceur":d.role==="defender"?"défié":d.role??"—"),
     h("td",{},tr(DUEL_STATUS,d.status)),h("td",{},tr(DUEL_RES,d.res)),h("td",{},flagBadges(d.flags)||"—"),
-    h("td",{},d.status==="done"&&d.id!=null?annulBtn({id:d.id,label:`${p.name} contre ${who(d.vs)}`}):null)))))):empty("Aucun duel.")),
+    h("td",{},d.status==="done"&&d.id!=null&&!self?annulBtn({id:d.id,label:`${p.name} contre ${who(d.vs)}`}):null)))))):empty("Aucun duel.")),
   p.games&&!p.activity?.games?h("div",{class:"card"},h("h2",{},"Mini-jeux (14 jours)"),gamesTable(p.games)):null,
   h("div",{class:"card"},h("h2",{},"Activité et mini-jeux (14 jours)"),p.activity?botReport(p.activity,false):empty("Pas de rapport d'activité.")),
  ];
@@ -455,16 +471,16 @@ async function viewAnnounces(){
   act(e.currentTarget,()=>call("schedule-add",b),"Annonce planifiée.");
  }},"Planifier");
  const schedRows=schedules.length?h("ul",{class:"list"},schedules.map(s=>{
-  const tog=h("input",{type:"checkbox",checked:!!s.enabled,"aria-label":"Active",onchange:e=>act(null,()=>call("schedule-toggle",{id:s.id,enabled:e.target.checked}),e.target.checked?"Planification activée.":"Planification en pause.")});
+  const tog=h("input",{type:"checkbox",checked:!!s.enabled,disabled:!can("announce"),"aria-label":"Active",onchange:e=>act(null,()=>call("schedule-toggle",{id:s.id,enabled:e.target.checked}),e.target.checked?"Planification activée.":"Planification en pause.")});
   const tg=s.target||{};
   return h("li",{class:"row"},h("label",{class:"check"},tog),h("span",{class:"grow"},h("div",{},s.text),
    h("div",{class:"meta"},`${ruleText(s)} · pour ${tg.kind==="camp"?`le camp de ${tg.camp==="left"?"gauche":"droite"}`:tg.kind==="player"?tg.name:"tout le monde"} · prochaine : ${s.enabled&&s.next?fmt(s.next):"—"} · dernière : ${fmt(s.last)}`)),
-   h("button",{class:"btn small danger",type:"button",onclick:e=>{const b=e.currentTarget;confirmBox("Supprimer cette planification ?",s.text,"Supprimer").then(ok=>ok&&act(b,()=>call("schedule-delete",{id:s.id}),"Planification supprimée."));}},"Supprimer"));
+   can("announce")&&h("button",{class:"btn small danger",type:"button",onclick:e=>{const b=e.currentTarget;confirmBox("Supprimer cette planification ?",s.text,"Supprimer").then(ok=>ok&&act(b,()=>call("schedule-delete",{id:s.id}),"Planification supprimée."));}},"Supprimer"));
  })):empty("Aucune annonce planifiée.");
  const items=hist.items||[];
  return [
   head("Annonces",refreshBtn()),
-  h("div",{class:"grid wide"},
+  can("announce")&&h("div",{class:"grid wide"},
    h("div",{class:"card"},h("h2",{},"Envoyer maintenant"),h("label",{},"Destinataires"),t1.node,h("label",{},"Texte"),c1.ta,c1.counter,h("label",{},"Aperçu"),c1.preview,
     h("p",{class:"muted small"},"Bandeau sur les écrans ouverts (jamais en pleine partie), notification aux abonnés et, envoyée à tous, une ligne dans le fil."),h("div",{class:"btn-row"},send)),
    h("div",{class:"card"},h("h2",{},"Planifier"),h("label",{},"Destinataires"),t2.node,h("label",{},"Texte"),c2.ta,c2.counter,c2.preview,
@@ -472,7 +488,7 @@ async function viewAnnounces(){
   h("div",{class:"card"},h("h2",{},"Planifiées"),schedRows),
   h("div",{class:"card"},h("h2",{},"Historique"),items.length?h("div",{class:"table-wrap"},h("table",{},
    h("thead",{},h("tr",{},["Date","Par","Pour","Texte"].map(t=>h("th",{},t)))),
-   h("tbody",{},items.map(i=>h("tr",{},h("td",{class:"nowrap"},fmt(i.t)),h("td",{},tr(VIA,i.via)),h("td",{},i.target||"tous"),h("td",{class:"wrap"},i.text??"")))))):empty("Aucune annonce envoyée.")),
+   h("tbody",{},items.map(i=>h("tr",{},h("td",{class:"nowrap"},fmt(i.t)),h("td",{},byWho(i.via,i.by)),h("td",{},i.target||"tous"),h("td",{class:"wrap"},i.text??"")))))):empty("Aucune annonce envoyée.")),
  ];
 }
 
@@ -489,7 +505,7 @@ async function viewChat(){
  const [{items},st]=await Promise.all([call("chat-reports"),call("stats")]);
  const closed=st.chatRooms&&!st.chatRooms.global&&!st.chatRooms.camp;
  return [head("Chat · messages signalés",refreshBtn()),
-  closed?h("div",{class:"card notice"},h("b",{},"Le chat est fermé : "),"les signalements restent consultables. ",h("a",{href:"#reglages"},"Réglages →")):null,items.length?h("div",{class:"list"},items.map(m=>{
+  closed?h("div",{class:"card notice"},h("b",{},"Le chat est fermé : "),"les signalements restent consultables. ",owner()?h("a",{href:"#reglages"},"Réglages →"):null):null,items.length?h("div",{class:"list"},items.map(m=>{
   const author=who(m.author),hrs=h("select",{"aria-label":"Durée"},[[24,"24 h"],[72,"3 jours"],[168,"7 jours"],[720,"30 jours"]].map(([v,t])=>h("option",{value:v},t)));
   const target=m.authorId!=null?{id:m.authorId}:{name:author};
   return h("div",{class:"card"},
@@ -499,8 +515,8 @@ async function viewChat(){
    m.media?h("button",{class:"btn small",type:"button",onclick:e=>act(e.currentTarget,()=>showMedia(e.currentTarget,m.media),null,null)},`Voir l'image jointe (${m.media.type||"image"})`):null,
    h("p",{class:"muted small"},`Signalé par : ${(m.reporters||[]).join(", ")||"—"}`),
    h("div",{class:"btn-row"},
-    h("button",{class:"btn small danger",type:"button",onclick:e=>{const b=e.currentTarget;confirmBox("Supprimer ce message ?","Il disparaît des écrans de tous les joueurs.","Supprimer").then(ok=>ok&&act(b,()=>call("chat-delete",{id:m.id}),"Message supprimé."));}},"Supprimer le message"),
-    hrs,h("button",{class:"btn small danger",type:"button",onclick:e=>{const b=e.currentTarget;confirmBox(`Couper le chat de ${author} ?`,`${author} ne pourra plus écrire pendant ${hrs.selectedOptions[0].textContent}.`,"Couper").then(ok=>ok&&act(b,()=>call("chat-mute",{...target,hours:+hrs.value}),"Chat de l'auteur coupé."));}},"Couper le chat de l'auteur")));
+    can("chat-delete")&&h("button",{class:"btn small danger",type:"button",onclick:e=>{const b=e.currentTarget;confirmBox("Supprimer ce message ?","Il disparaît des écrans de tous les joueurs.","Supprimer").then(ok=>ok&&act(b,()=>call("chat-delete",{id:m.id}),"Message supprimé."));}},"Supprimer le message"),
+    can("chat-mute")&&hrs,can("chat-mute")&&h("button",{class:"btn small danger",type:"button",onclick:e=>{const b=e.currentTarget;confirmBox(`Couper le chat de ${author} ?`,`${author} ne pourra plus écrire pendant ${hrs.selectedOptions[0].textContent}.`,"Couper").then(ok=>ok&&act(b,()=>call("chat-mute",{...target,hours:+hrs.value}),"Chat de l'auteur coupé."));}},"Couper le chat de l'auteur")));
  })):h("div",{class:"card"},empty("Aucun message signalé."))];
 }
 
@@ -510,7 +526,7 @@ async function viewFeed(){
  return [head("Fil de la République",refreshBtn()),h("div",{class:"card"},items.length?h("div",{class:"table-wrap"},h("table",{},
   h("thead",{},h("tr",{},["Date","Joueur","Type","Texte",""].map(t=>h("th",{},t)))),
   h("tbody",{},items.map(i=>h("tr",{},h("td",{class:"nowrap"},fmt(i.t)),h("td",{},i.player),h("td",{},tr(FEED_KIND,i.kind)),h("td",{class:"wrap"},i.text),
-   h("td",{},h("button",{class:"btn small danger",type:"button",onclick:e=>{const b=e.currentTarget;confirmBox("Supprimer cette ligne du fil ?",`${i.player} : ${i.text}`,"Supprimer").then(ok=>ok&&act(b,()=>call("feed-delete",{id:i.id}),"Ligne supprimée."));}},"Supprimer"))))))):empty("Le fil est vide."))];
+   h("td",{},can("feed-delete")&&h("button",{class:"btn small danger",type:"button",onclick:e=>{const b=e.currentTarget;confirmBox("Supprimer cette ligne du fil ?",`${i.player} : ${i.text}`,"Supprimer").then(ok=>ok&&act(b,()=>call("feed-delete",{id:i.id}),"Ligne supprimée."));}},"Supprimer"))))))):empty("Le fil est vide."))];
 }
 
 // ===================================================================== Duels
@@ -524,7 +540,7 @@ async function viewDuels(){
    h("tbody",{},items.map(d=>h("tr",{},h("td",{class:"nowrap"},fmt(d.created)),h("td",{},who(d.challenger)),h("td",{},who(d.defender)),h("td",{},tr(DUEL_STATUS,d.status)),h("td",{class:"nowrap"},fmt(d.expires)),
     h("td",{},flagBadges(d.flags)||"—"),
     h("td",{},d.status==="done"?annulBtn({id:d.id,label:`${who(d.challenger)} contre ${who(d.defender)}`})
-     :h("button",{class:"btn small danger",type:"button",onclick:e=>{const b=e.currentTarget;confirmBox("Annuler ce duel ?",`${who(d.challenger)} contre ${who(d.defender)} : annulé sans effet sur les jauges.`,"Annuler le duel").then(ok=>ok&&act(b,()=>call("duel-cancel",{id:d.id}),"Duel annulé."));}},"Annuler")))))))
+     :can("duel-cancel")&&h("button",{class:"btn small danger",type:"button",onclick:e=>{const b=e.currentTarget;confirmBox("Annuler ce duel ?",`${who(d.challenger)} contre ${who(d.defender)} : annulé sans effet sur les jauges.`,"Annuler le duel").then(ok=>ok&&act(b,()=>call("duel-cancel",{id:d.id}),"Duel annulé."));}},"Annuler")))))))
    :empty("Aucun duel ouvert.")),
   h("div",{class:"card"},h("h2",{},"Duels suspects"),
    h("p",{class:"muted small"},"Indices de comptes multiples sur 30 jours : comptes créés à quelques minutes d'écart qui s'affrontent, tours synchronisés, toujours le même perdant. Un indice n'est pas une preuve : ouvre la fiche des joueurs pour annuler un duel terminé et rendre ses gains."),
@@ -617,7 +633,7 @@ function gamesTable(games){
    h("td",{class:g.capShare>=0.8?"hot":""},pct(g.capShare)),h("td",{class:g.fastShare>0.5?"hot":""},pct(g.fastShare)),h("td",{class:g.cv!=null&&g.cv<0.1&&g.n>=10?"hot":""},g.cv==null?"—":g.cv.toFixed(2)),
    h("td",{},histo(g.hist,`Répartition des scores, ${tr(GAME,k)}`)||"—"))))));
 }
-const annulBtn=d=>h("button",{class:"btn small danger",type:"button",onclick:e=>{const b=e.currentTarget;
+const annulBtn=d=>!can("duel-annul")?null:h("button",{class:"btn small danger",type:"button",onclick:e=>{const b=e.currentTarget;
  confirmBox("Annuler ce duel et rendre les gains ?",`Duel #${d.id}${d.label?` (${d.label})`:""} : ses gains d'XP, de moral et d'énergie sont repris aux deux joueurs, le résultat est effacé.`,"Annuler et rendre les gains")
   .then(ok=>ok&&act(b,()=>call("duel-annul",{id:d.id}),"Duel annulé, gains rendus."));}},"Annuler ce duel (rendre les gains)");
 
@@ -644,7 +660,69 @@ async function viewAudit(){
  const {items}=await call("audit",{limit:500});
  return [head("Journal d'admin",refreshBtn()),h("div",{class:"card"},items.length?h("div",{class:"table-wrap"},h("table",{},
   h("thead",{},h("tr",{},["Date","Par","Commande","Cible","Détail"].map(t=>h("th",{},t)))),
-  h("tbody",{},items.map(i=>h("tr",{},h("td",{class:"nowrap"},fmt(i.t)),h("td",{},VIA[i.via]||i.via||"—"),h("td",{},h("code",{},i.cmd)),h("td",{},i.target||"—"),h("td",{class:"wrap"},i.detail||"")))))):empty("Aucune action enregistrée."))];
+  h("tbody",{},items.map(i=>h("tr",{},h("td",{class:"nowrap"},fmt(i.t)),h("td",{},byWho(i.via,i.actor)),h("td",{},h("code",{},i.cmd)),h("td",{},i.target||"—"),h("td",{class:"wrap"},i.detail||"")))))):empty("Aucune action enregistrée."))];
+}
+
+// ===================================================================== Modérateurs (the owner only)
+// A moderator is a player picked on one server; the owner checks their panels, actions and servers (a profile fills
+// the boxes). Their password (openssl rand -base64 20) is shown once, to be copied and handed over privately.
+function rightsForm(cat,init){
+ const boxes=(list,on)=>list.map(([id,label])=>h("label",{class:"check"},h("input",{type:"checkbox",value:id,checked:on.includes(id)}),label));
+ const pan=h("div",{class:"checks"},boxes(cat.panels,init.panels)),act_=h("div",{class:"checks"},boxes(cat.actions,init.actions));
+ const srv=h("div",{class:"checks"},cat.servers.map(s=>h("label",{class:"check"},h("input",{type:"checkbox",value:s.id,checked:init.servers.includes(s.id)||s.id===init.home,disabled:s.id===init.home}),s.name)));
+ const vals=box=>[...box.querySelectorAll("input:checked")].map(i=>i.value);
+ const set=(box,on)=>{for(const i of box.querySelectorAll("input"))i.checked=on.includes(i.value);};
+ const preset=h("select",{"aria-label":"Profil",onchange:()=>{const p=cat.presets.find(x=>x.id===preset.value);if(p){set(pan,p.panels);set(act_,p.actions);}}},
+  h("option",{value:""},"Personnalisé"),cat.presets.map(p=>h("option",{value:p.id},p.label)));
+ for(const box of [pan,act_])box.addEventListener("change",()=>{preset.value="";});
+ const setHome=id=>{init.home=id;for(const i of srv.querySelectorAll("input")){i.disabled=i.value===id;if(i.disabled)i.checked=true;}};
+ return {setHome,get:()=>({panels:vals(pan),actions:vals(act_),servers:vals(srv)}),
+  node:h("div",{},h("label",{},"Profil"),preset,h("h3",{class:"sub"},"Panneaux visibles"),pan,h("h3",{class:"sub"},"Actions permises"),act_,
+   cat.servers.length>1?[h("h3",{class:"sub"},"Serveurs"),srv]:null,
+   h("p",{class:"muted small"},"Toujours réservés à l'organisateur : Réglages, Sauvegarde, régénération du code d'invitation et gestion des modérateurs. Un modérateur n'agit jamais sur son propre compte."))};
+}
+const modApi=(a,b={})=>api(`/api/mods${a?`/${a}`:""}`,b);
+const showModPass=(r,title)=>secretBox(title,`Identifiant : ${r.name ?? r.mod?.name}. Il se connecte à cette console avec ce pseudo et ce mot de passe :`,r.password,false);
+async function viewMods(){
+ const cat=await modApi(""),srvName_=id=>cat.servers.find(s=>s.id===id)?.name||id;
+ const label=(list,ids)=>ids.map(id=>list.find(x=>x[0]===id)?.[1]??id).join(", ")||"aucune";
+ // Add: a server, then one of its players.
+ const srvSel=h("select",{"aria-label":"Serveur du joueur"},cat.servers.map(s=>h("option",{value:s.id,selected:s.id===cur},s.name)));
+ const pSel=h("select",{"aria-label":"Joueur"});
+ const form=rightsForm(cat,{panels:cat.presets[0].panels,actions:cat.presets[0].actions,servers:[],home:srvSel.value});
+ const loadPlayers=async()=>{
+  pSel.replaceChildren(h("option",{value:""},"Chargement…"));form.setHome(srvSel.value);
+  try{const {players}=await srvCall(srvSel.value,"list");const taken=new Set(cat.mods.map(m=>m.name.toLowerCase()));
+   pSel.replaceChildren(h("option",{value:""},"Choisis un joueur…"),...players.filter(p=>!taken.has(p.name.toLowerCase())).sort((a,b)=>a.name.localeCompare(b.name,"fr")).map(p=>h("option",{value:p.id},p.name)));}
+  catch(e){pSel.replaceChildren(h("option",{value:""},"Serveur injoignable"));fail(e);}
+ };
+ srvSel.addEventListener("change",loadPlayers);loadPlayers();
+ const create=h("button",{class:"btn go",type:"button",onclick:e=>{
+  if(!pSel.value)return toast("Choisis un joueur.",true);
+  act(e.currentTarget,async()=>{const r=await modApi("save",{server:srvSel.value,player:+pSel.value,...form.get()});await showModPass(r,"Modérateur créé");},null);
+ }},"Créer et générer le mot de passe");
+ const card=m=>{
+  const edit=rightsForm(cat,{...m}),box=h("div",{hidden:true},edit.node,h("div",{class:"btn-row"},
+   h("button",{class:"btn go small",type:"button",onclick:e=>act(e.currentTarget,()=>modApi("save",{id:m.id,...edit.get()}),"Droits enregistrés : ses sessions sont fermées.")},"Enregistrer"),
+   h("button",{class:"btn small",type:"button",onclick:()=>{box.hidden=true;}},"Fermer")));
+  return h("div",{class:"card"},
+   h("div",{class:"btn-row"},h("h2",{},m.name),h("span",{class:"muted small"},`joueur de ${srvName_(m.home)}`)),
+   h("dl",{class:"kv"},h("dt",{},"Panneaux"),h("dd",{},label(cat.panels,m.panels)),h("dt",{},"Actions"),h("dd",{},label(cat.actions,m.actions)),
+    cat.servers.length>1?[h("dt",{},"Serveurs"),h("dd",{},m.servers.map(srvName_).join(", "))]:null,
+    h("dt",{},"Créé le"),h("dd",{},fmt(m.created)),h("dt",{},"Dernière connexion"),h("dd",{},m.lastLogin?`${fmt(m.lastLogin)} (${ago(m.lastLogin)})`:"jamais")),
+   h("div",{class:"btn-row"},
+    h("button",{class:"btn small",type:"button",onclick:()=>{box.hidden=!box.hidden;}},"Modifier les droits"),
+    h("button",{class:"btn small",type:"button",onclick:e=>{const b=e.currentTarget;dialog({title:`Nouveau mot de passe pour ${m.name} ?`,body:"L'ancien ne marchera plus et ses sessions sont fermées.",ok:"Générer",server:false})
+     .then(ok=>ok&&act(b,async()=>showModPass(await modApi("password",{id:m.id}),"Nouveau mot de passe"),null,null));}},"Nouveau mot de passe"),
+    h("button",{class:"btn small danger",type:"button",onclick:e=>{const b=e.currentTarget;dialog({title:`Retirer ${m.name} des modérateurs ?`,body:"Son accès à la console est coupé tout de suite. Son compte de joueur ne change pas.",ok:"Retirer",danger:true,server:false})
+     .then(ok=>ok&&act(b,()=>modApi("delete",{id:m.id}),"Modérateur retiré."));}},"Retirer")),
+   box);
+ };
+ return [h("div",{class:"view-head"},h("h1",{},"Modérateurs"),refreshBtn()),
+  h("div",{class:"card"},h("h2",{},"Ajouter un modérateur"),
+   h("div",{class:"field-row"},cat.servers.length>1?h("div",{},h("label",{},"Serveur"),srvSel):null,h("div",{},h("label",{},"Joueur"),pSel)),
+   form.node,h("div",{class:"btn-row"},create)),
+  ...(cat.mods.length?cat.mods.map(card):[h("div",{class:"card"},empty("Aucun modérateur pour l'instant."))])];
 }
 
 // ===================================================================== start

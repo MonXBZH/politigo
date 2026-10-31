@@ -16,18 +16,20 @@
 <main id="login" class="login" hidden>
  <form id="login-form" class="card login-card" novalidate>
   <div class="brand"><span class="logo" aria-hidden="true"></span><div>PolitiGo<small>Administration</small></div></div>
-  <label for="login-pw">Mot de passe d'administration</label>
+  <label for="login-name">Pseudo <span class="muted small">(modérateurs seulement)</span></label>
+  <input id="login-name" type="text" autocomplete="username" maxlength="40" spellcheck="false" autocapitalize="off">
+  <label for="login-pw">Mot de passe</label>
   <input id="login-pw" type="password" autocomplete="current-password" required maxlength="200">
   <button class="btn go" type="submit">Se connecter</button>
   <p id="login-err" class="err" role="alert"></p>
-  <p class="muted small">Mot de passe : variable <code>POLITIGO_ADMIN_PASSWORD</code>, ou celui généré au premier démarrage (logs du conteneur <code>admin</code>).</p>
+  <p class="muted small">Organisateur : laisse le pseudo vide ; mot de passe de la variable <code>POLITIGO_ADMIN_PASSWORD</code>, ou celui généré au premier démarrage (logs du conteneur <code>admin</code>). Modérateur : ton pseudo de joueur et le mot de passe que l'organisateur t'a donné.</p>
  </form>
 </main>
 
 <div id="app" class="shell" hidden>
  <header class="top">
   <div class="brand"><span class="logo" aria-hidden="true"></span><div>PolitiGo<small>Administration</small></div></div>
-  <div class="top-right"><div id="srv" class="srv"></div><button id="logout" class="btn small" type="button">Déconnexion</button></div>
+  <div class="top-right"><span id="who" class="badge" hidden></span><div id="srv" class="srv"></div><button id="logout" class="btn small" type="button">Déconnexion</button></div>
  </header>
  <nav id="nav" class="nav" aria-label="Sections"></nav>
  <section id="view" class="view" tabindex="-1"></section>

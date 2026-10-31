@@ -218,7 +218,17 @@ compose ; supprimer le bloc `admin` et ses volumes pour s'en passer, le jeu n'en
   le menu et dans le titre de l'onglet, un son marque chaque nouvelle alerte, et une notification système s'affiche quand
   la console est en arrière-plan. Cette notification n'est possible qu'en HTTPS (Nginx Proxy Manager) ou sur `localhost` :
   les navigateurs la refusent en `http://IP-du-LAN`. « Vu » range une alerte pendant 30 jours, pour toutes les consoles.
-- **Journal d'admin** : chaque action d'administration (web, ligne de commande, annonce planifiée), sans mot de passe.
+- **Journal d'admin** : chaque action d'administration (web, ligne de commande, annonce planifiée), sans mot de passe,
+  signée du nom du modérateur quand c'est lui qui agit.
+- **Modérateurs** (organisateur seulement) : choisis parmi les joueurs d'un serveur, avec un profil prêt à l'emploi
+  (« Modo chat », « Modo complet ») ou des cases à cocher : les panneaux qu'ils voient, les actions permises et les
+  serveurs où ils agissent. Un mot de passe de 20 octets aléatoires en base64 (`openssl rand -base64 20`) est généré et
+  affiché une seule fois. Le modérateur se connecte avec son pseudo de joueur et ce mot de passe. Les droits sont vérifiés
+  par le conteneur admin à chaque commande, et le serveur de jeu refuse toute action sur son propre compte (il ne voit pas
+  non plus les alertes et signalements qui le concernent). Changer ses droits, régénérer son mot de passe ou le retirer
+  ferme ses sessions aussitôt. Restent à l'organisateur : Réglages, Sauvegarde, régénération du code d'invitation et
+  gestion des modérateurs ; le code d'invitation n'est visible que si la case est cochée. Les modérateurs sont gardés
+  dans le volume `/data-admin` (`moderators.json`, empreintes scrypt seulement).
 
 **Plusieurs parties sur le même hôte Docker** : chaque pile a son propre socket d'administration. Monter le volume du socket
 de l'autre pile dans le conteneur `admin` (volume externe `<autre-stack>_politigo-admin-sock`, exemple commenté dans le compose),
@@ -337,7 +347,7 @@ interdire la suppression et le force push, exiger une pull request (0 approbatio
 ## 6. Tests
 
 ```bash
-bash tests/run-server.sh                       # 341 tests : règles (dont l'équilibrage J15) + mini-jeux + test politique + changelog + API + duels + notifications + chat + migrations + outils et interface d'admin, dans l'image Node de production
+bash tests/run-server.sh                       # 342 tests : règles (dont l'équilibrage J15) + mini-jeux + test politique + changelog + API + duels + notifications + chat + migrations + outils et interface d'admin, dans l'image Node de production
 bash tests/run-server.sh tests/chat.test.mjs   # un seul fichier
 docker compose restart api                     # remet à zéro les limites d'inscription avant l'e2e
 powershell -ExecutionPolicy Bypass -File tests\e2e.ps1   # parcours complet dans Chrome (crée deux joueurs de test)

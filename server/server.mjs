@@ -4,6 +4,7 @@ import http from "node:http";
 import net from "node:net";
 import crypto from "node:crypto";
 import {promisify} from "node:util";
+import {AsyncLocalStorage} from "node:async_hooks";
 import {DatabaseSync} from "node:sqlite";
 import {readFileSync,writeFileSync,lstatSync,unlinkSync,chmodSync,readdirSync,statSync} from "node:fs";
 import {dirname,join} from "node:path";
@@ -118,6 +119,10 @@ for(const [col,type] of [["turn","TEXT"],["flags","TEXT"],["fx","TEXT"],["c_firs
  if(db.prepare("PRAGMA table_info(duels)").all().some(c=>c.name===col))continue;
  try{db.exec(`ALTER TABLE duels ADD COLUMN ${col} ${type}`);}catch(e){if(!/duplicate column/i.test(e.message))throw e;}
 }
+// The admin log names who acted from the web console (the owner: NULL, a moderator: their name).
+if(!db.prepare("PRAGMA table_info(admin_log)").all().some(c=>c.name==="actor")){
+ try{db.exec("ALTER TABLE admin_log ADD COLUMN actor TEXT");}catch(e){if(!/duplicate column/i.test(e.message))throw e;}
+}
 // Databases from before the changelog (or the suspensions) lack the column: NULL means "has read nothing yet".
 // Another process starting on the same file at the same moment may have added it first: that is fine too.
 for(const [col,type] of [["seen_version","TEXT"],["suspended","INTEGER NOT NULL DEFAULT 0"]]){
@@ -168,10 +173,10 @@ const q={
  lastDuelsOf:db.prepare("SELECT * FROM duels WHERE challenger=? OR defender=? ORDER BY id DESC LIMIT 10"),
  openDuelsOf:db.prepare("SELECT * FROM duels WHERE (challenger=? OR defender=?) AND status IN ('c_play','pending','d_play')"),
  openDuels:db.prepare("SELECT * FROM duels WHERE status IN ('c_play','pending','d_play') ORDER BY id DESC LIMIT 500"),
- insertAudit:db.prepare("INSERT INTO admin_log(t,via,cmd,target,detail) VALUES(?,?,?,?,?)"),
+ insertAudit:db.prepare("INSERT INTO admin_log(t,via,cmd,target,detail,actor) VALUES(?,?,?,?,?,?)"),
  trimAudit:db.prepare("DELETE FROM admin_log WHERE id<=(SELECT id FROM admin_log ORDER BY id DESC LIMIT 1 OFFSET ?)"),
- audit:db.prepare("SELECT t,via,cmd,target,detail FROM admin_log ORDER BY id DESC LIMIT ?"),
- announces:db.prepare("SELECT t,via,target,detail FROM admin_log WHERE cmd IN ('announce','schedule') ORDER BY id DESC LIMIT 50"),
+ audit:db.prepare("SELECT t,via,cmd,target,detail,actor FROM admin_log ORDER BY id DESC LIMIT ?"),
+ announces:db.prepare("SELECT t,via,target,detail,actor FROM admin_log WHERE cmd IN ('announce','schedule') ORDER BY id DESC LIMIT 50"),
  insertActivity:db.prepare("INSERT INTO activity(player_id,t,kind,live,ua) VALUES(?,?,?,?,?)"),
  purgeActivity:db.prepare("DELETE FROM activity WHERE t<?"),
  activitySince:db.prepare("SELECT player_id,t,live,ua FROM activity WHERE t>? ORDER BY player_id,t"),
@@ -983,8 +988,11 @@ function adminTarget(id,name){
 const who=b=>adminTarget(b.id,b.name);
 // One row per mutating command, kept to the last 1000. Never a password nor the invite code.
 const VIAS=["cli","web","schedule","server"];   // server: what the game itself flags (a suspicious duel)
+// Who runs the admin command being handled (a moderator's name from the web console), however deep the call.
+const adminActor=new AsyncLocalStorage();
 function audit(via,cmd,target,detail=""){
- try{q.insertAudit.run(Date.now(),VIAS.includes(via)?via:"cli",cmd,String(target??"").slice(0,80),String(detail??"").slice(0,300));q.trimAudit.run(1000);}
+ const by=adminActor.getStore()?.by??null;
+ try{q.insertAudit.run(Date.now(),VIAS.includes(via)?via:"cli",cmd,String(target??"").slice(0,80),String(detail??"").slice(0,300),by);q.trimAudit.run(1000);}
  catch(e){console.error("admin log:",e);}
 }
 // An announcement from the organiser: a banner on the screens open right now (shown after a game, never during
@@ -1333,27 +1341,31 @@ const regOpen=()=>REG_OPEN&&!!INVITE;
 // every 30 s, however many consoles ask.
 const BOT_ALERT=50,ALERT_DAYS=30,ALERT_KEY=/^(chat|duel|bot|suspect):[0-9][0-9-]{0,60}$/;
 let botsCache={t:0,bots:[],suspects:[]};
-function alertsAll(now){
+function alertsAll(now,all=false){
  if(now-botsCache.t>30e3)botsCache={t:now,bots:botsAll(now),suspects:duelSuspects(now)};
  const items=[],cut=s=>String(s??"").slice(0,140);
- for(const m of chat.admin.reports())items.push({key:`chat:${m.id}`,kind:"chat",t:m.t,ref:m.id,
+ for(const m of chat.admin.reports())items.push({key:`chat:${m.id}`,kind:"chat",t:m.t,ref:m.id,ids:[m.authorId],
   title:`Message de ${m.author} signalé ${m.reports} fois`,detail:cut(m.text||(m.media?"[image]":""))});
  for(const d of q.flaggedDuels.all(now-ALERT_DAYS*864e5)){
   const f=flagsOf(d);if(!f.length)continue;
-  items.push({key:`duel:${d.id}`,kind:"duel",t:d.created,ref:f[0].side==="d"?d.defender:d.challenger,duel:d.id,title:`Duel #${d.id} signalé par l'anti-triche`,
+  items.push({key:`duel:${d.id}`,kind:"duel",t:d.created,ref:f[0].side==="d"?d.defender:d.challenger,duel:d.id,ids:[d.challenger,d.defender],title:`Duel #${d.id} signalé par l'anti-triche`,
    detail:cut(f.map(x=>`${x.name} (${(x.flags||[]).join(", ")})`).join(" · "))});
  }
- for(const b of botsCache.bots)if(b.score>=BOT_ALERT)items.push({key:`bot:${b.id}`,kind:"bot",t:null,ref:b.id,
+ for(const b of botsCache.bots)if(b.score>=BOT_ALERT)items.push({key:`bot:${b.id}`,kind:"bot",t:null,ref:b.id,ids:[b.id],
   title:`${b.name} : score de bot ${b.score}/100`,detail:cut(b.reasons.slice(0,2).join(" · "))});
- for(const s of botsCache.suspects)items.push({key:`suspect:${[...s.ids].sort((x,y)=>x-y).join("-")}`.slice(0,68),kind:"suspect",t:null,ref:s.ids[0],
+ for(const s of botsCache.suspects)items.push({key:`suspect:${[...s.ids].sort((x,y)=>x-y).join("-")}`.slice(0,68),kind:"suspect",t:null,ref:s.ids[0],ids:s.ids,
   title:`Duels suspects : ${s.names.join(" · ")}`,detail:cut(s.reasons[0])});
  const acked=new Set(q.acks.all().map(r=>r.key));
- return {items:items.filter(x=>!acked.has(x.key)),acked:items.filter(x=>acked.has(x.key)).length};
+ return {items:all?items:items.filter(x=>!acked.has(x.key)),acked:items.filter(x=>acked.has(x.key)).length};
 }
 const limitOf=(v,def,max)=>Number.isSafeInteger(v)&&v>0?Math.min(v,max):def;
 
 async function adminCommand(b){
  const via=b.via==="web"?"web":"cli",cmd=b.cmd,now=Date.now();
+ // A moderator never acts on their own account, messages or duels, nor sees the alerts and reports about them.
+ const self=Number.isSafeInteger(b.self)?b.self:null,mine=id=>self!==null&&id===self;
+ const notSelf=id=>{if(mine(id))throw new HttpError(403,"Action impossible sur ton propre compte.");};
+ const target=()=>{const p=who(b);notSelf(p.id);return p;};
  if(cmd==="list")return {players:q.listPlayers.all().map(r=>{const p=players.get(r.id);
   return {id:r.id,name:r.name,camp:p?.state.camp??null,lvl:p?.state.lvl??null,created:r.created,updated:r.updated,online:isOnline(r.id),suspended:!!r.suspended,chatMutedUntil:mutedUntil(r.id)};})};
  if(cmd==="stats"){
@@ -1366,13 +1378,13 @@ async function adminCommand(b){
  if(cmd==="player")return {player:playerDetail(who(b))};
  if(cmd==="announce")return announce(b,via);
  if(cmd==="unlock"){
-  const p=who(b),cleared=unlockName(nameKey(p.name));
+  const p=target(),cleared=unlockName(nameKey(p.name));
   audit(via,cmd,p.name,`${cleared} compteur(s) effacé(s)`);
   console.log(`admin: login counters cleared for player ${p.id}`);
   return {name:p.name,cleared};
  }
  if(cmd==="reset-password"){
-  const p=who(b);
+  const p=target();
   if(typeof b.password!=="string"||b.password.length<8||b.password.length>200)throw new HttpError(400,"Mot de passe : 8 à 200 caractères.");
   const pass=await hashPassword(b.password);
   if(!players.has(p.id))throw new HttpError(404,"Ce joueur a supprimé son compte entre-temps.");
@@ -1386,18 +1398,18 @@ async function adminCommand(b){
   return {name:p.name,cleared};
  }
  if(cmd==="signout"){
-  const p=who(b);q.deleteSessionsOf.run(p.id);closeStreamsOf(p.id);
+  const p=target();q.deleteSessionsOf.run(p.id);closeStreamsOf(p.id);
   audit(via,cmd,p.name,"Déconnecté partout");
   return {name:p.name};
  }
  if(cmd==="rename"){
-  const p=who(b),r=renamePlayer(p,b.newName);
+  const p=target(),r=renamePlayer(p,b.newName);
   audit(via,cmd,r.name,`Ancien pseudo : ${r.old}`);console.log(`admin: player ${p.id} renamed`);
   return r;
  }
  if(cmd==="suspend"){
   if(typeof b.on!=="boolean")throw new HttpError(400,"on : true ou false.");
-  const p=who(b);suspend(p,b.on);
+  const p=target();suspend(p,b.on);
   audit(via,cmd,p.name,b.on?"Compte suspendu":"Suspension levée");console.log(`admin: player ${p.id} ${b.on?"suspended":"reinstated"}`);
   return {name:p.name,suspended:p.suspended};
  }
@@ -1413,7 +1425,7 @@ async function adminCommand(b){
   q.scheduleToggle.run(b.enabled?1:0,next,r.id);audit(via,cmd,`#${r.id}`,b.enabled?"Activée":"Désactivée");
   return {};
  }
- if(cmd==="announce-history")return {items:q.announces.all().map(r=>({t:r.t,via:r.via,target:r.target,text:r.detail}))};
+ if(cmd==="announce-history")return {items:q.announces.all().map(r=>({t:r.t,via:r.via,by:r.actor??null,target:r.target,text:r.detail}))};
  if(cmd==="feed-list")return {items:q.recentFeed.all(limitOf(b.limit,50,200))};
  if(cmd==="feed-delete"){
   if(!Number.isSafeInteger(b.id)||!q.deleteFeed.run(b.id).changes)throw new HttpError(404,"Ligne du fil introuvable.");
@@ -1423,6 +1435,7 @@ async function adminCommand(b){
  if(cmd==="duels-list")return {items:q.openDuels.all().map(d=>({id:d.id,status:d.status,challenger:nameOf(d.challenger),defender:nameOf(d.defender),created:d.created,expires:d.expires??null,flags:flagsOf(d)}))};
  if(cmd==="duel-cancel"){
   const d=Number.isSafeInteger(b.id)&&q.duel.get(b.id);
+  if(d){notSelf(d.challenger);notSelf(d.defender);}
   if(!d||!OPEN_DUEL.has(d.status)||!voidDuel(d,now))throw new HttpError(404,"Duel introuvable ou déjà terminé.");
   audit(via,cmd,`#${d.id}`,`${nameOf(d.challenger)} contre ${nameOf(d.defender)}`);
   return {};
@@ -1430,6 +1443,7 @@ async function adminCommand(b){
  if(cmd==="duel-annul"){
   const d=Number.isSafeInteger(b.id)&&q.duel.get(b.id);
   if(!d||d.status!=="done")throw new HttpError(404,"Duel introuvable ou pas terminé.");
+  notSelf(d.challenger);notSelf(d.defender);
   const r=annulDuel(d,now);
   audit(via,cmd,`#${d.id}`,`${nameOf(d.challenger)} contre ${nameOf(d.defender)} : effets annulés${r.reversed.length?" ("+r.reversed.join(", ")+")":""}`);
   return r;
@@ -1454,16 +1468,19 @@ async function adminCommand(b){
   return {event:{mode:EVENT_MODE,current:eventNow()}};
  }
  if(cmd==="backup"){const r=backup(b);audit(via,cmd,"",`${r.bytes} octets${r.vapid?", avec vapid.json":""}`);return r;}
- if(cmd==="bots")return {items:botsAll(now),suspects:duelSuspects(now)};
- if(cmd==="duels-suspects")return {suspects:duelSuspects(now)};
- if(cmd==="alerts")return alertsAll(now);
+ const notMine=s=>!s.ids.some(mine);
+ if(cmd==="bots")return {items:botsAll(now).filter(r=>!mine(r.id)),suspects:duelSuspects(now).filter(notMine)};
+ if(cmd==="duels-suspects")return {suspects:duelSuspects(now).filter(notMine)};
+ if(cmd==="alerts"){const r=alertsAll(now);return self===null?r:{...r,items:r.items.filter(x=>!x.ids.some(mine))};}
  if(cmd==="alerts-ack"){
   if(!Array.isArray(b.keys)||!b.keys.length||b.keys.length>50||!b.keys.every(k=>typeof k==="string"&&ALERT_KEY.test(k)))throw new HttpError(400,"keys : 1 à 50 clés d'alerte.");
+  if(self!==null){const about=new Set(alertsAll(now,true).items.filter(x=>x.ids.some(mine)).map(x=>x.key));if(b.keys.some(k=>about.has(k)))throw new HttpError(403,"Action impossible sur ton propre compte.");}
   for(const k of b.keys)q.ack.run(k,now);
   return {acked:b.keys.length};
  }
- if(cmd==="chat-reports")return {items:chat.admin.reports()};
+ if(cmd==="chat-reports")return {items:chat.admin.reports().filter(m=>!mine(m.authorId))};
  if(cmd==="chat-delete"){
+  if(Number.isSafeInteger(b.id))notSelf(chat.admin.authorOf(b.id));
   if(!Number.isSafeInteger(b.id)||!chat.admin.deleteMessage(b.id))throw new HttpError(404,"Message introuvable.");
   audit(via,cmd,`#${b.id}`,"Message supprimé");return {};
  }
@@ -1484,7 +1501,7 @@ async function adminCommand(b){
   return {chat:chatRooms()};
  }
  if(cmd==="chat-mute"){
-  const p=who(b),h=Number(b.hours);
+  const p=target(),h=Number(b.hours);
   if(!Number.isFinite(h)||h<0||h>24*365)throw new HttpError(400,"Durée : 0 à 8760 heures.");
   const until=h>0?now+Math.round(h*R.H):null;chat.admin.mute(p.id,until);
   audit(via,cmd,p.name,until?`Chat coupé ${h} h`:"Chat rétabli");
@@ -1519,7 +1536,9 @@ function startAdmin(){
    started=true;
    let b=null;try{b=JSON.parse(buf.slice(0,i));}catch{}
    if(!b||typeof b!=="object"||Array.isArray(b))return reply({ok:false,error:"JSON invalide."});
-   adminCommand(b).then(r=>reply({ok:true,...r}),e=>{
+   // A moderator (web console): their name signs the log, and their own player account is out of their reach (self).
+   const by=typeof b.by==="string"&&b.by.trim()?b.by.trim().slice(0,40):null;
+   adminActor.run({by},()=>adminCommand(b)).then(r=>reply({ok:true,...r}),e=>{
     if(!(e instanceof HttpError))console.error("admin:",e);
     reply({ok:false,error:e instanceof HttpError?e.message:"Erreur interne."});
    });
