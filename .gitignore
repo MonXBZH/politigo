@@ -2,4 +2,5 @@
 .env
 *.db
 *.db-*
-./maquette/*
+# Design mock-ups, kept on the author's machine only.
+/maquette/
