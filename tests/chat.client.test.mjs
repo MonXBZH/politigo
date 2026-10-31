@@ -174,11 +174,37 @@ test("mergeLatest: the fresh page replaces what it covers, older pages stay; a s
  assert.deepEqual(C.mergeLatest(old,[],50),[]);
 });
 
-test("emoji picker: about 80 emojis, political ones included, no duplicates",()=>{
+test("emoji picker: the standard pack without flags, letters or skin tones; the chat's own emojis first",()=>{
  const all=C.EMOJIS.flatMap(([,l])=>l);
- assert.ok(all.length>=70&&all.length<=100,String(all.length));
- assert.equal(new Set(all).size,all.length);
- for(const e of ["🗳️","🏛️","📢","🎤","🌹","🇫🇷"])assert.ok(all.includes(e),e);
+ assert.ok(all.length>1400,String(all.length));
+ for(const [name,l] of C.EMOJIS){assert.equal(new Set(l).size,l.length,name);assert.ok(C.EMOJI_ICONS[name],name);}
+ assert.ok(!all.some(e=>/[\u{1F1E6}-\u{1F1FF}]/u.test(e)),"no regional letters, so no flag drawn as two letters");
+ assert.ok(!all.some(e=>/[\u{1F3FB}-\u{1F3FF}]/u.test(e)),"no skin-tone variants");
+ for(const e of ["🅰️","🆗","Ⓜ️","🏳️","🚩","🏴‍☠️","🏁"])assert.ok(!all.includes(e),e);
+ assert.deepEqual(C.EMOJIS[0][1].slice(0,4),[":saucisse:",":mega-saucisse:",":france:",":urss:"]);
+ for(const e of ["🗳️","🏛️","😀","🐓","🥖","🍷"])assert.ok(all.includes(e),e);
+});
+
+test("the chat's own emojis: short codes split out of the text, a sticker when alone",()=>{
+ assert.deepEqual(C.splitCustom("Une :saucisse: ?"),["Une ",{emoji:"saucisse"}," ?"]);
+ assert.deepEqual(C.splitCustom(":mega-saucisse::urss:"),[{emoji:"mega-saucisse"},{emoji:"urss"}]);
+ assert.deepEqual(C.splitCustom(":inconnu: :saucisse"),[":inconnu: :saucisse"],"unknown or unclosed codes stay text");
+ assert.deepEqual(C.splitCustom(""),[]);
+ assert.equal(C.stickerOnly(C.splitCustom(" :saucisse: ")),true);
+ assert.equal(C.stickerOnly(C.splitCustom(":saucisse::saucisse::saucisse::saucisse:")),false,"4 or more: plain size");
+ assert.equal(C.stickerOnly(C.splitCustom("Miam :saucisse:")),false);
+ assert.equal(C.stickerOnly(C.splitCustom("Miam")),false);
+ for(const k of Object.keys(C.CUSTOM))assert.match(C.customSrc(k),/^\/emoji\/[a-z-]+\.svg$/);
+});
+
+test("recent emojis: newest first, no repeat, capped, only known ones",()=>{
+ const known=new Set(["a","b","c",":saucisse:"]);
+ assert.deepEqual(C.pushRecent([],"a",known),["a"]);
+ assert.deepEqual(C.pushRecent(["a","b"],"b",known),["b","a"]);
+ assert.deepEqual(C.pushRecent(["zz","a"],"c",known),["c","a"],"an emoji no longer offered is dropped");
+ assert.deepEqual(C.pushRecent("garbage",null,known),[]);
+ const many=new Set(Array.from({length:40},(_,i)=>String(i)));
+ assert.equal(C.pushRecent([...many],"0",many).length,C.RECENT_MAX);
 });
 
 test("chatRooms and pickRoom: rooms opened by the organisation, closed by default",()=>{

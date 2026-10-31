@@ -3,17 +3,40 @@
 // and updates it in place: the sheet is never redrawn wholesale, so the composer keeps its focus, caret and text.
 
 // ===================================================================== PURE HELPERS
+import {EMOJI_GROUPS} from "./emoji-data.mjs";
 export const ROOMS=["global","camp"];
 export const MAX_TEXT=500,PAGE=50,KEEP=400;
 export const MEDIA_MAX=2*1024*1024;
 export const MEDIA_TYPES=["image/gif","image/png","image/jpeg","image/webp"];
-// ~80 common emojis, a few for political banter; inserted at the caret.
+// The chat's own emojis, drawn for PolitiGo (web/emoji/<key>.svg): typed as a short code (":saucisse:"), drawn as an
+// image in the messages. The two flags are here rather than in Unicode, where Windows shows a flag as two letters.
+export const CUSTOM={saucisse:{label:"Saucisse"},"mega-saucisse":{label:"Méga saucisse",wide:true},france:{label:"Drapeau français"},urss:{label:"Drapeau soviétique"}};
+export const customCode=k=>`:${k}:`;
+export const customSrc=k=>`/emoji/${k}.svg`;
+const CUSTOM_RE=new RegExp(`:(${Object.keys(CUSTOM).join("|")}):`,"g");
+// A message's text as plain strings and the chat's own emojis ({emoji:key}), in order.
+export function splitCustom(text){
+ const out=[];let at=0;
+ for(const m of String(text).matchAll(CUSTOM_RE)){if(m.index>at)out.push(text.slice(at,m.index));out.push({emoji:m[1]});at=m.index+m[0].length;}
+ if(at<text.length)out.push(text.slice(at));
+ return out;
+}
+// Only the chat's own emojis (3 at most) and blanks: drawn bigger, like a sticker.
+export const stickerOnly=parts=>parts.some(p=>p.emoji)&&parts.filter(p=>p.emoji).length<=3&&parts.every(p=>p.emoji||!p.trim());
+// The picker's categories: the chat's own emojis and the political classics first, then Unicode's standard pack
+// (web/emoji-data.mjs: no skin tones, flags or letters). Inserted at the caret.
 export const EMOJIS=[
- ["Visages",["😀","😂","🤣","😊","😉","😍","😘","😎","🤔","😏","🙄","😬","🤐","😴","😢","😭","😡","🤬","🤯","😱","🥳","😇","🤡","🤓","🫠","😅"]],
- ["Gestes",["👍","👎","👏","🙌","🙏","💪","✌️","🤞","👊","✊","🤝","👋","👀","🫡","🤷","🤦"]],
- ["Politique",["🗳️","🏛️","📢","🎤","🌹","🇫🇷","🇪🇺","⚖️","📜","🗞️","💼","🎙️","🚩","🏳️","🥖","🧀","🍷","🐓","💶","💸","📉","📈"]],
- ["Divers",["❤️","💔","🔥","💯","✨","⭐","🎉","🍾","☕","🍿","💀","👻","🎃","🌍","⚡","🤌"]]
+ ["Politique",[...Object.keys(CUSTOM).map(customCode),"🗳️","🏛️","📢","🎤","🎙️","🌹","⚖️","📜","🗞️","💼","🥖","🧀","🍷","🐓","💶","💸","📉","📈","🤡","🫡","🤝","✊"]],
+ ...EMOJI_GROUPS.map(([k,s])=>[k,s.split(" ")])
 ];
+// One icon per category tab (a custom key: its image).
+export const EMOJI_ICONS={"Récents":"🕘","Politique":"saucisse","Visages":"😀","Personnes":"👋","Animaux et nature":"🐻","Nourriture":"🍔",
+ "Voyages et lieux":"🚗","Activités":"⚽","Objets":"💡","Symboles":"❤️"};
+export const RECENT_MAX=24;
+// The recently used list: this one first, no repeat, RECENT_MAX at most, only emojis the picker knows.
+export function pushRecent(list,e,known){
+ return [e,...(Array.isArray(list)?list:[]).filter(x=>x!==e&&known.has(x))].filter(x=>known.has(x)).slice(0,RECENT_MAX);
+}
 // Same spirit as the server's cleaning: NFC, no control characters but the line break, no bidi or invisible marks
 // (the zero-width joiner stays: emoji sequences need it), at most 2 combining marks in a row, at most one blank line in a row, trimmed.
 export function cleanText(s){
@@ -124,21 +147,48 @@ export function createChat({api,sheet,getCamp,getTz,onBadge,reduced,onClosed=()=
  let pending=null,previewUrl="",sending=false,mutedUntil=null,muteTimer=0,readTimer=0,menuOpen=null,viewerFrom=null,seq=0;
  const els=new Map();                                          // message id → its <li>, for the room on screen
 
- // ---------- emoji picker (built once) ----------
- for(const [name,list] of EMOJIS){
-  const h=Object.assign(document.createElement("p"),{className:"chat-emoji-cat",textContent:name}),grid=document.createElement("div");grid.className="chat-emoji-grid";
-  grid.setAttribute("role","group");grid.setAttribute("aria-label",name);
-  for(const e of list){const b=Object.assign(document.createElement("button"),{type:"button",textContent:e});b.dataset.emoji=e;grid.append(b);}
-  picker.append(h,grid);
+ // ---------- emoji picker: one tab per category, its grid drawn when first shown (1500+ emojis) ----------
+ const RECENT_KEY="politigo.emojiRecent",known=new Set(EMOJIS.flatMap(([,l])=>l));
+ let recent=[];try{recent=pushRecent(JSON.parse(localStorage.getItem(RECENT_KEY)||"[]"),null,known);}catch{}
+ const customImg=(k,cls)=>Object.assign(document.createElement("img"),{src:customSrc(k),alt:CUSTOM[k].label,className:`${cls}${CUSTOM[k].wide?" wide":""}`,draggable:false});
+ const codeKey=e=>/^:([a-z-]+):$/.exec(e)?.[1];
+ function emojiButton(e){
+  const b=document.createElement("button");b.type="button";b.dataset.emoji=e;
+  const k=codeKey(e);
+  if(k&&CUSTOM[k]){b.append(customImg(k,"chat-cemoji"));b.title=CUSTOM[k].label;b.setAttribute("aria-label",CUSTOM[k].label);if(CUSTOM[k].wide)b.classList.add("wide");}
+  else b.textContent=e;
+  return b;
  }
+ const pickTabs=document.createElement("div"),pickBody=document.createElement("div");
+ pickTabs.className="chat-emoji-tabs";pickTabs.setAttribute("role","tablist");pickTabs.setAttribute("aria-label","Catégories d'émojis");pickBody.className="chat-emoji-body";
+ picker.append(pickTabs,pickBody);
+ const cats=()=>[...(recent.length?[["Récents",recent]]:[]),...EMOJIS];
+ let cat=null;
+ function drawTabs(){
+  pickTabs.replaceChildren(...cats().map(([name])=>{
+   const b=document.createElement("button");b.type="button";b.setAttribute("role","tab");b.setAttribute("aria-label",name);b.title=name;b.dataset.cat=name;
+   b.setAttribute("aria-selected",String(name===cat));
+   const ic=EMOJI_ICONS[name]??"•";if(CUSTOM[ic])b.append(customImg(ic,"chat-cemoji"));else b.textContent=ic;
+   return b;
+  }));
+ }
+ function showCat(name){
+  const c=cats().find(([n])=>n===name)??cats()[0];cat=c[0];drawTabs();
+  const h=Object.assign(document.createElement("p"),{className:"chat-emoji-cat",textContent:cat}),grid=document.createElement("div");
+  grid.className="chat-emoji-grid";grid.setAttribute("role","tabpanel");grid.setAttribute("aria-label",cat);
+  grid.append(...c[1].map(emojiButton));pickBody.replaceChildren(h,grid);pickBody.scrollTop=0;
+ }
+ pickTabs.addEventListener("click",e=>{const b=e.target.closest("[data-cat]");if(b)showCat(b.dataset.cat);});
  // The textarea keeps the focus (and a phone its keyboard) while the buttons around it are tapped.
- for(const b of [sendBtn,emojiBtn,...picker.querySelectorAll("button")])b.addEventListener("pointerdown",e=>{if(document.activeElement===ta)e.preventDefault();});
- picker.addEventListener("click",e=>{
+ for(const b of [sendBtn,emojiBtn])b.addEventListener("pointerdown",e=>{if(document.activeElement===ta)e.preventDefault();});
+ picker.addEventListener("pointerdown",e=>{if(e.target.closest("button")&&document.activeElement===ta)e.preventDefault();});
+ pickBody.addEventListener("click",e=>{
   const b=e.target.closest("[data-emoji]");if(!b)return;
   const r=insertAtCaret(ta.value,ta.selectionStart,ta.selectionEnd,b.dataset.emoji);ta.value=r.value;ta.setSelectionRange(r.caret,r.caret);grow();say("");
+  recent=pushRecent(recent,b.dataset.emoji,known);try{localStorage.setItem(RECENT_KEY,JSON.stringify(recent));}catch{}
   if(!touch())ta.focus();
  });
- const showPicker=on=>{picker.hidden=!on;emojiBtn.setAttribute("aria-expanded",String(on));if(on&&pinned)toBottom();};
+ const showPicker=on=>{if(on)showCat(cat??(recent.length?"Récents":"Politique"));picker.hidden=!on;emojiBtn.setAttribute("aria-expanded",String(on));if(on&&pinned)toBottom();};
  emojiBtn.addEventListener("click",()=>showPicker(picker.hidden));
 
  // ---------- composer ----------
@@ -217,7 +267,11 @@ export function createChat({api,sheet,getCamp,getTz,onBadge,reduced,onClosed=()=
   }else{const b=document.createElement("span");b.className="sr";b.textContent="Toi";meta.append(b);}
   const tm=document.createElement("time");tm.dateTime=new Date(m.t).toISOString();tm.textContent=fmtTime(m.t,Date.now(),getTz());meta.append(tm);
   bub.append(meta);
-  if(m.text){const p=document.createElement("p");p.className="chat-text";p.textContent=m.text;bub.append(p);}    // textContent only, never HTML
+  if(m.text){   // text nodes and the chat's own emoji images only, never HTML
+   const p=document.createElement("p"),parts=splitCustom(m.text);p.className=`chat-text${stickerOnly(parts)?" sticker":""}`;
+   p.append(...parts.map(x=>{if(typeof x==="string")return x;const img=customImg(x.emoji,"chat-cemoji");img.alt=customCode(x.emoji);img.title=CUSTOM[x.emoji].label;return img;}));
+   bub.append(p);
+  }
   const src=mediaUrl(m.media);
   if(src){
    const b=document.createElement("button");b.type="button";b.className="chat-pic";b.setAttribute("aria-label",`Agrandir l'image de ${m.mine?"ton message":m.author.name}`);
