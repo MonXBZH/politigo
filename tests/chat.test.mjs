@@ -259,3 +259,50 @@ test("rooms switched off: refused, silent and unread 0; switched back on: histor
  assert.equal(chat.admin.deleteMessage(c),true);assert.equal(chat.admin.stats().messages7d,3);
  db.close();
 });
+
+// Image bombs: crafted headers only (a few dozen bytes claiming huge sizes or many frames).
+const pngOf=(w,h)=>{const b=Buffer.from(PNG);b.writeUInt32BE(w,16);b.writeUInt32BE(h,20);return b;};
+const gifOf=(w,h,frames=1)=>{
+ const head=Buffer.from("474946383961","hex"),scr=Buffer.alloc(7);scr.writeUInt16LE(w,0);scr.writeUInt16LE(h,2);
+ const frame=Buffer.from("21f90400000000002c000000000100010000020244010" + "0","hex");
+ return Buffer.concat([head,scr,...Array(frames).fill(frame),Buffer.from([0x3b])]);
+};
+const jpegOf=(w,h)=>{const sof=Buffer.from("ffc0001108000000000301220002110103110100","hex");sof.writeUInt16BE(h,5);sof.writeUInt16BE(w,7);
+ return Buffer.concat([Buffer.from("ffd8ffe000104a46494600010100000100010000","hex"),sof,Buffer.from("ffda000c03010002110311003f00ffd9","hex")]);};
+const chunk=(id,data)=>{const h=Buffer.alloc(8);h.write(id,0,"latin1");h.writeUInt32LE(data.length,4);return Buffer.concat([h,data,data.length&1?Buffer.alloc(1):Buffer.alloc(0)]);};
+const riff=chunks=>{const body=Buffer.concat([Buffer.from("WEBP","latin1"),...chunks]),h=Buffer.alloc(8);h.write("RIFF",0,"latin1");h.writeUInt32LE(body.length,4);return Buffer.concat([h,body]);};
+const vp8=(w,h)=>{const d=Buffer.alloc(10);d[3]=0x9d;d[4]=0x01;d[5]=0x2a;d.writeUInt16LE(w,6);d.writeUInt16LE(h,8);return chunk("VP8 ",d);};
+const vp8l=(w,h)=>{const d=Buffer.alloc(5);d[0]=0x2f;d.writeUInt32LE(((w-1)|((h-1)<<14))>>>0,1);return chunk("VP8L",d);};
+const vp8x=(w,h,anim=false)=>{const d=Buffer.alloc(10);d[0]=anim?2:0;d.writeUIntLE(w-1,4,3);d.writeUIntLE(h-1,7,3);return chunk("VP8X",d);};
+
+test("imageInfo reads the sizes and frames each format declares; bombs are refused",async()=>{
+ const {imageInfo:I,imageRefusal:bad}=await import(process.env.CHAT||"/app/chat.mjs");
+ assert.deepEqual(I(PNG,"image/png"),{w:1,h:1,frames:1});assert.deepEqual(I(GIF,"image/gif"),{w:1,h:1,frames:1});
+ assert.deepEqual(I(pngOf(5000,5000),"image/png"),{w:5000,h:5000,frames:1});
+ assert.deepEqual(I(gifOf(10,20,7),"image/gif"),{w:10,h:20,frames:7});
+ assert.deepEqual(I(jpegOf(640,480),"image/jpeg"),{w:640,h:480,frames:1});
+ assert.deepEqual(I(riff([vp8(300,200)]),"image/webp"),{w:300,h:200,frames:1});
+ assert.deepEqual(I(riff([vp8l(1234,567)]),"image/webp"),{w:1234,h:567,frames:1});
+ assert.deepEqual(I(riff([vp8x(4000,3000,true),...Array(5).fill(chunk("ANMF",Buffer.alloc(16)))]),"image/webp"),{w:4000,h:3000,frames:5});
+ const TOO_BIG="Image trop grande (25 mégapixels au plus).",TOO_LONG="Animation trop longue (300 images au plus).";
+ assert.equal(bad(pngOf(5000,5000),"image/png"),null,"exactly 25 megapixels");
+ for(const [b,t] of [[pngOf(5001,5000),"image/png"],[pngOf(10001,1),"image/png"],[gifOf(65535,65535),"image/gif"],[jpegOf(6000,6000),"image/jpeg"],
+  [riff([vp8x(16777216,1)]),"image/webp"],[riff([vp8(16383,16383)]),"image/webp"],[riff([vp8l(16384,2000)]),"image/webp"]])assert.deepEqual(bad(b,t),[422,TOO_BIG],t);
+ // A GIF frame bigger than its logical screen counts too.
+ const sneaky=gifOf(1,1);sneaky.writeUInt16LE(9000,13+8+5);sneaky.writeUInt16LE(9000,13+8+7);assert.deepEqual(bad(sneaky,"image/gif"),[422,TOO_BIG]);
+ assert.equal(bad(gifOf(1,1,300),"image/gif"),null);assert.deepEqual(bad(gifOf(1,1,301),"image/gif"),[422,TOO_LONG]);
+ assert.deepEqual(bad(riff([vp8x(10,10,true),...Array(301).fill(chunk("ANMF",Buffer.alloc(16)))]),"image/webp"),[422,TOO_LONG]);
+ for(const [b,t] of [[PNG.subarray(0,20),"image/png"],[Buffer.from("ffd8ffd9","hex"),"image/jpeg"],[riff([chunk("XXXX",Buffer.alloc(4))]),"image/webp"],[pngOf(0,5),"image/png"]])
+  assert.equal(bad(b,t)?.[0],415,t);
+});
+
+test("uploads: crafted bombs answer 422, a real-size image still goes",async()=>{
+ const a=await player(PORT,"Artificier","left");
+ for(const [b,t] of [[pngOf(20000,20000),"image/png"],[gifOf(1,1,301),"image/gif"],[jpegOf(9000,9000),"image/jpeg"]]){
+  const r=await upload(a,b,t);assert.equal(r.status,422,t);assert.match(r.json.error,/^(Image trop grande|Animation trop longue)/);
+ }
+ const ok=await upload(a,jpegOf(1920,1080),"image/jpeg");assert.equal(ok.status,200);assert.equal(ok.json.type,"image/jpeg");
+ // Zalgo in a message: 2 marks at most per letter.
+ const M=String.fromCharCode(0x301,0x302,0x303,0x304,0x305);
+ assert.equal((await say(a,"global","h"+M.repeat(20)+"é")).json.message.text,"h"+M.slice(0,2)+"é");
+});

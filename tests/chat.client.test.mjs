@@ -194,3 +194,12 @@ test("chatRooms and pickRoom: rooms opened by the organisation, closed by defaul
  assert.equal(C.pickRoom("camp",["global"]),"global");
  assert.equal(C.pickRoom("global",[]),null);
 });
+
+test("zalgo is cut to 2 combining marks per letter, and lengths count code points like the server",()=>{
+ const M=String.fromCharCode(0x301,0x302,0x303,0x304,0x305,0x306);
+ assert.equal(C.cleanText("q"+M+"!"),"q"+M.slice(0,2)+"!");   // q: no precomposed letter (NFC would fold "z"+acute)
+ const keycap="1"+String.fromCharCode(0xfe0f,0x20e3);assert.equal(C.cleanText(keycap),keycap,"emoji keycaps keep their 2 marks");
+ const smile=String.fromCodePoint(0x1f600);
+ assert.equal(C.textError(smile.repeat(500)),"","500 emojis are 500 characters (1000 UTF-16 units)");
+ assert.match(C.textError(smile.repeat(501)),/trop long : 501\/500/);
+});

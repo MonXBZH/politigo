@@ -15,17 +15,19 @@ export const EMOJIS=[
  ["Divers",["❤️","💔","🔥","💯","✨","⭐","🎉","🍾","☕","🍿","💀","👻","🎃","🌍","⚡","🤌"]]
 ];
 // Same spirit as the server's cleaning: NFC, no control characters but the line break, no bidi or invisible marks
-// (the zero-width joiner stays: emoji sequences need it), at most one blank line in a row, trimmed.
+// (the zero-width joiner stays: emoji sequences need it), at most 2 combining marks in a row, at most one blank line in a row, trimmed.
 export function cleanText(s){
  if(typeof s!=="string")return "";
  return s.normalize("NFC").replace(/\r\n?/g,"\n").replace(/\t/g," ").replace(/[؜​‌‎‏‪-‮⁠⁦-⁩﻿]/g,"")
-  .replace(/[^\P{Cc}\n]/gu,"").replace(/\n{3,}/g,"\n\n").trim();
+  .replace(/[^\P{Cc}\n]/gu,"").replace(/(\p{M}{2})\p{M}+/gu,"$1").replace(/\n{3,}/g,"\n\n").trim();
 }
 // What blocks sending, in French; "" when the message may go.
 export function textError(text,hasMedia=false){
  const t=cleanText(text);
  if(!t&&!hasMedia)return "Écris un message ou joins une image.";
- if(t.length>MAX_TEXT)return `Message trop long : ${t.length}/${MAX_TEXT} caractères.`;
+ // Counted in code points like the server: an emoji is one character, not two UTF-16 halves.
+ const n=[...t].length;
+ if(n>MAX_TEXT)return `Message trop long : ${n}/${MAX_TEXT} caractères.`;
  return "";
 }
 // Checked before any upload: the server says the same, but only after 2 MB went up a phone's connection.

@@ -21,13 +21,74 @@ function sniff(b){
  if(b.length>=12&&b.toString("latin1",0,4)==="RIFF"&&b.toString("latin1",8,12)==="WEBP")return "image/webp";
  return null;
 }
+// Decoders allocate width × height × 4 bytes per frame: a 2 MB file can claim 4 gigapixels (an "image bomb"), so the
+// sizes and frame count written in the file are read and capped before anything is stored.
+export const IMG_MAX_PX=25e6,IMG_MAX_SIDE=10000,IMG_MAX_FRAMES=300;
+const be16=(b,i)=>b[i]<<8|b[i+1],le16=(b,i)=>b[i]|b[i+1]<<8,le24=(b,i)=>b[i]|b[i+1]<<8|b[i+2]<<16;
+// {w,h,frames} as the file declares them (largest frame for a GIF), or null when the header cannot be read.
+export function imageInfo(b,type){
+ if(type==="image/png"){
+  if(b.length<24||b.toString("latin1",12,16)!=="IHDR")return null;
+  return {w:b.readUInt32BE(16),h:b.readUInt32BE(20),frames:1};
+ }
+ if(type==="image/gif"){
+  if(b.length<13)return null;
+  let w=le16(b,6),h=le16(b,8),frames=0,i=13+(b[10]&0x80?3<<((b[10]&7)+1):0);
+  const blocks=()=>{while(i<b.length){const n=b[i++];if(!n)return true;i+=n;}return false;};   // data sub-blocks up to the 0 terminator
+  while(i<b.length){
+   const k=b[i++];
+   if(k===0x3b)break;                                                // trailer
+   if(k===0x21){i++;if(!blocks())break;continue;}                    // extension: label, then sub-blocks
+   if(k!==0x2c||i+9>b.length)break;                                  // anything else ends the walk (a truncated file)
+   frames++;w=Math.max(w,le16(b,i+4));h=Math.max(h,le16(b,i+6));
+   const p=b[i+8];i+=9+(p&0x80?3<<((p&7)+1):0)+1;                    // descriptor, local colours, LZW code size
+   if(!blocks())break;
+  }
+  return {w,h,frames:Math.max(1,frames)};
+ }
+ if(type==="image/jpeg"){
+  let i=2;
+  while(i+4<=b.length){
+   if(b[i]!==0xff){return null;}
+   const m=b[i+1];
+   if(m===0xff){i++;continue;}                                       // fill byte
+   if(m===0xd8||m===0x01||(m>=0xd0&&m<=0xd7)){i+=2;continue;}        // markers without a length
+   if(m===0xd9||m===0xda)return null;                                // end or scan data before any frame header
+   // Every SOFn (baseline, extended, progressive, lossless, arithmetic) but DHT (c4), JPG (c8) and DAC (cc).
+   if(m>=0xc0&&m<=0xcf&&m!==0xc4&&m!==0xc8&&m!==0xcc)return i+9<=b.length?{w:be16(b,i+7),h:be16(b,i+5),frames:1}:null;
+   i+=2+be16(b,i+2);
+  }
+  return null;
+ }
+ if(type==="image/webp"){
+  let i=12,w=null,h=null,frames=0;
+  while(i+8<=b.length){
+   const id=b.toString("latin1",i,i+4),n=b.readUInt32LE(i+4),d=i+8;
+   if(id==="VP8X"&&d+10<=b.length){w=le24(b,d+4)+1;h=le24(b,d+7)+1;}
+   else if(id==="VP8 "&&w===null&&d+10<=b.length&&b[d+3]===0x9d&&b[d+4]===0x01&&b[d+5]===0x2a){w=le16(b,d+6)&0x3fff;h=le16(b,d+8)&0x3fff;}
+   else if(id==="VP8L"&&w===null&&d+5<=b.length&&b[d]===0x2f){const v=b.readUInt32LE(d+1);w=(v&0x3fff)+1;h=(v>>>14&0x3fff)+1;}
+   else if(id==="ANMF")frames++;
+   i=d+n+(n&1);                                                      // chunks are padded to an even size
+  }
+  return w===null?null:{w,h,frames:Math.max(1,frames)};
+ }
+ return null;
+}
+// Why an image is refused ("" when it may go), with the HTTP status.
+export function imageRefusal(b,type){
+ const im=imageInfo(b,type);
+ if(!im||!im.w||!im.h)return [415,"Image illisible : GIF, PNG, JPEG ou WebP."];
+ if(im.w>IMG_MAX_SIDE||im.h>IMG_MAX_SIDE||im.w*im.h>IMG_MAX_PX)return [422,"Image trop grande (25 mégapixels au plus)."];
+ if(im.frames>IMG_MAX_FRAMES)return [422,"Animation trop longue (300 images au plus)."];
+ return null;
+}
 // Plain text: NFC, control characters dropped (newlines kept), bidi and invisible characters dropped (not the joiner
-// emoji sequences need), at most one blank line in a row.
+// emoji sequences need), at most 2 combining marks in a row (no "zalgo" text spilling over the room), at most one blank line in a row.
 export function cleanText(s){
  if(typeof s!=="string")return "";
  return s.normalize("NFC").replace(/\r\n?|[\u2028\u2029]/g,"\n").replace(/\t/g," ")
   .replace(/[\p{Cc}\u061c\u200b\u200c\u200e\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/gu,c=>c==="\n"?c:"")
-  .replace(/[ \u00a0]+\n/g,"\n").replace(/\n{3,}/g,"\n\n").trim();
+  .replace(/(\p{M}{2})\p{M}+/gu,"$1").replace(/[ \u00a0]+\n/g,"\n").replace(/\n{3,}/g,"\n\n").trim();
 }
 function frDate(t){
  try{return new Date(t).toLocaleString("fr-FR",{timeZone:TZ,day:"numeric",month:"long",hour:"2-digit",minute:"2-digit"});}
@@ -178,6 +239,7 @@ CREATE TABLE IF NOT EXISTS chat_mutes(player_id INTEGER PRIMARY KEY REFERENCES p
    if(Number(req.headers["content-length"])>DRAIN_MAX){res.setHeader("Connection","close");throw new HttpError(413,"Image trop lourde : 2 Mo maximum.");}
    const buf=await readImage(req),type=sniff(buf);
    if(!type)throw new HttpError(415,"Format non pris en charge : GIF, PNG, JPEG ou WebP.");
+   const bad=imageRefusal(buf,type);if(bad)throw new HttpError(...bad);
    if(!players.has(p.id))throw new HttpError(401,"Connexion requise.");
    // Checked again after the upload pause, and the bytes reserved (the row) in the same synchronous step: parallel
    // uploads can neither pass the per-player limit nor overshoot the storage cap.

@@ -278,7 +278,8 @@ footer{max-width:1120px;margin:0 auto;padding:0 max(16px,env(safe-area-inset-rig
 .chat-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
 .chat-msg{display:flex;align-items:flex-start;gap:2px;max-width:92%}
 .chat-msg.mine{align-self:flex-end;flex-direction:row-reverse}
-.chat-bubble{flex:0 1 auto;min-width:0;padding:7px 12px 8px;border-radius:16px 16px 16px 4px;background:var(--glass-2);border:1px solid var(--line);-webkit-touch-callout:none}
+/* overflow clip: stacked combining marks ("zalgo") or a long glyph never paint over the neighbouring messages. */
+.chat-bubble{flex:0 1 auto;min-width:0;overflow:hidden;overflow:clip;padding:7px 12px 8px;border-radius:16px 16px 16px 4px;background:var(--glass-2);border:1px solid var(--line);-webkit-touch-callout:none}
 .chat-msg.mine .chat-bubble{border-radius:16px 16px 4px 16px;background:color-mix(in srgb,var(--accent) 22%,transparent);border-color:color-mix(in srgb,var(--accent) 45%,transparent)}
 @media(pointer:coarse){.chat-bubble{user-select:none;-webkit-user-select:none}}
 .chat-meta{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);min-width:0}
