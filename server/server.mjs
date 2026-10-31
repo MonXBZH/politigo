@@ -110,7 +110,8 @@ CREATE TABLE IF NOT EXISTS mini_scores(id INTEGER PRIMARY KEY,player_id INTEGER 
  game TEXT NOT NULL,score INTEGER,secs REAL,errors INTEGER,flags TEXT);
 CREATE INDEX IF NOT EXISTS mini_scores_player ON mini_scores(player_id,t);
 CREATE INDEX IF NOT EXISTS mini_scores_t ON mini_scores(t);
-CREATE TABLE IF NOT EXISTS tombstones(name_key TEXT PRIMARY KEY,created INTEGER NOT NULL,deleted INTEGER NOT NULL);`);
+CREATE TABLE IF NOT EXISTS tombstones(name_key TEXT PRIMARY KEY,created INTEGER NOT NULL,deleted INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS admin_acks(key TEXT PRIMARY KEY,t INTEGER NOT NULL);`);
 // Duels from before the server-paced debate: its turn state, the per-turn flags, what the result changed (to annul
 // it) and when each side first answered and finished (the multi-account signals).
 for(const [col,type] of [["turn","TEXT"],["flags","TEXT"],["fx","TEXT"],["c_first","INTEGER"],["d_first","INTEGER"],["c_done","INTEGER"]]){
@@ -218,6 +219,10 @@ const q={
  tombstone:db.prepare("INSERT INTO tombstones(name_key,created,deleted) VALUES(?,?,?) ON CONFLICT(name_key) DO UPDATE SET created=excluded.created,deleted=excluded.deleted"),
  tombstoneOf:db.prepare("SELECT created,deleted FROM tombstones WHERE name_key=?"),
  purgeTombstones:db.prepare("DELETE FROM tombstones WHERE deleted<?"),
+ ack:db.prepare("INSERT INTO admin_acks(key,t) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET t=excluded.t"),
+ acks:db.prepare("SELECT key FROM admin_acks"),
+ purgeAcks:db.prepare("DELETE FROM admin_acks WHERE t<?"),
+ flaggedDuels:db.prepare("SELECT id,challenger,defender,created,flags FROM duels WHERE flags IS NOT NULL AND created>? AND status<>'annulled' ORDER BY id DESC LIMIT 200"),
  deleteFeedOf:db.prepare("DELETE FROM feed WHERE player=?"),
  // A turn being played (its state written) is closed by its own clock instead.
  staleDuels:db.prepare("SELECT * FROM duels WHERE (status='c_play' AND c_started<? AND turn IS NULL) OR (status='d_play' AND d_started<? AND turn IS NULL) OR (status='pending' AND expires<=?)"),
@@ -1238,7 +1243,7 @@ function duelSuspects(now){
 // accounts past a week, and backups the admin interface did not take away.
 function chores(now){
  q.purgeActivity.run(activityCut(now));q.purgeMini.run(activityCut(now));
- q.purgeDuels.run(now-30*864e5);q.purgeTombstones.run(now-7*864e5);
+ q.purgeDuels.run(now-30*864e5);q.purgeTombstones.run(now-7*864e5);q.purgeAcks.run(now-ALERT_DAYS*864e5);
  if(!ADMIN_SOCKET)return;
  const dir=dirname(ADMIN_SOCKET);
  for(const f of readdirSync(dir)){
@@ -1322,6 +1327,29 @@ function backup(b){
  return out;
 }
 const regOpen=()=>REG_OPEN&&!!INVITE;
+// What needs the admin's eye, for the console's "À traiter": reported chat messages, duel turns the anti-cheat
+// flagged, players whose bot score reaches BOT_ALERT, suspect duel groups. Each has a stable key; alerts-ack files keys
+// away (for ALERT_DAYS, on every device) so they stop counting. The bot report is the costly part: computed at most
+// every 30 s, however many consoles ask.
+const BOT_ALERT=50,ALERT_DAYS=30,ALERT_KEY=/^(chat|duel|bot|suspect):[0-9][0-9-]{0,60}$/;
+let botsCache={t:0,bots:[],suspects:[]};
+function alertsAll(now){
+ if(now-botsCache.t>30e3)botsCache={t:now,bots:botsAll(now),suspects:duelSuspects(now)};
+ const items=[],cut=s=>String(s??"").slice(0,140);
+ for(const m of chat.admin.reports())items.push({key:`chat:${m.id}`,kind:"chat",t:m.t,ref:m.id,
+  title:`Message de ${m.author} signalé ${m.reports} fois`,detail:cut(m.text||(m.media?"[image]":""))});
+ for(const d of q.flaggedDuels.all(now-ALERT_DAYS*864e5)){
+  const f=flagsOf(d);if(!f.length)continue;
+  items.push({key:`duel:${d.id}`,kind:"duel",t:d.created,ref:f[0].side==="d"?d.defender:d.challenger,duel:d.id,title:`Duel #${d.id} signalé par l'anti-triche`,
+   detail:cut(f.map(x=>`${x.name} (${(x.flags||[]).join(", ")})`).join(" · "))});
+ }
+ for(const b of botsCache.bots)if(b.score>=BOT_ALERT)items.push({key:`bot:${b.id}`,kind:"bot",t:null,ref:b.id,
+  title:`${b.name} : score de bot ${b.score}/100`,detail:cut(b.reasons.slice(0,2).join(" · "))});
+ for(const s of botsCache.suspects)items.push({key:`suspect:${[...s.ids].sort((x,y)=>x-y).join("-")}`.slice(0,68),kind:"suspect",t:null,ref:s.ids[0],
+  title:`Duels suspects : ${s.names.join(" · ")}`,detail:cut(s.reasons[0])});
+ const acked=new Set(q.acks.all().map(r=>r.key));
+ return {items:items.filter(x=>!acked.has(x.key)),acked:items.filter(x=>acked.has(x.key)).length};
+}
 const limitOf=(v,def,max)=>Number.isSafeInteger(v)&&v>0?Math.min(v,max):def;
 
 async function adminCommand(b){
@@ -1428,6 +1456,12 @@ async function adminCommand(b){
  if(cmd==="backup"){const r=backup(b);audit(via,cmd,"",`${r.bytes} octets${r.vapid?", avec vapid.json":""}`);return r;}
  if(cmd==="bots")return {items:botsAll(now),suspects:duelSuspects(now)};
  if(cmd==="duels-suspects")return {suspects:duelSuspects(now)};
+ if(cmd==="alerts")return alertsAll(now);
+ if(cmd==="alerts-ack"){
+  if(!Array.isArray(b.keys)||!b.keys.length||b.keys.length>50||!b.keys.every(k=>typeof k==="string"&&ALERT_KEY.test(k)))throw new HttpError(400,"keys : 1 à 50 clés d'alerte.");
+  for(const k of b.keys)q.ack.run(k,now);
+  return {acked:b.keys.length};
+ }
  if(cmd==="chat-reports")return {items:chat.admin.reports()};
  if(cmd==="chat-delete"){
   if(!Number.isSafeInteger(b.id)||!chat.admin.deleteMessage(b.id))throw new HttpError(404,"Message introuvable.");

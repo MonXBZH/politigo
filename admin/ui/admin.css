@@ -174,3 +174,7 @@ h3.sub{margin:12px 0 4px;font-size:14px}
 .toast.bad{background:#5a1f2bee;color:#ffe3e7}
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
 @media(max-width:520px){.card{padding:13px}.stat .v{font-size:22px}.kv{grid-template-columns:minmax(0,1fr)}.kv dt{margin-top:4px}}
+.alert-item{padding:10px 0;border-top:1px solid var(--line)}
+.alert-item:first-child{border-top:0;padding-top:0}
+.alert-item p{margin:6px 0}
+.alert-item .wrap{overflow-wrap:anywhere}

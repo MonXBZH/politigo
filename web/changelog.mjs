@@ -24,6 +24,7 @@ export const CHANGELOG=[
   admin:[
    "L'organisateur dispose désormais d'une console d'administration privée, réservée à lui seul et inaccessible depuis le jeu.",
    "Mesures anti-triche : les scores impossibles pour un humain sont refusés, et les comportements automatisés (scripts, comptes multiples) sont repérés.",
+   "Les signalements et les comportements suspects remontent en direct à l'organisateur, qui est prévenu dès qu'un cas demande son attention.",
    "En cas d'abus, un joueur peut être exclu de la partie ou son compte gelé : connexion bloquée, élu figé et retiré du classement le temps de la sanction."
   ]},
  {version:"1.4.1",date:"2026-10-31",
