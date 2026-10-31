@@ -1,5 +1,6 @@
 # Regenerates the README screenshots (docs/images/*.png) from the local stack, in headless Chrome over the DevTools protocol.
 # Usage: powershell -ExecutionPolicy Bypass -File tools\screenshots.ps1 [-Url http://localhost:8080/] [-Out docs\images]
+#        [-AdminUrl http://localhost:8090/ -AdminPassword <POLITIGO_ADMIN_PASSWORD>]  (adds the admin dashboard shot)
 # Needs: Docker Desktop, the stack up (docker compose up -d), POLITIGO_INVITE in .env, Chrome, and daytime in Paris
 # (the companion sleeps 0-6 h and refuses every action). What it does:
 #   1. restarts the api (resets the registration rate limit) and registers five demo players
@@ -12,7 +13,7 @@
 # Keep this file pure ASCII (Windows PowerShell 5.1 reads it as ANSI): accents go through \u escapes in JS strings.
 # Safety: it refuses to run on a database that already holds players (a real game: a friend may be called "Hugo"),
 # unless -Force is given on a stack you know to be a throwaway one.
-param([string]$Url = "http://localhost:8080/", [string]$Out = "", [switch]$Force)
+param([string]$Url = "http://localhost:8080/", [string]$Out = "", [switch]$Force, [string]$AdminUrl = "", [string]$AdminPassword = "")
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
 if (-not $Out) { $Out = Join-Path $root "docs\images" }
@@ -206,6 +207,16 @@ try {
   OpenSheet "more"; [void](Eval "document.querySelector('#sheet-body .forms').scrollIntoView({block:'center'}),1"); Wait 400
   Shot "collection-left" (Box @("#sheet-body .forms", "#sheet-body h3:nth-of-type(3)") 10); CloseSheet
 
+  "4b. the chat: Ines shares her legend, the others answer, Camille reads"
+  # Ines is on screen: the game canvas itself becomes the shared picture.
+  [void](Eval "(async()=>{const b=await new Promise(r=>document.querySelector('.device canvas').toBlob(r,'image/png'));const m=await (await fetch('/api/chat/media',{method:'POST',headers:{'Content-Type':'image/png'},body:b})).json();await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({room:'global',text:'Niveau 100, la l\u00e9gende est servie \ud83c\udf39',media:m.id})});return 1;})()")
+  foreach ($m in @(@("hugo", "global", "Bravo ! Revanche au D\u00e9bat chrono ce soir ? \ud83d\ude0f"), @("zoe", "global", "Je prends les paris \ud83c\udfdb\ufe0f"), @("malik", "global", "Pas avant mon caf\u00e9 \u2615"), @("zoe", "camp", "R\u00e9union de la gauche \u00e0 18 h : ordre du jour, rester unis \ud83d\ude05"))) {
+    [void](Eval "(async()=>{await fetch('/api/logout',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'$($names[$m[0]])',password:'$pw'})});await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({room:'$($m[1])',text:'$($m[2])'})});return 1;})()")
+  }
+  Login $names.camille; Wait 1000
+  [void](Eval "[...document.querySelectorAll('.pad-btn')].find(b=>/Chat/.test(b.textContent)).click(),1"); Wait 1500
+  [void](Eval "document.activeElement.blur(),1"); Shot "chat-mobile"; CloseSheet
+
   "5. Hugo: right collection, then a resignation to the right"
   Login $names.hugo
   OpenSheet "more"; [void](Eval "document.querySelector('#sheet-body .forms').scrollIntoView({block:'center'}),1"); Wait 400
@@ -224,6 +235,13 @@ try {
   Login $names.malik; Wait 800
   OpenSheet "play"; ClickItem "^D.battre"; Wait 4500
   Shot "evolution" (Box @(".device") 8)
+  if ($AdminUrl) {
+    "8. admin dashboard"
+    Desktop; [void](Cdp "Page.navigate" @{ url = $AdminUrl }); Start-Sleep 2
+    $s = Eval "(async()=>{const f=document.querySelector('form');f.querySelector('input[type=password]').value='$AdminPassword';f.requestSubmit();await new Promise(r=>setTimeout(r,2500));return location.hash;})()"
+    if ($s -notmatch 'tableau') { throw "admin login failed ($s)" }
+    [void](Eval "document.activeElement.blur(),1"); Wait 800; Shot "admin-dashboard"
+  }
   [void](Cdp "Browser.close")
 } finally {
   if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }

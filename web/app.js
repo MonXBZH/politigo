@@ -4,6 +4,7 @@ import * as R from "./rules.mjs";
 import {createMini,manifLabel} from "./minigames.mjs";
 import {missedEntries,latestEntry} from "./changelog.mjs";
 import {drawTest,verdict,randomCamp} from "./politest.mjs";
+import {createChat} from "./chat.mjs";
 const {people,personalItems,stresses,shop,fxNames,XP,xpCost,xpFloor,stage}=R;
 const $=s=>document.querySelector(s);
 const motionQuery=matchMedia("(prefers-reduced-motion: reduce)");
@@ -47,6 +48,7 @@ function applyMe(m,{replay=false}={}){
  const first=!S||me!==m.name;
  // The action answer and the live stream race each other: an older copy of the state never replaces a newer one.
  if(!first&&m.state.lastReal<S.lastReal)return;
+ chatFlags(m.chat);
  me=m.name;SPEED=m.speed||1;VERSION=m.version||"dev";R.setTimeZone(m.tz||"Europe/Paris");
  if("release" in m){RELEASE=m.release||null;SEEN=m.seenVersion||null;}
  S=m.state;syncReal=Date.now();syncV=S.vclock;
@@ -127,13 +129,30 @@ async function startMini(type){
  const r=await send({type});if(!r?.ok||!S)return;
  closeSheet();                                      // a sheet opened while the request was on its way
  miniStartReal=Date.now();
- const key=type==="debate"?"debate":r.game;
+ // The Manif plays from the server's seed and its end carries the game's id; the debate is refereed question by
+ // question (debateAsk).
+ const key=type==="debate"?"debate":r.game?.k,id=r.game?.id;
+ if(!R.MINI[key]){toast("Partie introuvable : réessaie dans un instant.",true);return;}
  mini=createMini(key,{p:key==="epervier"?{...look(),prop:"tonfa"}:look(),camp:S.camp,ctx,scale:()=>scale,now:miniClock,season:season(),
-  drawCand});
+  drawCand,seed:r.game?.seed,ask:key==="debate"?debateAsk("solo"):null});
+ mini.gameId=id;
  cv.focus();
 }
-// Duels: the server deals a seed and both players play the same debate, one after the other; it replays the picks
-// itself. No activity is charged and no S.mini is opened: the same game machinery, another referee.
+// The debate's referee (POST /api/debate): one request per question, answers by index. A request lost on the way
+// (no answer at all) is sent again: it carries the question's idx, so the server never counts it twice. A request
+// waits for any other one in flight instead of being dropped.
+const debateAsk=ref=>async body=>{
+ let r=null;
+ for(let k=0;k<3&&S;k++){
+  for(const end=Date.now()+5000;busy&&Date.now()<end;)await new Promise(ok=>setTimeout(ok,50));
+  r=await send({op:"next",ref,...body},"/api/debate");
+  if(!S||(r&&r.status!==0))break;
+  await new Promise(ok=>setTimeout(ok,600));
+ }
+ return r;
+};
+// Duels: both players play the same debate (the server keeps its seed), one after the other, each refereed by the
+// server like a solo debate. No activity is charged and no S.mini is opened: the same game, another scoreboard.
 async function startDuel(body,vs,role){
  closeSheet();
  if(miniEnding){toast("Un instant : le résultat de la partie précédente part au serveur.",true);return;}
@@ -142,10 +161,10 @@ async function startDuel(body,vs,role){
  const r=await send(body,"/api/duel");
  duelsLoad();
  if(!r?.ok||!S)return;
- if(!Number.isFinite(r.duel?.seed)){toast("Duel introuvable : réessaie dans un instant.",true);return;}
+ if(!Number.isSafeInteger(r.duel?.id)){toast("Duel introuvable : réessaie dans un instant.",true);return;}
  closeSheet();                                      // a sheet opened while the request was on its way
  if(pong||mini)return;
- mini=createMini("debate",{p:look(),camp:S.camp,ctx,scale:()=>scale,now:miniClock,seed:r.duel.seed,season:season(),drawCand});
+ mini=createMini("debate",{p:look(),camp:S.camp,ctx,scale:()=>scale,now:miniClock,season:season(),drawCand,ask:debateAsk(r.duel.id),duel:true});
  mini.duel={id:r.duel.id,vs,role};
  toast(role==="challenger"?`Défi lancé à ${vs} : mêmes questions pour vous deux, le meilleur score gagne.`:`Défi relevé : mêmes questions que ${vs}, à toi de faire mieux !`,true);
  cv.focus();
@@ -165,29 +184,32 @@ function duelDone(d,r){
  if(r.res==="win")playAnim("win",3000);
 }
 async function endMini(){
- const key=mini.key,score=mini.score(),duel=mini.duel,picks=mini.picks;mini=null;pongEnded=performance.now();miniEnding=true;
+ const key=mini.key,score=mini.score(),duel=mini.duel,id=mini.gameId,result=mini.result,failed=mini.failed;mini=null;pongEnded=performance.now();
+ // The debate was scored by its referee as it went: its verdict came with the last answer. A game given up (or cut
+ // off) is closed by the server when its time is up, with what was played.
+ if(key==="debate"){
+  if(duel){
+   if(result)duelDone(duel,result);
+   else if(S&&!failed)toast(`Duel contre ${duel.vs} interrompu : ton score sera compté à la fin du temps.`);
+   duelsLoad();return;
+  }
+  if(result){
+   toast(`${result.score??score} argument${(result.score??score)>1?"s":""} · +${result.bonus} XP d'éloquence. Quitte ou double possible dans Jouer.`);
+   if(result.bonus>=10)playAnim("win",3000);
+  }else if(S&&!failed)toast("Débat interrompu : ton score sera compté à la fin du temps.");
+  return;
+ }
+ miniEnding=true;
  let r;
  try{
-  // A game given up at once still waits for the server's 3-second minimum, instead of being refused (not a duel:
-  // its picks are replayed, not timed).
-  const early=miniStartReal+R.MINI_RULES.minSeconds*1000+200-Date.now();if(!duel&&early>0)await new Promise(ok=>setTimeout(ok,early));
+  // A game given up at once still waits for the server's 3-second minimum, instead of being refused.
+  const early=miniStartReal+R.MINI_RULES.minSeconds*1000+200-Date.now();if(early>0)await new Promise(ok=>setTimeout(ok,early));
   // As for the Pong: the score must not be lost behind another request.
   for(const end=Date.now()+20000;busy&&Date.now()<end;)await new Promise(ok=>setTimeout(ok,100));
-  if(duel){
-   for(let k=0;k<3;k++){
-    r=await send({op:"submit",id:duel.id,picks},"/api/duel");
-    if(!S||(r&&r.status!==0))break;
-    await new Promise(ok=>setTimeout(ok,2000));
-   }
-  }else r=await send({type:"miniEnd",score});
+  r=await send({type:"miniEnd",score,id});
  }finally{miniEnding=false;}
- if(duel){
-  if(r?.ok)duelDone(duel,r);
-  else if(S&&(!r||r.status===0))toast(`Score du duel contre ${duel.vs} non envoyé : vérifie ta connexion. Sans score, ce duel sera compté comme abandonné.`);
-  duelsLoad();return;
- }
  if(r?.ok){
-  toast(key==="debate"?`${score} argument${score>1?"s":""} · +${r.bonus} XP d'éloquence. Quitte ou double possible dans Jouer.`:`${R.MINI[key].label} : +${r.bonus} XP`);
+  toast(`${R.MINI[key].label} : +${r.bonus} XP`);
   if(r.bonus>=10)playAnim("win",3000);
  }
 }
@@ -630,12 +652,13 @@ function drawScene(now){
 
 // ===================================================================== MINI-GAME: PONG OF ARGUMENTS
 const PONG={ms:20000,misses:3,speed:190,accel:1.06,maxSpeed:480,bubbleW:50,top:150,hitY:292,lost:390,wallL:80,wallR:386,dodge:0.75,dodgeGap:70,step:40};
-function pongText(mine){return R.pongLine(mine?S.camp:S.camp==="left"?"right":"left",season());}
+// Every random draw of a Pong (aims and lines) comes from the server's seed (pong.rand).
+function pongText(mine){return R.pongLine(mine?S.camp:S.camp==="left"?"right":"left",season(),pong.rand);}
 // The opponent aims each pique at a random spot, three times out of four away from the candidate: standing still
 // in the middle no longer returns anything (tuned by simulation: a still candidate makes ~2 returns, not ~6).
 function pongShoot(){
- const lo=PONG.wallL+PONG.bubbleW,hi=PONG.wallR-PONG.bubbleW,pick=()=>lo+Math.random()*(hi-lo);
- let x=pick();if(Math.random()<PONG.dodge)for(let k=0;k<20&&Math.abs(x-pong.px)<PONG.dodgeGap;k++)x=pick();
+ const lo=PONG.wallL+PONG.bubbleW,hi=PONG.wallR-PONG.bubbleW,pick=()=>lo+pong.rand()*(hi-lo);
+ let x=pick();if(pong.rand()<PONG.dodge)for(let k=0;k<20&&Math.abs(x-pong.px)<PONG.dodgeGap;k++)x=pick();
  pong.vx=(x-pong.bx)*pong.vy/(PONG.hitY+12-pong.by);
 }
 function pongServe(){Object.assign(pong,{bx:233,by:PONG.top+10,vy:PONG.speed,text:pongText(false),mine:false});pongShoot();}
@@ -644,16 +667,17 @@ async function startPong(){
  closeSheet();
  if(miniEnding){toast("Un instant : le résultat de la partie précédente part au serveur.",true);return;}
  const r=await send({type:"pongStart"});if(!r?.ok||!S)return;
- pong={t0:performance.now(),last:performance.now(),score:0,missed:0,px:233,hitT:0,flashT:0,endT:0};pongServe();
+ pong={t0:performance.now(),last:performance.now(),score:0,missed:0,px:233,hitT:0,flashT:0,endT:0,id:r.game?.id,
+  rand:Number.isFinite(r.game?.seed)?R.seeded(r.game.seed):Math.random};pongServe();
  toast("Renvoie les piques : glisse le doigt ou la souris sur l'écran.",true);
 }
 async function endPong(){
- const score=pong.score;pong=null;pongEnded=performance.now();pongEnding=true;
+ const score=pong.score,id=pong.id;pong=null;pongEnded=performance.now();pongEnding=true;
  let r;
  try{
   // The score must not be lost behind another request (which itself gives up after 15 s).
   for(const end=Date.now()+20000;busy&&Date.now()<end;)await new Promise(ok=>setTimeout(ok,100));
-  r=await send({type:"pongEnd",score});
+  r=await send({type:"pongEnd",score,id});
  }finally{pongEnding=false;}
  if(r?.ok){toast(`${score} renvoi${score>1?"s":""} · +${r.bonus} XP d'éloquence`);if(r.bonus>=10)playAnim("win",3000);}
 }
@@ -728,7 +752,8 @@ document.addEventListener("keydown",e=>{
  if(!$("#sheet").hidden){
   if(e.key==="Escape"){closeSheet();return;}
   if(e.key==="Tab"){                                   // keep keyboard focus inside the open sheet
-   const f=[...$(".sheet-card").querySelectorAll("button:not(:disabled),select,input:not(:disabled)")];
+   // Only what is on screen: a hidden file input or a closed menu cannot take the focus.
+   const f=[...$(".sheet-card").querySelectorAll("button:not(:disabled),select,input:not(:disabled),textarea:not(:disabled),[tabindex='0']")].filter(el=>el.getClientRects().length);
    if(!f.length)return;
    const card=$(".sheet-card"),a=document.activeElement,i=f.indexOf(a),inside=i>=0||(a!==card&&card.contains(a));
    if(e.shiftKey&&(i===0||!inside)){e.preventDefault();f[f.length-1].focus();}
@@ -774,7 +799,7 @@ for(const g of GAUGES){
 function pill(t,c=""){const s=document.createElement("span");s.className=`pill ${c}`;s.textContent=t;return s;}
 function refresh(){
  if(!S)return;
- document.body.dataset.camp=S.camp;
+ document.body.dataset.camp=S.camp;chat.syncCamp();
  const sz=season();if(document.body.dataset.season!==sz)document.body.dataset.season=sz;
  const p=person();
  $("#chip-fm").textContent=`${S.fm} FM`;$("#chip-clock").textContent=clockLabel();
@@ -874,11 +899,15 @@ function connectLive(){
  on("feed",v=>{if(!Array.isArray(v))return;for(const f of v)feed.unshift(f);feed.length=Math.min(feed.length,60);renderFeed();});
  on("duel",v=>{if(v&&typeof v==="object")duelEvent(v);});
  on("announce",v=>{if(typeof v?.text!=="string"||!v.text.trim())return;announceQ.push(v.text.slice(0,240));if(announceQ.length>3)announceQ.shift();showAnnounce();});
+ // The chat: the badge on "Chat" only, never a toast, a sound or a notification (chat.mjs).
+ on("chat",v=>chat.onChat(v));
+ on("chatDel",v=>chat.onDel(v));
+ on("chatUnread",v=>chat.onUnread(v));
  on("ping",()=>{});
  // Pushed out by a newer tab or device of the same player: this one stays quiet until it is looked at again.
  on("bye",()=>{es?.close();es=null;});
  // Each (re)connection reloads the duels too: the badge on "Jouer" must not miss a challenge sent meanwhile.
- es.onopen=()=>{lastLive=Date.now();setNet(true);duelsLoad();};
+ es.onopen=()=>{lastLive=Date.now();setNet(true);duelsLoad();chat.resync();};
  // A closed stream is either an expired session (the check below shows the login) or a server restart.
  es.onerror=()=>{if(!es)return;setNet(false);if(es.readyState===EventSource.CLOSED){es=null;retryLive();}};
 }
@@ -956,6 +985,7 @@ function openSheet(kind,opener){
 function liveSheet(force=false){
  if(!S||!sheetKind||$("#sheet").hidden||(!force&&sheetSig()===shownSig))return;
  if(sheetKind==="test")return;                       // a test under way owes nothing to the state: never redrawn under the finger
+ if(sheetKind==="chat")return;                       // built once and updated in place (chat.mjs): the composer keeps focus and text
  // Never under the player's fingers: an armed "tap again" button or a half-typed password survives updates.
  if($("#sheet-body .armed, #sheet-body form"))return;
  const card=$(".sheet-card"),top=card.scrollTop,f=[...card.querySelectorAll("button,select,input")],i=f.indexOf(document.activeElement);
@@ -966,6 +996,9 @@ function renderSheet(kind,opener){
  sheetKind=kind;if(opener)sheetOpener=opener;shownSig=sheetSig();
  const body=$("#sheet-body"),p=person();body.replaceChildren();
  const set=(t,s)=>{$("#sheet-title").textContent=t;$("#sheet-sub").textContent=s;};
+ if(sheetKind!=="chat")chat.hide();
+ $("#sheet").classList.toggle("chat",kind==="chat");
+ if(kind==="chat")chat.mount(body,set);
  if(kind==="food"){
   set("La Buvette",`${S.fm} FM (frais de mandat) en caisse · 2 FM gagnés par heure de vie`);
   // Halloween's daily gift, the only thing the event changes in the game (rules.mjs treatBlock).
@@ -1008,7 +1041,7 @@ function renderSheet(kind,opener){
   set(one?`Quoi de neuf dans PolitiGo ${newsList[0].version}`:"Quoi de neuf dans PolitiGo",one?`Mise à jour du ${newsDate(newsList[0].date)}`:`${newsList.length} mises à jour depuis ta dernière visite`);
   for(const e of newsList){
    if(!one)body.append(blockTitle(`Version ${e.version} · ${newsDate(e.date)}`));
-   for(const [title,items] of [["Nouveautés",e.added],["Changements",e.changed],["Corrections",e.fixed]]){
+   for(const [title,items] of [["Nouveautés",e.added],["Changements",e.changed],["Corrections",e.fixed],["Administration",e.admin]]){
     if(!items?.length)continue;
     const h=document.createElement("p");h.className="news-head";h.textContent=title;
     const ul=document.createElement("ul");ul.className="news";
@@ -1114,7 +1147,7 @@ function closeSheet(fromBack=false){
  if($("#sheet").hidden)return;
  if(sheetKind==="news"&&newsAuto){newsAuto=false;SEEN=RELEASE;markNewsSeen();}
  if(!fromBack&&sheetInHistory){sheetInHistory=false;pendingBack=true;history.back();}
- $("#sheet").hidden=true;sheetKind=null;setBackgroundInert(false);
+ $("#sheet").hidden=true;sheetKind=null;setBackgroundInert(false);chat.hide();$("#sheet").classList.remove("chat");
  if(authEl.hidden)(sheetOpener||cv).focus();
 }
 document.querySelectorAll("[data-sheet]").forEach(b=>b.addEventListener("click",()=>{
@@ -1123,6 +1156,21 @@ document.querySelectorAll("[data-sheet]").forEach(b=>b.addEventListener("click",
  skipScene();openSheet(b.dataset.sheet,b);
 }));
 $("#sheet-close").addEventListener("click",()=>closeSheet());
+// ---------- chat ----------
+// The unread count sits on the "Chat" button like the challenges on "Jouer": a badge, nothing that pops up.
+const chat=createChat({api,sheet:$("#sheet"),getCamp:()=>S?.camp||"left",getTz:()=>R.timeZone(),reduced:()=>reduced,onBadge(n){
+ const b=$(".pad-btn[data-sheet=chat]");b.classList.toggle("alert",n>0);
+ if(n>0){b.dataset.count=n>9?"9+":String(n);b.setAttribute("aria-label",`Chat (${n} message${n>1?"s":""} non lu${n>1?"s":""})`);}else{delete b.dataset.count;b.removeAttribute("aria-label");}
+},
+ // A 403 from a room closed meanwhile: the state is asked again, and its chat flags hide what was closed.
+ async onClosed(){const r=await api("GET","/api/me");if(r.ok&&S)applyMe(r);}});
+// The organisation opens the chat rooms (me.chat, off by default): no room open, no "Chat" button at all.
+function chatFlags(flags){
+ const any=flags?.global===true||flags?.camp===true,b=$(".pad-btn[data-sheet=chat]");
+ chat.setOpen(any?flags:null);
+ if(b.hidden!==!any){b.hidden=!any;$(".pad").classList.toggle("five",any);}
+ if(!any&&sheetKind==="chat")closeSheet();
+}
 
 // ---------- duels ----------
 // GET /api/duels: the challenges (each from this player's side: role, status, vs, mine, theirs, res), the opponents
@@ -1361,7 +1409,7 @@ function armRestart(camp,text){
 const authEl=$("#auth");
 let regCamp="left";
 function showAuth(message=""){
- closeSheet();es?.close();es=null;S=null;anim=pong=mini=scene=null;newsPending=false;toastQ.length=0;announceQ.length=0;$("#announce").hidden=true;duelData=null;duelErr="";duelSeq++;pushOn=null;pushSynced=false;setNet(true);$("#tips").hidden=true;
+ closeSheet();chat.reset();chatFlags(null);es?.close();es=null;S=null;anim=pong=mini=scene=null;newsPending=false;toastQ.length=0;announceQ.length=0;$("#announce").hidden=true;duelData=null;duelErr="";duelSeq++;pushOn=null;pushSynced=false;setNet(true);$("#tips").hidden=true;
  authEl.hidden=false;setBackgroundInert(true);
  $("#auth-error").textContent=message;regQuizShow(false);$("#camp-note").textContent="";document.body.dataset.camp=regCamp;
  document.querySelectorAll(".camp").forEach(b=>{

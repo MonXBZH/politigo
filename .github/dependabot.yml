@@ -8,7 +8,7 @@ updates:
     schedule:
       interval: weekly
   - package-ecosystem: docker
-    directories: ["/", "/server"]
+    directories: ["/", "/server", "/admin"]
     target-branch: dev
     schedule:
       interval: weekly

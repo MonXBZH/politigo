@@ -39,12 +39,12 @@ function client(ip="10.0.0.1"){
 const reg=(c,name,extra={})=>c.call("POST","/api/register",{name,password:"motdepasse1",invite:INVITE,camp:"left",...extra});
 
 test("registration needs the invite code, a valid name and a long enough password",async()=>{
- const c=client("10.0.0.2");
- assert.equal((await reg(c,"Alice",{invite:"faux"})).status,403);
- assert.equal((await reg(c,"a")).status,400);
- assert.equal((await reg(c,"Alice",{password:"court"})).status,400);
- assert.equal((await reg(c,"Alice",{camp:"centre"})).status,400);
- const r=await reg(c,"Alice");
+ // Each attempt from its own address: every attempt counts towards the 3 an hour per address.
+ assert.equal((await reg(client("10.0.0.20"),"Alice",{invite:"faux"})).status,403);
+ assert.equal((await reg(client("10.0.0.21"),"a")).status,400);
+ assert.equal((await reg(client("10.0.0.22"),"Alice",{password:"court"})).status,400);
+ assert.equal((await reg(client("10.0.0.23"),"Alice",{camp:"centre"})).status,400);
+ const r=await reg(client("10.0.0.2"),"Alice");
  assert.equal(r.status,201);assert.equal(r.json.state.lvl,1);assert.equal(r.json.name,"Alice");
  assert.equal((await reg(client("10.0.0.3"),"alice")).status,409,"names are unique, case-insensitively");
 });
@@ -77,13 +77,13 @@ test("actions are applied by the server and refused when not allowed",async()=>{
 test("a forged Pong score is refused",async()=>{
  const c=client("10.0.0.8");await reg(c,"Emma");
  assert.equal((await c.call("POST","/api/action",{type:"pongEnd",score:1})).status,422,"no end without a start");
- assert.equal((await c.call("POST","/api/action",{type:"pongStart"})).status,200);
- const end=await c.call("POST","/api/action",{type:"pongEnd",score:30});
+ const s1=await c.call("POST","/api/action",{type:"pongStart"});assert.equal(s1.status,200);
+ const end=await c.call("POST","/api/action",{type:"pongEnd",score:30,id:s1.json.game.id});
  assert.equal(end.status,422);assert.match(end.json.error,/Score refusé/);
- assert.equal((await c.call("POST","/api/action",{type:"pongStart"})).status,200);
+ const s2=await c.call("POST","/api/action",{type:"pongStart"});assert.equal(s2.status,200);
  await new Promise(r=>setTimeout(r,2200));
- const ok=await c.call("POST","/api/action",{type:"pongEnd",score:1});assert.equal(ok.status,200);
- const again=await c.call("POST","/api/action",{type:"pongEnd",score:1});
+ const ok=await c.call("POST","/api/action",{type:"pongEnd",score:1,id:s2.json.game.id});assert.equal(ok.status,200,JSON.stringify(ok.json));
+ const again=await c.call("POST","/api/action",{type:"pongEnd",score:1,id:s2.json.game.id});
  assert.equal(again.status,422,"a result cannot be replayed");assert.equal(again.json.me.state.xp,ok.json.me.state.xp);
 });
 
@@ -196,7 +196,7 @@ test("board rows and feed entries expose only public fields, and need a session"
  const c=client("10.0.1.13");await reg(c,"Uma");const b=(await c.call("GET","/api/board")).json;
  const pub=["name","camp","candidate","lvl","score","form","streak","bestStreak","deaths","asleep","online"].sort();
  for(const r of b.board)assert.deepEqual(Object.keys(r).sort(),pub);
- for(const f of b.feed)assert.deepEqual(Object.keys(f).sort(),["kind","player","t","text"]);
+ for(const f of b.feed)assert.deepEqual(Object.keys(f).sort(),["id","kind","player","t","text"]);   // id: the admin deletes a line by it
 });
 
 test("names: accents and case do not make a new player; look-alike scripts and markup are refused",async()=>{
@@ -204,7 +204,7 @@ test("names: accents and case do not make a new player; look-alike scripts and m
  assert.equal((await reg(client("10.0.1.16"),"ZOÉ")).status,409);
  assert.equal((await reg(client("10.0.1.21"),"zoe")).status,409,"accents are ignored in the uniqueness key");
  assert.equal((await client("10.0.1.17").call("POST","/api/login",{name:"Zoé",password:"motdepasse1"})).status,200);
- for(const n of ["Zo\u200Bé","<b>xx</b>","😀😀😀","  ","Ѕіmоn"])assert.equal((await reg(client("10.0.1.19"),n)).status,400,n);
+ for(const [i,n] of ["Zo\u200Bé","<b>xx</b>","😀😀😀","  ","Ѕіmоn"].entries())assert.equal((await reg(client("10.0.1."+(190+i)),n)).status,400,n);
 });
 
 test("a wrong password from strangers does not lock the real player out",async()=>{
@@ -223,7 +223,7 @@ test("cookies are Secure and __Host- by default, and a weak invite code stops th
  for(const weak of ["court","change-moi-en-un-code-long"])await assert.rejects(boot(3996,{POLITIGO_INVITE:weak}),code=>code===1,weak);
 });
 
-test("without POLITIGO_INVITE a code is generated once, logged on every start and kept; off closes registrations",async()=>{
+test("without POLITIGO_INVITE a code is generated once, logged only then and kept; off closes registrations",async()=>{
  const dir=mkdtempSync(join(tmpdir(),"pg-inv-")),db=join(dir,"i.db"),logged=p=>p.out.match(/Invite code: (\S+)/)?.[1];
  const register=(invite,name)=>fetch("http://127.0.0.1:3995/api/register",{method:"POST",headers:{"Content-Type":"application/json","X-Forwarded-For":"10.0.4.1"},
   body:JSON.stringify({name,password:"motdepasse1",invite,camp:"left"})}).then(r=>r.status);
@@ -233,7 +233,8 @@ test("without POLITIGO_INVITE a code is generated once, logged on every start an
  assert.equal(readFileSync(join(dir,"invite.txt"),"utf8").trim(),code);
  p=await boot(3995,{POLITIGO_INVITE:"",DB_PATH:db});
  try{
-  assert.equal(logged(p),code);
+  assert.equal(logged(p),undefined,"printed when generated only");assert.ok(!p.out.includes(code));
+  assert.match(p.out,/Code d'invitation : voir .*invite\.txt ou la console d'admin/);
   assert.equal(await register("politigo-pas-le-bon-code","Hugo"),403);
   assert.equal(await register(code,"Hugo"),201);
  }finally{await stop(p);}

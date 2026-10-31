@@ -1,5 +1,5 @@
 // More duel tests on a real server: the daily cap on paid wins, exactly-once resolution under racing requests,
-// the sweep's time boundaries, the daily challenge count across days, and malformed picks (node --test).
+// the sweep's time boundaries, the daily challenge count across days, and malformed debate requests (node --test).
 // Clocks are moved by backdating database columns (c_started, d_started, expires, rday, sday), never by sleeping.
 import {test,before,after} from "node:test";
 import assert from "node:assert/strict";
@@ -8,7 +8,7 @@ import {DatabaseSync} from "node:sqlite";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import * as R from "../web/rules.mjs";
-import {boot,stop,client,player as reg,picksFor,until,sleep,dayNow,yesterday,DUEL_TURN_MS} from "./server-helpers.mjs";
+import {boot,stop,client,player as reg,debateTurn,until,sleep,dayNow,yesterday,DUEL_TURN_MS} from "./server-helpers.mjs";
 
 const PORT=3912;
 let proc,DB;
@@ -22,29 +22,25 @@ const state=async c=>(await c.call("GET","/api/me")).json.state;
 const idOf=name=>DB.prepare("SELECT id FROM players WHERE name=?").get(name).id;
 const row=id=>DB.prepare("SELECT * FROM duels WHERE id=?").get(id);
 const duelEntries=S=>S.journal.filter(j=>j.k==="duel");
-// The 1.3 s countdown plus the last pick, spent in the database instead of waiting.
-const backdate=(col,id,ms=2300)=>DB.prepare(`UPDATE duels SET ${col}=${col}-? WHERE id=?`).run(ms,id);
-// A challenge with a played turn: pending, waiting for the defender.
+// A challenge with a played turn (through /api/debate): pending, waiting for the defender.
 async function challenged(a,b,opts={}){
  const ch=await duel(a,{op:"challenge",name:b.name});assert.equal(ch.status,200,JSON.stringify(ch.json));
- const {id,seed}=ch.json.duel;backdate("c_started",id);
- const sub=await duel(a,{op:"submit",id,picks:picksFor(seed,a.camp,opts)});
- assert.equal(sub.status,200,JSON.stringify(sub.json));
- return {id,seed};
+ const {id}=ch.json.duel;
+ const end=await debateTurn(a,id,opts);
+ assert.equal(end.status,200,JSON.stringify(end.json));assert.equal(end.json.result.status,"pending");
+ return {id};
 }
-async function accepted(b,id){
- assert.equal((await duel(b,{op:"accept",id})).status,200);backdate("d_started",id);
-}
+async function accepted(b,id){assert.equal((await duel(b,{op:"accept",id})).status,200);}
 // a beats b 3 to 0. Returns a's state just before and just after the result lands.
 async function win(a,b){
- const {id,seed}=await challenged(a,b);await accepted(b,id);
+ const {id}=await challenged(a,b);await accepted(b,id);
  const before=await state(a);
- const r=await duel(b,{op:"submit",id,picks:picksFor(seed,b.camp,{wrong:[0,1,2]})});
- assert.equal(r.status,200,JSON.stringify(r.json));assert.equal(r.json.res,"loss");
+ const r=await debateTurn(b,id,{wrong:[0,1,2]});
+ assert.equal(r.status,200,JSON.stringify(r.json));assert.equal(r.json.result.res,"loss");
  return {id,before,after:await state(a)};
 }
 
-test("paid wins: the 4th win of the day pays gauges but no XP, and pays again once the earlier wins are yesterday's",async()=>{
+test("paid wins: the 4th win of the day pays nothing at all, and pays again once the earlier wins are yesterday's",async()=>{
  const a=await player("Gagneur"),b=await player("Perdant Un","right"),c=await player("Perdant Deux","right");
  const aid=idOf("Gagneur"),bid=idOf("Perdant Un");
  // Three wins already paid today: old enough (created) not to tie the pair, sent on no day (sday).
@@ -57,12 +53,12 @@ test("paid wins: the 4th win of the day pays gauges but no XP, and pays again on
  assert.equal(row(w1.id).winner,aid);
  const top=w1.after.journal[0];
  assert.equal(top.k,"duel");assert.equal(top.d.res,"win");
- assert.doesNotMatch(top.text,/XP/,top.text);assert.match(top.text,/moral \+/,top.text);
+ assert.doesNotMatch(top.text,/XP|moral \+|énergie \+/,top.text);
  assert.equal(duelEntries(w1.after).length,duelEntries(w1.before).length+1);
  if(w1.after.hourIdx===w1.before.hourIdx){   // no game hour ticked in between: the deltas are exact
   assert.equal(w1.after.xp,w1.before.xp,"no XP for an unpaid win");
-  assert.equal(w1.after.moral,R.clamp(w1.before.moral+R.DUEL.win.moral));
-  assert.equal(w1.after.energy,R.clamp(w1.before.energy+R.DUEL.win.energy));
+  assert.equal(w1.after.moral,w1.before.moral,"nor moral");
+  assert.equal(w1.after.energy,w1.before.energy,"nor energy");
  }else assert.ok(w1.after.xp-w1.before.xp<R.DUEL.win.xp);
 
  // The earlier wins move to yesterday: today's count drops to zero, the next win pays the full 40 XP.
@@ -74,15 +70,18 @@ test("paid wins: the 4th win of the day pays gauges but no XP, and pays again on
  else assert.ok(w2.after.xp-w2.before.xp>=R.DUEL.win.xp);
 });
 
-test("exactly once: two racing submits from the defender resolve the duel once",async()=>{
+test("exactly once: the defender's turn ending in racing requests (and the sweep) resolves the duel once",async()=>{
  const a=await player("Course A"),b=await player("Course B","right");
- const {id,seed}=await challenged(a,b,{wrong:[0,1,2]});   // a scores 0
+ const {id}=await challenged(a,b,{wrong:[0,1,2]});   // a scores 0
  await accepted(b,id);
  const sa=await state(a),sb=await state(b);
- const picks=picksFor(seed,"right");
- const rs=await Promise.all([duel(b,{op:"submit",id,picks}),duel(b,{op:"submit",id,picks})]);
- assert.deepEqual(rs.map(r=>r.status).sort(),[200,422],JSON.stringify(rs.map(r=>r.json?.error)));
- assert.equal(rs.find(r=>r.status===200).json.res,"win");
+ const next=()=>b.call("POST","/api/debate",{op:"next",ref:id});
+ const first=await debateTurn(b,id,{n:1});   // 1 right answer, then the clock runs out
+ const late=await Promise.all([next(),next()]);
+ const ok=[first,...late].filter(r=>r.status===200&&r.json.done);
+ assert.ok(ok.length<=1,JSON.stringify([first,...late].map(r=>r.json)));
+ assert.ok(late.every(r=>r.status===422),"over once resolved");
+ if(ok.length)assert.equal(ok[0].json.result.res,"win");
  const sa2=await state(a),sb2=await state(b);
  assert.equal(duelEntries(sa2).length,duelEntries(sa).length+1,"one entry for the challenger");
  assert.equal(duelEntries(sb2).length,duelEntries(sb).length+1,"one entry for the defender");
@@ -161,40 +160,18 @@ test("three challenges a day counts today's only: yesterday's do not block, toda
  assert.equal((await p.call("GET","/api/duels")).json.sent,4);
 });
 
-test("malformed picks are refused with 422, never a 500, and void the challenge",async()=>{
- const x=await player("Bricoleur");
- const n=R.DUEL.maxPicks+1;
- const cases={
-  object:{},nul:null,number:42,missing:undefined,
-  tooMany:Array.from({length:n},(_,k)=>[0,k*300]),
-  nanTime:[[0,0],[1,NaN]],                 // JSON turns NaN into null
-  negativeTime:[[0,-250]],
-  floatTime:[[0,0],[1,300.5]],
-  answerOutOfRange:[[3,0]],
-  stringAnswer:[["0",0]],
-  stringTime:[[0,"0"]],
-  gapUnderMin:[[0,0],[1,R.DUEL.minGap-1]],
-  timeBackwards:[[0,1000],[1,500]],
-  triple:[[0,0,0]],
-  notPairs:[0,1,2]
- };
- let i=0;   // 14 cases, 2 calls each: under the 30-a-minute duel limit
- for(const [what,picks] of Object.entries(cases)){
-  const y=await player("Banc "+(++i));
-  const ch=await duel(x,{op:"challenge",name:y.name});assert.equal(ch.status,200,`${what}: ${JSON.stringify(ch.json)}`);
-  const id=ch.json.duel.id;backdate("c_started",id);
-  const r=await duel(x,picks===undefined?{op:"submit",id}:{op:"submit",id,picks});
-  assert.equal(r.status,422,`${what}: ${r.status} ${JSON.stringify(r.json)}`);
-  assert.equal(r.json.ok,false);assert.match(r.json.error,/^Score refusé/,what);
-  assert.equal(row(id).status,"void",what);
-  DB.prepare("UPDATE duels SET sday=NULL WHERE challenger=?").run(idOf("Bricoleur"));   // the 3-a-day cap is not under test
- }
- // On the defender's side a malformed answer forfeits: 422, the duel is done and lost.
- const a=await player("Banc Attaque"),b=await player("Banc Défense");
- const {id}=await challenged(a,b);await accepted(b,id);
- const r=await duel(b,{op:"submit",id,picks:{bad:true}});
- assert.equal(r.status,422);assert.equal(r.json.ok,false);
- assert.equal(r.json.res,"loss");assert.equal(r.json.mine,0);assert.equal(r.json.theirs,3);
- assert.equal(row(id).status,"done");assert.equal(row(id).winner,idOf("Banc Attaque"));
+test("malformed debate requests are 400/422, never a 500, and change nothing; old picks are 410",async()=>{
+ const x=await player("Bricoleur"),y=await player("Banc");
+ const ch=await duel(x,{op:"challenge",name:y.name});const id=ch.json.duel.id;
+ const deb=async body=>{await sleep(180);return x.call("POST","/api/debate",body);};   // under 6 a second
+ assert.equal((await duel(x,{op:"submit",id,picks:[[0,0]]})).status,410);
+ for(const ref of [null,"1",1.5,-1,{},[id],"duel"])assert.equal((await deb({op:"next",ref})).status,422,JSON.stringify(ref));
+ for(const op of [undefined,"submit","NEXT",1])assert.equal((await deb({op,ref:id})).status,400,String(op));
+ await sleep(1100);   // 6 requests a second at most
+ const q=await deb({op:"next",ref:id});assert.equal(q.status,200);
+ await sleep(650);
+ for(const choice of [3,-1,"0",0.5,true])assert.equal((await deb({op:"next",ref:id,choice})).status,400,JSON.stringify(choice));
+ const t=JSON.parse(row(id).turn);assert.equal(t.st.idx,0);assert.equal(t.st.points+t.st.errors,0,"nothing counted");
+ assert.ok(!JSON.stringify(q.json).includes("seed"),"no seed in the reply");
  assert.equal((await client(PORT).call("GET","/api/health")).status,200);
 });

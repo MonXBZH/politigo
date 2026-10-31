@@ -6,7 +6,7 @@ import {mkdtempSync,statSync} from "node:fs";
 import {DatabaseSync} from "node:sqlite";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
-import {boot,stop,client,player,login,picksFor,keys,FCM,INVITE,PW} from "./server-helpers.mjs";
+import {boot,stop,client,player,login,debateTurn,keys,FCM,INVITE,PW} from "./server-helpers.mjs";
 
 // The tables of v1.3.0, column by column (git show v1.3.0:server/server.mjs): players (with seen_version), sessions, feed.
 const V13={
@@ -23,7 +23,9 @@ test("a v1.3.0 database (no duels, no push_subs) gains both tables; restarts are
  try{await player(PORT,"Ancien");await player(PORT,"Ancienne","right");}finally{await stop(p);}
  // Back to the v1.3.0 schema.
  const d=new DatabaseSync(join(dir,"old.db"));
- d.exec("DROP TABLE push_subs;DROP TABLE duels;");
+ // Every later table and column goes (duels, push, chat, admin...): what is left is exactly v1.3.0.
+ for(const t of tables(d))if(!(t in V13))d.exec(`DROP TABLE ${t}`);
+ for(const c of cols(d,"players"))if(!V13.players.includes(c))d.exec(`ALTER TABLE players DROP COLUMN ${c}`);
  assert.deepEqual(tables(d),Object.keys(V13).sort());
  for(const [t,c] of Object.entries(V13))assert.deepEqual(cols(d,t),c,t);
  d.close();
@@ -37,10 +39,8 @@ test("a v1.3.0 database (no duels, no push_subs) gains both tables; restarts are
   assert.equal((await a.call("POST","/api/push/subscribe",{endpoint:FCM+"ancien",keys:keys()})).status,200);
   const ch=await a.call("POST","/api/duel",{op:"challenge",name:"Ancienne"});
   assert.equal(ch.status,200,JSON.stringify(ch.json));id=ch.json.duel.id;
-  const d2=new DatabaseSync(join(dir,"old.db"),{timeout:5000});
-  d2.prepare("UPDATE duels SET c_started=c_started-2300 WHERE id=?").run(id);d2.close();
-  const sub=await a.call("POST","/api/duel",{op:"submit",id,picks:picksFor(ch.json.duel.seed,"left")});
-  assert.equal(sub.status,200,JSON.stringify(sub.json));assert.equal(sub.json.status,"pending");
+  const sub=await debateTurn(a,id);
+  assert.equal(sub.status,200,JSON.stringify(sub.json));assert.equal(sub.json.result.status,"pending");
  }finally{await stop(p);}
  // A second restart on the migrated file: nothing recreated, nothing lost.
  p=await boot(PORT,dir,{},"old.db");

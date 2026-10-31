@@ -16,9 +16,9 @@ test("every entry is well formed, newest first, with French text and a real date
   const e=CHANGELOG[i];
   assert.equal(releaseOf(e.version),e.version,`${e.version} is a plain release number (no "v")`);
   assert.match(e.date,/^\d{4}-\d{2}-\d{2}$/);assert.ok(Number.isFinite(Date.parse(e.date)));
-  assert.ok(Array.isArray(e.added)&&Array.isArray(e.fixed)&&Array.isArray(e.changed??[]),`${e.version}: lists only`);
+  assert.ok(Array.isArray(e.added)&&Array.isArray(e.fixed)&&Array.isArray(e.changed??[])&&Array.isArray(e.admin??[]),`${e.version}: lists only`);
   assert.ok(e.added.length+(e.changed??[]).length+e.fixed.length>0,`${e.version} says something`);
-  for(const t of [...e.added,...(e.changed??[]),...e.fixed])assert.ok(typeof t==="string"&&t.length>10&&t.length<400);
+  for(const t of [...e.added,...(e.changed??[]),...e.fixed,...(e.admin??[])])assert.ok(typeof t==="string"&&t.length>10&&t.length<400);
   if(i)assert.ok(cmpRelease(CHANGELOG[i-1].version,e.version)>0,"newest first");
  }
 });

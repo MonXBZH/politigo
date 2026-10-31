@@ -7,7 +7,7 @@
   <img alt="Node 24" src="https://img.shields.io/badge/node-24%20LTS-5fa04e">
   <img alt="Aucune dépendance" src="https://img.shields.io/badge/d%C3%A9pendances-0-success">
   <img alt="Docker" src="https://img.shields.io/badge/docker-compose%20%7C%20Portainer-2496ed">
-  <img alt="252 tests" src="https://img.shields.io/badge/tests-252-brightgreen">
+  <img alt="338 tests" src="https://img.shields.io/badge/tests-338-brightgreen">
   <img alt="Satire" src="https://img.shields.io/badge/genre-satire-ff9db0">
 </p>
 
@@ -33,9 +33,9 @@
 |:---:|:---:|:---:|
 | <img src="docs/images/sheet-buvette.png" width="240" alt="La Buvette : se nourrir avec des frais de mandat"> | <img src="docs/images/sheet-jouer.png" width="240" alt="Débattre, puis quitte ou double"> | <img src="docs/images/pong.png" width="240" alt="Mini-jeu Pong des arguments"> |
 
-| Passation de pouvoir | Mort politique, à gauche | Mort politique, à droite |
-|:---:|:---:|:---:|
-| <img src="docs/images/evolution.png" width="240" alt="Animation d'évolution"> | <img src="docs/images/rebirth-left.png" width="240" alt="Renaissance à gauche : la primaire unitaire"> | <img src="docs/images/rebirth-right.png" width="240" alt="Renaissance à droite : le parti change de nom"> |
+| Le chat de la République | Passation de pouvoir | Mort politique, à gauche | Mort politique, à droite |
+|:---:|:---:|:---:|:---:|
+| <img src="docs/images/chat-mobile.png" width="200" alt="Le chat : un salon pour tous et un par camp, emojis et images"> | <img src="docs/images/evolution.png" width="200" alt="Animation d'évolution"> | <img src="docs/images/rebirth-left.png" width="200" alt="Renaissance à gauche : la primaire unitaire"> | <img src="docs/images/rebirth-right.png" width="200" alt="Renaissance à droite : le parti change de nom"> |
 
 ---
 
@@ -129,8 +129,22 @@ et toutes sont recensées, avec leurs références, dans **[docs/SOURCES.md](doc
   ni descendre une jauge sous 25. Dès le niveau 5, trois défis par jour.
 - 🔔 **Notifications** : sois prévenu d'un défi ou d'un résultat même le jeu fermé (Dossier → Compte).
   Sur iPhone, ajoute d'abord PolitiGo à l'écran d'accueil.
+- 💬 **Le chat** (si l'organisateur l'ouvre, salon par salon) : un salon pour tout le monde et un salon réservé à ton camp. Emojis, images et GIF (colle celui de ton
+  clavier ou envoie un fichier de 2 Mo), signalement en un geste, messages effacés au bout de 7 jours. Une pastille compte
+  les non-lus, sans notification ni son, et rien ne s'affiche pendant un mini-jeu.
 - 📰 **Fil de la République** : les évolutions, les morts politiques et les beaux scores aux mini-jeux et les duels de chacun, en temps réel.
 - 🔐 **Sur invitation** : un code donné par l'organisateur, et le nombre de comptes plafonné.
+
+### Pour l'organisateur
+
+Une **interface d'administration** facultative, dans son propre conteneur, pour le réseau local : tableau de bord, fiches
+des joueurs (mot de passe, déblocage, renommage, suspension), **annonces** immédiates ou planifiées (à tous, à un camp, à un
+joueur), ouverture et modération du chat, modération du fil, duels, code d'invitation en un clic, inscriptions et événements à chaud, sauvegarde,
+**détection de bots**, journal des actions. Elle gère aussi plusieurs parties sur le même serveur.
+
+<p align="center">
+  <img src="docs/images/admin-dashboard.png" width="92%" alt="L'interface d'administration : tableau de bord d'une partie">
+</p>
 
 ---
 
@@ -145,12 +159,15 @@ flowchart LR
   A --- R["rules.mjs<br/>règles partagées"]
   P -. "importe aussi" .-> R
   A --- DB[("SQLite<br/>volume Docker")]
+  AD["admin · Node 24<br/>facultatif, LAN"] -- "socket Unix" --> A
 ```
 
 - **Le serveur fait foi.** Il détient les parties, fait tourner l'horloge de chacun (même page fermée) et vérifie chaque
   action. Le navigateur affiche et anime, il ne décide rien.
 - **Les mêmes règles des deux côtés** : `web/rules.mjs` est importé par le navigateur et par le serveur.
-- **Temps réel** par Server-Sent Events : le classement et le fil se mettent à jour sans recharger la page.
+- **Temps réel** par Server-Sent Events : le classement, le fil et le chat se mettent à jour sans recharger la page.
+- **Administration sans port ouvert** : l'interface d'admin parle à l'API par un socket Unix partagé entre les deux
+  conteneurs, jamais par le réseau.
 - **Zéro dépendance** : Node 24 seul (`node:http`, `node:sqlite`, `node:crypto`), aucun `npm install`.
 - **Robuste aux maintenances** : après un arrêt, même de plusieurs jours, chaque partie revient sur l'heure réelle, sans
   que les jauges bougent ; personne ne meurt parce que le serveur était éteint.
@@ -168,6 +185,7 @@ git clone https://github.com/MonXBZH/politigo.git && cd politigo
 cp .env.example .env          # POLITIGO_BIND = l'IP du serveur, le reste convient pour commencer
 docker compose up -d --build
 docker compose logs api       # le code d'invitation à donner aux amis s'y affiche
+docker compose logs admin     # le mot de passe de l'interface d'administration (http://serveur:8090), si .env n'en fixe pas
 ```
 
 Puis place-le derrière ton reverse proxy en HTTPS. Pour un simple essai en local, sans proxy ni HTTPS, mets
@@ -211,8 +229,9 @@ les sauvegardes, les mises à jour, le cycle de développement et les tests.
   toute personne qui n'a pas été définitivement condamnée.
 - **Les dessins sont des caricatures originales**, sans photo ni logo officiel.
 - **Aucun argent réel** : la seule monnaie, les frais de mandat, se gagne en gardant son élu en vie.
-- **Données** : seuls le pseudo, le mot de passe haché et la partie sont enregistrés, sur le serveur de l'organisateur.
-  Chaque joueur peut supprimer son compte depuis Dossier → Compte.
+- **Données** : seuls le pseudo, le mot de passe haché, la partie et les messages du chat (effacés au bout de 7 jours) sont
+  enregistrés, sur le serveur de l'organisateur. Aucune adresse IP n'est conservée. Chaque joueur peut supprimer son compte
+  depuis Dossier → Compte.
 - **Une personne citée estime un contenu inexact ou blessant ?** Ouvre une *issue* sur ce dépôt : il sera revu, corrigé ou
   retiré sans discussion.
 

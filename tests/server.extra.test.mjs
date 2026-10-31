@@ -216,7 +216,7 @@ test("B6 closed registrations (POLITIGO_INVITE=off) and the per-IP hourly limit"
  }finally{await stop(p);}
  const addr=ip();let last;const codes=[];
  for(let n=0;n<6;n++){last=await reg(client(addr),"Limit"+n,{invite:"faux"});codes.push(last.status);}
- assert.deepEqual(codes,[403,403,403,403,403,429]);
+ assert.deepEqual(codes,[403,403,403,429,429,429],"3 sign-ups an hour per address");
  assert.match(last.json.error,/inscriptions/);
  assert.equal((await reg(client(addr),"Limit9")).status,429,"a valid sign-up from a limited address is refused too");
  assert.equal((await reg(client(),"Limit9")).status,201,"another address is unaffected");
@@ -266,14 +266,14 @@ test("B10 action responses: ok / refused shape, and me matches GET /api/me",asyn
  const c=await player("Actor");
  const ok=await c.call("POST","/api/action",{type:"pet"});
  assert.equal(ok.status,200);assert.equal(ok.json.ok,true);assert.equal(ok.json.petted,true);
- assert.deepEqual(Object.keys(ok.json.me).sort(),["event","name","release","seenVersion","serverNow","speed","state","tz","version"]);
+ assert.deepEqual(Object.keys(ok.json.me).sort(),["chat","event","name","release","seenVersion","serverNow","speed","state","tz","version"]);
  assert.equal(ok.json.me.name,"Actor");assert.equal(ok.json.me.speed,1);assert.equal(ok.json.me.tz,DAY_TZ);
  assert.ok(Math.abs(ok.json.me.serverNow-Date.now())<60000);
  const again=await c.call("POST","/api/action",{type:"pet"});
  assert.equal(again.status,200);assert.equal(again.json.petted,false,"already petted this hour");
  const no=await c.call("POST","/api/action",{type:"buy",key:"caviar"});
  assert.equal(no.status,422);assert.equal(no.json.ok,false);assert.equal(typeof no.json.error,"string");assert.ok(no.json.error.length>0);
- assert.deepEqual(Object.keys(no.json.me).sort(),["event","name","release","seenVersion","serverNow","speed","state","tz","version"]);
+ assert.deepEqual(Object.keys(no.json.me).sort(),["chat","event","name","release","seenVersion","serverNow","speed","state","tz","version"]);
  const me=await c.call("GET","/api/me");
  assert.deepEqual(strip(me.json.state),strip(no.json.me.state));
  assert.equal(me.json.name,no.json.me.name);assert.equal(me.json.tz,no.json.me.tz);assert.equal(me.json.speed,no.json.me.speed);
@@ -305,8 +305,12 @@ test("B11 account deletion",async()=>{
  assert.equal((await replay(other.cookie)).status,401);
  const board=(await watcher.call("GET","/api/board")).json.board.map(r=>r.name);
  assert.ok(!board.includes("Delia"));assert.ok(board.includes("Delia Watcher"));
+ // The name waits a day (deleting and signing up again must not reset the duel limits), then is free again.
+ const soon=await reg(client(),"delia");
+ assert.equal(soon.status,409);assert.equal(soon.json.error,"Ce pseudo vient d'être libéré, réessaie demain.");
+ const tdb=new DatabaseSync(dbOf("main"),{timeout:5000});tdb.prepare("UPDATE tombstones SET deleted=deleted-864e5-1000").run();tdb.close();
  const again=await reg(client(),"Delia");
- assert.equal(again.status,201,"the name is free again");
+ assert.equal(again.status,201,"the name is free again after a day");
  assert.equal(again.json.state.lvl,1);
  assert.equal((await login(client(),"Delia")).status,200);
 });
@@ -418,7 +422,8 @@ test("B15 configuration: time zone, invite length, trimming, invite.txt",async()
  writeFileSync(file,"  0123456789abcdef  \n");
  p=await boot(P.config,{DB_PATH:join(dir,"i.db"),POLITIGO_INVITE:undefined});
  try{
-  assert.equal(logged(p),"0123456789abcdef","a 16-character file is kept, trimmed");
+  assert.equal(logged(p),undefined,"a kept code is not printed again");assert.ok(!p.out.includes("0123456789abcdef"));
+  assert.match(p.out,/Code d'invitation : voir .*invite\.txt ou la console d'admin/);
   assert.equal((await reg(client(ip(),P.config),"FromFile",{invite:"0123456789abcdef"})).status,201);
  }finally{await stop(p);}
  writeFileSync(file,"");

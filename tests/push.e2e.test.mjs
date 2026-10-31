@@ -7,7 +7,7 @@ import {mkdtempSync,readFileSync,writeFileSync} from "node:fs";
 import {DatabaseSync} from "node:sqlite";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
-import {boot,stop,player,picksFor,until,sleep,keys,FCM} from "./server-helpers.mjs";
+import {boot,stop,player,debateTurn,until,sleep,keys,FCM} from "./server-helpers.mjs";
 
 const STUB="--import /w/tests/stub-fetch.mjs";
 function server(port,{damaged=false}={}){
@@ -19,12 +19,12 @@ function server(port,{damaged=false}={}){
 const fetched=s=>readFileSync(s.log,"utf8").split("\n").filter(Boolean).map(l=>JSON.parse(l).url);
 const subsOf=(s,name)=>s.db.prepare("SELECT endpoint FROM push_subs WHERE player_id=(SELECT id FROM players WHERE name=?) ORDER BY id").all(name).map(r=>r.endpoint);
 const subscribe=(c,endpoint)=>c.call("POST","/api/push/subscribe",{endpoint,keys:keys()});
-// a challenges b and plays a valid turn: the defender is notified. Returns the submit's answer and how long it took.
+// a challenges b and plays a turn: the defender is notified. Returns the last answer of the turn (the one that ends
+// it and notifies) and how long that request took.
 async function challenge(s,a,b){
  const ch=await a.call("POST","/api/duel",{op:"challenge",name:b.name});assert.equal(ch.status,200,JSON.stringify(ch.json));
- s.db.prepare("UPDATE duels SET c_started=c_started-2300 WHERE id=?").run(ch.json.duel.id);
- const t=Date.now(),r=await a.call("POST","/api/duel",{op:"submit",id:ch.json.duel.id,picks:picksFor(ch.json.duel.seed,a.camp)});
- return {r,ms:Date.now()-t};
+ const r=await debateTurn(a,ch.json.duel.id);
+ return {r,ms:r.ms};
 }
 
 const S=server(3914),T=server(3916,{damaged:true});

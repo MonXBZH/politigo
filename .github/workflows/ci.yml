@@ -6,6 +6,8 @@ on:
     branches: [dev]
   pull_request:
     branches: [main, dev]
+# Every action is pinned to a full commit SHA (the tag in the comment, kept up to date by Dependabot): a moved tag
+# cannot swap the code that runs with the registry token.
 permissions:
   contents: read
 # A newer push to the same branch or pull request cancels the run it makes obsolete.
@@ -18,5 +20,5 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: bash tests/run-server.sh

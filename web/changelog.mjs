@@ -1,9 +1,30 @@
 // What's new, shown once to every player after an update (and on demand from Dossier → Compte).
-// One entry per release, newest first, written in French for the players. Add the entry on dev before tagging:
+// One entry per release, newest first, written in French for the players (added, changed, fixed, and admin: what the organiser can now do). Add the entry on dev before tagging:
 // the version must match the tag without its "v" (tag v1.3.0 → "1.3.0").
 import {cmpRelease} from "./rules.mjs";
 
 export const CHANGELOG=[
+ {version:"1.5.0",date:"2026-10-31",
+  added:[
+   "Le chat de la République : touche Chat sur l'écran principal. Un salon pour tout le monde, et un salon réservé à ton camp pour comploter entre camarades… ou entre amis de la majorité.",
+   "Le chat s'ouvre seulement si l'organisateur de ta partie l'active, salon par salon : les joueurs ne peuvent pas l'activer eux-mêmes. Pas de touche Chat ? C'est qu'il est fermé pour le moment.",
+   "Emojis à volonté, et images ou GIF : colle celui de ton clavier, ou envoie un fichier de 2 Mo maximum.",
+   "Un message déplacé ? Signale-le en un geste. Tu peux aussi effacer les tiens. Les messages disparaissent au bout de 7 jours.",
+   "Pas de dérangement : une simple pastille compte les messages non lus, sans notification ni son, et rien ne s'affiche pendant un mini-jeu."
+  ],
+  changed:[
+   "Débat chrono et duels : c'est désormais le serveur qui pose les questions une à une et chronomètre tes réponses. Rien ne change pour toi, mais une réponse donnée en moins de 0,6 s n'est plus comptée, et un débat rapporte 20 points au plus.",
+   "Duels : un défié touche le bonus de victoire 3 fois par jour au plus. Au-delà, la victoire compte, mais ne rapporte plus rien.",
+   "Un pseudo libéré par une suppression de compte ne peut être repris qu'au bout de 24 h."
+  ],
+  fixed:[
+   "Plusieurs failles de sécurité corrigées, repérées lors d'un audit complet du jeu."
+  ],
+  admin:[
+   "L'organisateur dispose désormais d'une console d'administration privée, réservée à lui seul et inaccessible depuis le jeu.",
+   "Mesures anti-triche : les scores impossibles pour un humain sont refusés, et les comportements automatisés (scripts, comptes multiples) sont repérés.",
+   "En cas d'abus, un joueur peut être exclu de la partie ou son compte gelé : connexion bloquée, élu figé et retiré du classement le temps de la sanction."
+  ]},
  {version:"1.4.1",date:"2026-10-31",
   added:[
    "Qui est là ? Un point vert qui pulse à droite du pseudo des joueurs en train de jouer, un point orange pour les autres, au classement comme dans les Duels. Les rivaux en ligne passent en tête de liste : idéal pour défier quelqu'un qui répondra tout de suite.",

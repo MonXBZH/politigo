@@ -83,8 +83,8 @@ test("the Pong result is checked by the server",()=>{
  assert.equal(R.act(S,{type:"pongEnd",score:30},{now:at(10)+5000}).ok,false,"30 returns in 5 s is impossible");
  play(S,{type:"pongStart"},10.01);
  assert.equal(R.act(S,{type:"pongEnd",score:2.5},{now:at(10.01)+20000}).ok,false,"non-integer score");
- play(S,{type:"pongStart"},12.1);
- const xp0=S.xp,r=R.act(S,{type:"pongEnd",score:12},{now:at(12.1)+21000});
+ const p=play(S,{type:"pongStart"},12.1);
+ const xp0=S.xp,r=R.act(S,{type:"pongEnd",score:12,id:p.game.id},{now:at(12.1)+21000});
  assert.ok(r.ok);assert.equal(r.bonus,10,"bonus capped at 10");assert.equal(S.xp-xp0,10);
  play(S,{type:"pongStart"},14.2);R.advance(S,at(14.2)+120000,1,noRandom);
  assert.equal(S.pong,null,"an abandoned Pong expires");

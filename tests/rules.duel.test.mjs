@@ -70,13 +70,14 @@ test("D7 duelBlock: asleep, napping and too low a level cannot duel",()=>{
  const N=game();N.vclock=Date.UTC(2026,0,5,2,0);assert.match(R.duelBlock(N),/dort/);
 });
 
-test("D8 a win pays XP, moral and energy; an unpaid win only the gauges",()=>{
+test("D8 a win pays XP, moral and energy; an unpaid win pays nothing at all",()=>{
  const S=game();S.moral=50;S.energy=50;const xp=S.xp;
  assert.equal(R.duelApply(S,"win",{vs:"Bob",mine:21,theirs:17}),true);
  assert.equal(S.xp,xp+DUEL.win.xp);assert.equal(S.moral,60);assert.equal(S.energy,55);
  assert.equal(S.journal[0].k,"duel");assert.match(S.journal[0].text,/gagné contre Bob.*21 à 17.*\+40 XP/);
- const U=game();U.moral=50;const ux=U.xp;R.duelApply(U,"win",{vs:"Bob",mine:3,theirs:1,paid:false});
- assert.equal(U.xp,ux);assert.equal(U.moral,60);assert.doesNotMatch(U.journal[0].text,/XP/);
+ const U=game();U.moral=50;U.energy=50;const ux=U.xp;R.duelApply(U,"win",{vs:"Bob",mine:3,theirs:1,paid:false});
+ assert.equal(U.xp,ux);assert.equal(U.moral,50);assert.equal(U.energy,50);assert.doesNotMatch(U.journal[0].text,/XP/);
+ assert.match(U.journal[0].text,/plus de gain aujourd'hui, rien ne bouge/);
 });
 
 test("D9 a loss never costs a level nor pushes a gauge under the floor",()=>{

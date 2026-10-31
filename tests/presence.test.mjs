@@ -7,7 +7,7 @@ import {mkdtempSync,readFileSync,writeFileSync} from "node:fs";
 import {DatabaseSync} from "node:sqlite";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
-import {boot,stop,player,picksFor,until,sleep,keys,FCM} from "./server-helpers.mjs";
+import {boot,stop,player,debateTurn,until,sleep,keys,FCM} from "./server-helpers.mjs";
 
 const PORT=3920;
 let proc,DB,LOG;
@@ -24,12 +24,11 @@ const subscribe=async(c,ep)=>assert.equal((await c.call("POST","/api/push/subscr
 const act=(c,body)=>c.call("POST","/api/action",body);
 const duel=(c,body)=>c.call("POST","/api/duel",body);
 const ago=(col,id,ms=2300)=>DB.prepare(`UPDATE duels SET ${col}=${col}-? WHERE id=?`).run(ms,id);
-// a challenges b and plays a valid turn: b is told. Returns the duel.
+// a challenges b and plays a turn (POST /api/debate): b is told. Returns the duel.
 async function challenged(a,b){
  const ch=await duel(a,{op:"challenge",name:b.name});assert.equal(ch.status,200,JSON.stringify(ch.json));
- ago("c_started",ch.json.duel.id);
- const sub=await duel(a,{op:"submit",id:ch.json.duel.id,picks:picksFor(ch.json.duel.seed,a.camp)});
- assert.equal(sub.status,200,JSON.stringify(sub.json));
+ const sub=await debateTurn(a,ch.json.duel.id);
+ assert.equal(sub.status,200,JSON.stringify(sub.json));assert.equal(sub.json.result.status,"pending");
  return ch.json.duel;
 }
 // The live stream of one player, collected in the background.
@@ -97,7 +96,7 @@ test("opponents: online first, by name inside each group",async()=>{
 test("a challenge to a defender in a Pong is pushed after pongEnd; one not in a game gets it at once",async()=>{
  const a=await player(PORT,"Défieur Pong"),d=await player(PORT,"Pongiste","right"),e=await player(PORT,"Libre","right");
  await subscribe(d,"pongiste");await subscribe(e,"libre");
- assert.equal((await act(d,{type:"pongStart"})).status,200);
+ const ps=await act(d,{type:"pongStart"});assert.equal(ps.status,200);
  const sd=stream(d);await until(()=>sd.events.some(e=>e.ev==="me"));
  await challenged(a,d);await challenged(a,e);
  assert.ok(await until(()=>sd.events.some(e=>e.ev==="duel"&&e.data.kind==="challenged")),"the live event is not held: only the push is");sd.close();
@@ -105,7 +104,7 @@ test("a challenge to a defender in a Pong is pushed after pongEnd; one not in a 
  await sleep(500);   // a couple of sweeps
  assert.ok(!pushed("pongiste"),"held during the Pong");
  await sleep(1800);   // the Pong minimum length
- const end=await act(d,{type:"pongEnd",score:1});assert.equal(end.status,200,JSON.stringify(end.json));
+ const end=await act(d,{type:"pongEnd",score:1,id:ps.json.game.id});assert.equal(end.status,200,JSON.stringify(end.json));
  assert.ok(await until(()=>pushed("pongiste")),"pushed once the Pong is over");
  assert.equal(fetched().filter(u=>u===FCM+"pongiste").length,1,"once");
 });
@@ -113,14 +112,13 @@ test("a challenge to a defender in a Pong is pushed after pongEnd; one not in a 
 test("a duel result for a challenger in a mini-game waits for miniEnd",async()=>{
  const a=await player(PORT,"Joueur Mini"),b=await player(PORT,"Répondeur","right");
  await subscribe(a,"joueur-mini");
- const {id,seed}=await challenged(a,b);
- assert.equal((await act(a,{type:"debate"})).status,200);
- assert.equal((await duel(b,{op:"accept",id})).status,200);ago("d_started",id);
- const sub=await duel(b,{op:"submit",id,picks:picksFor(seed,"right")});assert.equal(sub.status,200,JSON.stringify(sub.json));
+ const {id}=await challenged(a,b);
+ const ms=await act(a,{type:"manifStart"});assert.equal(ms.status,200,JSON.stringify(ms.json));
+ assert.equal((await duel(b,{op:"accept",id})).status,200);
+ const sub=await debateTurn(b,id);assert.equal(sub.status,200,JSON.stringify(sub.json));assert.equal(sub.json.result.status,"done");
  await sleep(500);
  assert.ok(!pushed("joueur-mini"),"held during the mini-game");
- await sleep(2700);   // the mini-game's minimum length
- const end=await act(a,{type:"miniEnd",score:0});assert.equal(end.status,200,JSON.stringify(end.json));
+ const end=await act(a,{type:"miniEnd",score:0,id:ms.json.game.id});assert.equal(end.status,200,JSON.stringify(end.json));
  assert.ok(await until(()=>pushed("joueur-mini")),"pushed once the mini-game is over");
 });
 

@@ -48,8 +48,16 @@ services:
       POLITIGO_PUSH_CONTACT: ${POLITIGO_PUSH_CONTACT:-}
       # Seasonal events: empty = automatic (Halloween on 31 Oct-1 Nov); "off" switches them off, "halloween" forces it (tests).
       POLITIGO_EVENT: ${POLITIGO_EVENT:-}
+      # Chat: empty = closed. "on" (both rooms), "global" or "camp" = how a FRESH game starts; afterwards the
+      # admin interface's Réglages decide (this variable no longer changes anything once set there).
+      POLITIGO_CHAT: ${POLITIGO_CHAT:-}
+      # Name of this game, shown in the admin interface (useful when it manages several games). Empty = "PolitiGo".
+      POLITIGO_SERVER_NAME: ${POLITIGO_SERVER_NAME:-}
+      # Admin socket (node admin.mjs, and the admin container through the shared volume below).
+      POLITIGO_ADMIN_SOCKET: /run/politigo/admin.sock
     volumes:
       - politigo-data:/data
+      - politigo-admin-sock:/run/politigo
     restart: unless-stopped
     read_only: true
     tmpfs:
@@ -68,5 +76,67 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # ------------------------------------------------------------------ OPTIONAL: admin web interface
+  # Remove this whole "admin" block (and the two politigo-admin-* volumes at the bottom) to deploy without the
+  # admin interface: the game does not need it, and node admin.mjs keeps working inside the api container.
+  # Password: POLITIGO_ADMIN_PASSWORD (12+ characters), or empty = generated at first start and printed ONCE in
+  # this container's logs. Publish it only to your LAN, or behind your reverse proxy with HTTPS (see .env.example).
+  # Behind Nginx Proxy Manager: POLITIGO_ADMIN_BIND=127.0.0.1 (or firewall port 8090) AND POLITIGO_ADMIN_PROXY_HOPS=1;
+  # with the port still open to everyone, a direct client could fake X-Forwarded-For and dodge the per-address limit.
+  # Host facing the internet (VPS, public IP): NEVER keep 0.0.0.0 with a generated password; bind 127.0.0.1 and go
+  # through the reverse proxy with HTTPS, or firewall 8090 to your own addresses. The container warns at start.
+  # Login limits: 5 failures per address and 30 in all per 15 min; under attack the global cap can lock you out for 15 min.
+  admin:
+    build:
+      context: .
+      dockerfile: admin/Dockerfile
+    image: politigo-admin
+    ports:
+      - "${POLITIGO_ADMIN_BIND:-0.0.0.0}:${POLITIGO_ADMIN_PORT:-8090}:8090"
+    environment:
+      POLITIGO_ADMIN_PASSWORD: ${POLITIGO_ADMIN_PASSWORD:-}
+      POLITIGO_ADMIN_SOCKET: /run/politigo/admin.sock
+      # Several games on this host (one admin socket each): "Name=/socket;Other name=/other/socket". Empty = this stack only.
+      POLITIGO_ADMIN_SERVERS: ${POLITIGO_ADMIN_SERVERS:-}
+      # 1 behind Nginx Proxy Manager (login limits per real client address), with the port bound to 127.0.0.1 or
+      # firewalled; 0 when reached directly (otherwise X-Forwarded-For could be faked).
+      ADMIN_PROXY_HOPS: ${POLITIGO_ADMIN_PROXY_HOPS:-0}
+      # 1 = the session cookie is HTTPS-only even without X-Forwarded-Proto: https from the proxy.
+      ADMIN_COOKIE_SECURE: ${POLITIGO_ADMIN_COOKIE_SECURE:-0}
+    volumes:
+      - politigo-admin-sock:/run/politigo
+      - politigo-admin-data:/data-admin
+      # Second game (another stack on this host): mount its socket volume too, then list both in POLITIGO_ADMIN_SERVERS,
+      # e.g. "Prod=/run/politigo/admin.sock;Test=/run/politigo-test/admin.sock" (and declare the external volume below).
+      # - politigo-test-admin-sock:/run/politigo-test
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    init: true
+    mem_limit: 128m
+    pids_limit: 64
+    cpus: 0.5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
   politigo-data:
+  # Shared by api and admin: the admin socket lives there (remove with the admin block if unused; harmless otherwise).
+  politigo-admin-sock:
+  # OPTIONAL admin: the generated admin password's hash.
+  politigo-admin-data:
+  # Second game's socket volume, created by its own stack (docker volume ls: "<stack>_politigo-admin-sock").
+  # politigo-test-admin-sock:
+  #   external: true
+  #   name: politigo-test_politigo-admin-sock

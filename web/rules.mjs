@@ -214,27 +214,40 @@ export const stressChance=S=>XP.stressMin+(XP.stressMax-XP.stressMin)*(100-S.mor
 export const STRESS_HIT=5;
 export const DOUBLE={odds:0.5,moral:12,energy:12,window:H,stressFactor:2};
 // The Pong is played in the browser, so its result is checked: no more than ~1.5 returns a second, within 90 s.
-export const PONG_RULES={maxScore:30,minSeconds:2,timeoutSeconds:90,returnsPerSecond:1.5,bonusPerReturn:1,bonusCap:10};
+// maxScore is the game's own physics: a perfect tracker over 20 s makes ~23 returns (the bubble speeds up 6 % a
+// return up to 480 px/s); "suspect" is where a score gets flagged for the admin.
+export const PONG_RULES={ms:20000,intro:0,maxScore:25,suspect:22,minSeconds:2,timeoutSeconds:90,returnsPerSecond:1.5,bonusPerReturn:1,bonusCap:10};
 // Mini-games played in the browser (results checked like the Pong's): one per camp for the "Manif", and the
-// timed debate behind "Débattre". The bonus comes on top of the activity XP; a score is capped by duration, at a
-// human pace (the browser waits on the result screen at least 4 s before sending, which only adds margin): a
-// script can no longer claim the full bonus a few seconds after the start.
+// timed debate behind "Débattre". The bonus comes on top of the activity XP; a score is capped by the time really
+// played (from the start, minus the intro, at most the game's length: never the waiting time), at a human pace,
+// and by a hard cap from each game's physics. The debate is refereed by the server instead (debateNew below).
+// Hard caps: Cortège 60 for the route + 5 a tract (a tract every 0.7-1.3 s, 3 in 4 are tracts) + 2 a shot parried
+// (umbrella 1.3 s every 6 s): ~230 for a superhuman run, 241 by the pace cap; Épervier ~55 if every runner of
+// ~8 waves were caught, ~25 for a very good human.
 export const MINI={
- debate:{label:"Débat chrono",camp:null,ms:15000,maxScore:60,perSecond:2.5,bonusRate:1,bonusCap:20,great:18},
- cortege:{label:"Le Cortège",camp:"left",ms:30000,maxScore:400,perSecond:8,bonusRate:0.25,bonusCap:30,great:120},
- epervier:{label:"L'Épervier",camp:"right",ms:35000,maxScore:150,perSecond:2,bonusRate:2,bonusCap:30,great:15}
+ debate:{label:"Débat chrono",camp:null,ms:15000,intro:1300,maxScore:30,perSecond:2.5,bonusRate:1,bonusCap:20,great:18,suspect:21},
+ cortege:{label:"Le Cortège",camp:"left",ms:30000,intro:0,maxScore:250,perSecond:8,bonusRate:0.25,bonusCap:30,great:120,suspect:220},
+ epervier:{label:"L'Épervier",camp:"right",ms:35000,intro:0,maxScore:60,perSecond:2,bonusRate:2,bonusCap:30,great:15,suspect:40}
 };
 // The debate's clock: a 1.3 s countdown, then 15 s of play; a wrong answer costs a second, and a pick shows for
-// 260 ms before the next one counts.
-export const DEBATE={intro:1300,penalty:1000,flash:260};
+// 260 ms. Refereed by the server: an answer given less than minReact after its question was sent is ignored (and
+// flagged), a game never scores more than maxPoints; the flags tell the admin about too perfect a game. reflexMs: a
+// steady pace is only suspect from regularPoints up (a steady hand scoring little beats nobody). A
+// median answer time (network and the 260 ms flash included) under it over reflexMin answers reads faster than anyone.
+export const DEBATE={intro:1300,penalty:1000,flash:260,minReact:600,maxPoints:20,zeroErrors:12,regularMin:8,regularCv:0.15,regularPoints:10,reflexMs:850,reflexMin:10};
 // Duels (PvP, played one after the other within 24 h): both players get the same debate, dealt from a seed the
 // server draws, and the server replays each player's picks. A duel score is computed, never taken on trust.
 // A win pays at most paidWins times a day; a lost duel never costs a level nor pushes a gauge under "floor".
+// A win pays (XP, moral, energy) at most paidWins times a day, and as the defender at most defWinsPerDay times:
+// a win beyond either pays nothing at all (duelPaid tells the server which).
 export const DUEL={game:"debate",win:{xp:40,moral:10,energy:5},loss:{xp:-15,moral:-10,energy:-5},tie:{moral:5},chicken:{moral:3},
- floor:25,perDay:3,paidWins:3,minLevel:5,minAgeMs:432e5,window:864e5,maxPicks:80,minGap:250};
+ floor:25,perDay:3,paidWins:3,defWinsPerDay:3,minLevel:5,minAgeMs:432e5,window:864e5,maxPicks:80,minGap:250};
+// paidToday: the winner's paid wins today; defToday: his wins as the defender today; asDefender: this win's side.
+export const duelPaid=(paidToday,defToday,asDefender)=>paidToday<DUEL.paidWins&&(!asDefender||defToday<DUEL.defWinsPerDay);
 // A great score is announced in the public feed at most once per game hour and player.
 const greatAnnounced=S=>S.journal.some(j=>j.k==="mini"&&j.d?.great===true&&S.vclock-j.t<H);
-export const MINI_RULES={minSeconds:3,graceSeconds:75};   // expiry = ms/1000 + graceSeconds after the start
+// expiry = ms/1000 + graceSeconds after the start; tolerance: network slack on the time really played.
+export const MINI_RULES={minSeconds:3,graceSeconds:75,tolerance:0.5};
 export const manifGame=S=>S.camp==="left"?"cortege":"epervier";
 const miniExpired=(S,realNow)=>S.mini&&realNow-S.mini.t>(MINI[S.mini.k].ms/1000+MINI_RULES.graceSeconds)*1000;
 export const xpCost=L=>XP.a+XP.b*L;
@@ -309,11 +322,17 @@ export function sanitize(s,now){
   .slice(0,40).map(j=>{const e={n:j.n,t:j.t,k:j.k.slice(0,12),text:j.text.slice(0,300)};
    if(j.d&&typeof j.d==="object"&&JSON.stringify(j.d).length<400)e.d=j.d;return e;});
  o.jn=Math.max(o.jn,...o.journal.map(j=>j.n),0);
- if(s.pong&&Number.isFinite(s.pong.t))o.pong={t:s.pong.t};
- if(s.mini&&typeof s.mini.k==="string"&&Object.hasOwn(MINI,s.mini.k)&&Number.isFinite(s.mini.t))o.mini={k:s.mini.k,t:s.mini.t};
+ // A game's seed and id (gameKeys) survive; nothing else does.
+ if(s.pong&&Number.isFinite(s.pong.t))o.pong=gameKeys({t:s.pong.t},s.pong);
+ if(s.mini&&typeof s.mini.k==="string"&&Object.hasOwn(MINI,s.mini.k)&&Number.isFinite(s.mini.t))o.mini=gameKeys({k:s.mini.k,t:s.mini.t},s.mini);
  o.rematchT=num(s.rematchT,-1,o.vclock,-1);
  // States saved before diedAt existed take it from their journal.
  o.diedAt=num(s.diedAt??o.journal.find(j=>j.k==="death")?.t,-1,o.vclock,-1);
+ return o;
+}
+function gameKeys(o,s){
+ if(Number.isInteger(s.seed)&&s.seed>=0&&s.seed<2**32)o.seed=s.seed;
+ if(typeof s.id==="string"&&/^[0-9a-z]{1,16}$/.test(s.id))o.id=s.id;
  return o;
 }
 function log(S,k,text,d){
@@ -448,6 +467,23 @@ function duration(ms){
  return [d&&`${d} j`,h&&`${h} h`,min&&`${min} min`].filter(Boolean).join(" ");
 }
 const fail=error=>({ok:false,error}),done=(info={})=>({ok:true,...info});
+// What only the server may read on a result (the audit of a score, a debate's turn with its seed): not enumerable,
+// so a reply built with {...r} or JSON never carries it to the browser.
+const hidden=(o,k,v)=>Object.defineProperty(o,k,{value:v,enumerable:false,writable:true,configurable:true});
+// A new game: its seed (every random draw of the game in the browser) and a short id the end must carry.
+const newSeed=random=>Math.floor(random()*2**32)>>>0;
+const gameId=random=>Math.floor(random()*36**8).toString(36);
+// Judges a score the browser sends for a game it played: the right game (id), a whole number under the game's
+// hard cap, within the game's time window, and no more than a human pace over the time really played.
+// Returns the flags ("" first: refused) and the audit the server keeps.
+function judge(game,cfg,{sc,secs,idOk,minSeconds,expiry}){
+ const eff=Math.min(secs-cfg.intro/1000+MINI_RULES.tolerance,cfg.ms/1000),whole=Number.isInteger(sc);
+ const why=!idOk?"id_inconnu":!whole||sc<0?"invalide":sc>cfg.maxScore?"plafond"
+  :secs<minSeconds||secs>expiry||sc>Math.ceil(Math.max(0,eff)*cfg.perSecond)+1?"trop_rapide":"";
+ const flags=why?[why]:sc>=cfg.suspect?["plafond"]:[];
+ return {refused:!!why,flags,audit:{game,score:whole?sc:null,secs:Math.round(secs*10)/10,flags}};
+}
+const refused=audit=>hidden(fail("Score refusé."),"audit",audit);
 // Every player action goes through here, on the server, after bringing the state up to date. event: the seasonal
 // event running now on the server's clock (eventAt), "" outside one.
 export function act(S,a,{now,speed=1,random=Math.random,event=""}){
@@ -465,32 +501,36 @@ export function act(S,a,{now,speed=1,random=Math.random,event=""}){
   const e=activityBlock(S);if(e)return fail(e);
   const visit=registerVisit(S);spendActivity(S);
   if(type==="debate"){
-   const line=pongLine(S.camp,event,random);
-   S.rematchT=S.vclock;S.mini={k:"debate",t:now};S.pong=null;
+   // The seed stays on the server, in the turn (hidden): the browser only ever sees one question at a time.
+   const seed=newSeed(random),id=gameId(random),line=pongLine(S.camp,event,random);   // the game first: the same in costume
+   S.rematchT=S.vclock;S.mini={k:"debate",t:now,id};S.pong=null;
    log(S,"act",`Débat chrono : +${XP.activity} XP, énergie −8, moral +10${visit?`, visite +${XP.visit} XP`:""}.`,{kind:"debate",line,visit});
-  }else{
-   S.pong={t:now};S.mini=null;S.rematchT=-1;
-   log(S,"act",`Pong des arguments : +${XP.activity} XP${visit?`, visite +${XP.visit} XP`:""}.`,{kind:"pong",visit});
+   return hidden(done({visit,game:{k:"debate",id}}),"turn",debateNew(seed,S.camp,{count:debateCount(event),now,id}));
   }
-  return done({visit});
+  const seed=newSeed(random),id=gameId(random);
+  S.pong={t:now,seed,id};S.mini=null;S.rematchT=-1;
+  log(S,"act",`Pong des arguments : +${XP.activity} XP${visit?`, visite +${XP.visit} XP`:""}.`,{kind:"pong",visit});
+  return done({visit,game:{k:"pong",id,seed}});
  }
  case "manifStart":{
   const e=activityBlock(S);if(e)return fail(e);
   const visit=registerVisit(S);spendActivity(S);
-  const k=manifGame(S);S.mini={k,t:now};S.pong=null;S.rematchT=-1;
+  const k=manifGame(S),seed=newSeed(random),id=gameId(random);S.mini={k,t:now,seed,id};S.pong=null;S.rematchT=-1;
   log(S,"act",`${MINI[k].label} : +${XP.activity} XP${visit?`, visite +${XP.visit} XP`:""}.`,{kind:"manif",game:k,visit});
-  return done({visit,game:k});
+  return done({visit,game:{k,id,seed}});
  }
  case "miniEnd":{
   if(!S.mini)return fail("Aucune partie en cours.");
-  const k=S.mini.k,cfg=MINI[k],secs=(now-S.mini.t)/1000,sc=a.score;S.mini=null;   // consumed even when refused: no replay
-  if(!Number.isInteger(sc)||sc<0||sc>cfg.maxScore||secs<MINI_RULES.minSeconds||sc>Math.ceil(secs*cfg.perSecond)+1)return fail("Score refusé.");
+  const k=S.mini.k,cfg=MINI[k],secs=(now-S.mini.t)/1000,sc=a.score,idOk=typeof S.mini.id==="string"&&a.id===S.mini.id;
+  S.mini=null;   // consumed even when refused: no replay
+  // The debate's score comes from its referee (debateFinish), never from the browser.
+  if(k==="debate")return refused({game:k,score:Number.isInteger(sc)?sc:null,secs:Math.round(secs*10)/10,flags:["hors_arbitre"]});
+  const j=judge(k,cfg,{sc,secs,idOk,minSeconds:MINI_RULES.minSeconds,expiry:cfg.ms/1000+MINI_RULES.graceSeconds});
+  if(j.refused)return refused(j.audit);
   const bonus=Math.min(cfg.bonusCap,Math.floor(sc*cfg.bonusRate));addXp(S,bonus);
-  const text=k==="debate"?`Débat chrono : ${sc} argument${sc>1?"s":""} dans la ligne, bonus d'éloquence +${bonus} XP.`
-   :k==="cortege"?`Le Cortège : score ${sc}, bonus de terrain +${bonus} XP.`
-   :`L'Épervier : ${sc} point${sc>1?"s":""}, bonus d'ordre public +${bonus} XP.`;
-  log(S,"mini",text,{game:k,score:sc,bonus,great:sc>=cfg.great&&!greatAnnounced(S)});
-  return done({bonus,game:k});
+  const text=k==="cortege"?`Le Cortège : score ${sc}, bonus de terrain +${bonus} XP.`:`L'Épervier : ${sc} point${sc>1?"s":""}, bonus d'ordre public +${bonus} XP.`;
+  log(S,"mini",text,{game:k,score:sc,bonus,great:sc>=cfg.great&&!j.flags.length&&!greatAnnounced(S)});
+  return hidden(done({bonus,game:k}),"audit",j.audit);
  }
  case "rematch":{
   const e=rematchBlock(S);if(e)return fail(e);
@@ -506,11 +546,12 @@ export function act(S,a,{now,speed=1,random=Math.random,event=""}){
  }
  case "pongEnd":{
   if(!S.pong)return fail("Aucun débat en cours.");
-  const secs=(now-S.pong.t)/1000,sc=a.score;S.pong=null;
-  if(!Number.isInteger(sc)||sc<0||sc>PONG_RULES.maxScore||secs<PONG_RULES.minSeconds||sc>Math.ceil(secs*PONG_RULES.returnsPerSecond)+1)return fail("Score refusé.");
-  const bonus=Math.min(PONG_RULES.bonusCap,sc*PONG_RULES.bonusPerReturn);addXp(S,bonus);
+  const P=PONG_RULES,secs=(now-S.pong.t)/1000,sc=a.score,idOk=typeof S.pong.id==="string"&&a.id===S.pong.id;S.pong=null;
+  const j=judge("pong",{...P,perSecond:P.returnsPerSecond},{sc,secs,idOk,minSeconds:P.minSeconds,expiry:P.timeoutSeconds});
+  if(j.refused)return refused(j.audit);
+  const bonus=Math.min(P.bonusCap,sc*P.bonusPerReturn);addXp(S,bonus);
   log(S,"pong",`Fin du débat : ${sc} renvoi${sc>1?"s":""}, bonus d'éloquence +${bonus} XP.`,{score:sc,bonus});
-  return done({bonus});
+  return hidden(done({bonus}),"audit",j.audit);
  }
  case "light":{
   if(isNight(S))return fail("C'est la nuit : il dort jusqu'à 6 h.");
@@ -572,9 +613,9 @@ export function debateRounds(random,n=DUEL.maxPicks+1,count=QUESTIONS.length){
 // Replays a duel debate: picks = [[answer shown 0-2, ms since play started], ...], as the browser recorded them.
 // Picks after the final whistle are not counted. Returns null when the picks cannot come from the game (bad shape,
 // faster than the screen allows, too many).
-export function replayDebate(seed,camp,picks){
+export function replayDebate(seed,camp,picks,count=QUESTIONS.length){
  if(!Array.isArray(picks)||picks.length>DUEL.maxPicks)return null;
- const rounds=debateRounds(seeded(seed),picks.length);
+ const rounds=debateRounds(seeded(seed),picks.length,count);
  let lost=0,prev=-Infinity,points=0,errors=0,last=0;
  for(let k=0;k<picks.length;k++){
   const p=picks[k];
@@ -588,6 +629,70 @@ export function replayDebate(seed,camp,picks){
  }
  return {points,errors,last};
 }
+
+// ===================================================================== THE DEBATE'S REFEREE (server-paced)
+// The Débat chrono, solo or duel, is played against the server: it keeps the turn (seed included), sends one
+// question at a time without saying which answer is right, times each answer itself and counts the score.
+// Pure and deterministic (the clock is an argument); a turn is plain JSON, so it can be stored as it is.
+// count: the deck's size (QUESTIONS, plus the event's questions for a solo debate in costume).
+export const debateCount=event=>event==="halloween"?QUESTIONS.length+HALLOWEEN.questions.length:QUESTIONS.length;
+const debatePool=count=>count>QUESTIONS.length?[...QUESTIONS,...HALLOWEEN.questions]:QUESTIONS;
+export function debateNew(seed,camp,{count=QUESTIONS.length,now=null,id=null}={}){
+ const max=QUESTIONS.length+HALLOWEEN.questions.length;
+ return {seed:Number(seed)>>>0,camp,count:Number.isInteger(count)&&count>0&&count<=max?count:QUESTIONS.length,id,created:now,
+  idx:0,t0:null,lost:0,points:0,errors:0,shownAt:null,gaps:[],fast:0};
+}
+const debateRound=st=>debateRounds(seeded(st.seed),st.idx+1,st.count)[st.idx];
+// Time left in the game (the whole 15 s until the first question is out), penalties included.
+export const debateLeft=(st,now)=>st.t0===null?MINI.debate.ms:Math.max(0,MINI.debate.ms-st.lost-(now-st.t0));
+export const debateDone=(st,now)=>st.idx>=DUEL.maxPicks||(st.t0!==null&&debateLeft(st,now)<=0);
+// The question on screen: the first call starts the clock (the browser has shown its countdown before asking).
+// Asked again before an answer, the same question comes back and its clock is not reset. null when it is over.
+export function debateReveal(st,now){
+ if(st.t0===null)st.t0=now;
+ if(debateDone(st,now))return null;
+ if(st.shownAt===null)st.shownAt=now;
+ const {i,order}=debateRound(st),q=debatePool(st.count)[i];
+ return {idx:st.idx,text:q[0],answers:order.map(j=>q[1+j]),leftMs:debateLeft(st,now)};
+}
+// An answer (0-2, in the order shown) to the question on screen. idx (optional): the question it answers; another
+// one (a retried request) changes nothing. Too fast an answer is ignored and remembered; one after the whistle
+// does not count. Returns null when there is nothing to answer (bad choice, no question shown).
+export function debateAnswer(st,choice,now,idx){
+ if(!Number.isInteger(choice)||choice<0||choice>2)return null;
+ const out=x=>({...x,points:st.points,errors:st.errors,leftMs:debateLeft(st,now),done:debateDone(st,now)});
+ if(debateDone(st,now))return out({right:null,late:true});
+ if(st.shownAt===null)return null;
+ if(idx!==undefined&&idx!==null&&idx!==st.idx)return out({right:null,stale:true});
+ const react=now-st.shownAt;
+ if(react<DEBATE.minReact){st.fast++;return out({right:null,ignored:true});}
+ const kind=ANSWER_KINDS[debateRound(st).order[choice]],right=kind===st.camp;
+ if(right)st.points++;else{st.errors++;st.lost+=DEBATE.penalty;}
+ st.gaps.push(Math.round(react));st.idx++;st.shownAt=null;
+ return out(right?{right}:{right,miss:kind==="decoy"?"decoy":"opponent"});
+}
+// The score (at most maxPoints) and what looks scripted: no error over a long game, answers at a metronome's
+// pace, a median answer time no human holds, answers faster than anyone reads, more right answers than the cap.
+export function debateResult(st){
+ const g=st.gaps,n=g.length,flags=[];
+ if(st.errors===0&&st.points>=DEBATE.zeroErrors)flags.push("zero_erreur");
+ if(n>=DEBATE.regularMin&&st.points>=DEBATE.regularPoints){const m=g.reduce((a,b)=>a+b,0)/n,sd=Math.sqrt(g.reduce((a,b)=>a+(b-m)**2,0)/n);if(!(m>0)||sd/m<DEBATE.regularCv)flags.push("rythme_regulier");}
+ if(n>=DEBATE.reflexMin){const s=[...g].sort((a,b)=>a-b);if(s[n>>1]<DEBATE.reflexMs)flags.push("reflexe");}
+ if(st.fast)flags.push("trop_rapide");
+ if(st.points>DEBATE.maxPoints)flags.push("plafond");
+ return {points:Math.min(st.points,DEBATE.maxPoints),errors:st.errors,flags};
+}
+// A solo debate is over (or its time ran out): the server pays its score, like the other games' miniEnd. The turn
+// must be the one S.mini opened (same id); the game is consumed. The result carries the audit (hidden).
+export function debateFinish(S,st,{now,speed=1,random=Math.random}={}){
+ advance(S,now,speed,random);
+ if(!S.mini||S.mini.k!=="debate"||!st||typeof S.mini.id!=="string"||S.mini.id!==st.id)return fail("Aucune partie en cours.");
+ const cfg=MINI.debate,secs=(now-S.mini.t)/1000,{points:sc,errors,flags}=debateResult(st);S.mini=null;
+ const bonus=Math.min(cfg.bonusCap,Math.floor(sc*cfg.bonusRate));addXp(S,bonus);
+ log(S,"mini",`Débat chrono : ${sc} argument${sc>1?"s":""} dans la ligne, bonus d'éloquence +${bonus} XP.`,
+  {game:"debate",score:sc,bonus,great:sc>=cfg.great&&!flags.length&&!greatAnnounced(S)});
+ return hidden(done({bonus,game:"debate",score:sc,errors}),"audit",{game:"debate",score:sc,secs:Math.round(secs*10)/10,errors,flags});
+}
 // Why this candidate cannot play a duel right now ("" when he can).
 export function duelBlock(S,minLevel=DUEL.minLevel){
  if(isNight(S))return "Chut, il dort.";
@@ -595,18 +700,19 @@ export function duelBlock(S,minLevel=DUEL.minLevel){
  if(S.lvl<minLevel)return `Les duels s'ouvrent au niveau ${minLevel}.`;
  return "";
 }
-// A duel's outcome on one candidate: "win" (its XP only when paid), "loss", "tie", or "chicken" (the challenged
+// A duel's outcome on one candidate: "win" (XP, moral and energy only when paid), "loss", "tie", or "chicken" (the challenged
 // player refused or let it expire). The text says what really changed, after the level and gauge floors.
 export function duelApply(S,res,{vs="?",mine=0,theirs=0,paid=true}={}){
  const before={xp:S.xp,moral:S.moral,energy:S.energy};
  const lower=(k,v)=>{if(S[k]>DUEL.floor)S[k]=Math.max(DUEL.floor,S[k]+v);};
- if(res==="win"){addXp(S,paid?DUEL.win.xp:0);S.moral=clamp(S.moral+DUEL.win.moral);S.energy=clamp(S.energy+DUEL.win.energy);}
+ // An unpaid win (over a daily cap) pays nothing at all: farming wins with a second account brings nothing.
+ if(res==="win"){if(paid){addXp(S,DUEL.win.xp);S.moral=clamp(S.moral+DUEL.win.moral);S.energy=clamp(S.energy+DUEL.win.energy);}}
  else if(res==="loss"){addXp(S,DUEL.loss.xp);lower("moral",DUEL.loss.moral);lower("energy",DUEL.loss.energy);}
  else if(res==="tie")S.moral=clamp(S.moral+DUEL.tie.moral);
  else if(res==="chicken")S.moral=clamp(S.moral+DUEL.chicken.moral);
  else return false;
  const dxp=Math.round(S.xp-before.xp),fx={moral:Math.round(S.moral-before.moral),energy:Math.round(S.energy-before.energy)};
- const parts=[dxp&&`${dxp>0?"+":"−"}${Math.abs(dxp)} XP`,fxText(Object.fromEntries(Object.entries(fx).filter(([,v])=>v)))].filter(Boolean).join(", ")||"rien ne bouge";
+ const parts=[dxp&&`${dxp>0?"+":"−"}${Math.abs(dxp)} XP`,fxText(Object.fromEntries(Object.entries(fx).filter(([,v])=>v)))].filter(Boolean).join(", ")||(res==="win"&&!paid?"plus de gain aujourd'hui, rien ne bouge":"rien ne bouge");
  const text=res==="win"?`Duel gagné contre ${vs} au Débat chrono, ${mine} à ${theirs} : ${parts}.`
   :res==="loss"?`Duel perdu contre ${vs} au Débat chrono, ${mine} à ${theirs} : ${parts}.`
   :res==="tie"?`Match nul contre ${vs} au Débat chrono, ${mine} partout : ${parts}.`

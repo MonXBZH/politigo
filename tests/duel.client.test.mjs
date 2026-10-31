@@ -1,5 +1,6 @@
-// Tests for the browser side of the duels: the timed debate of web/minigames.mjs, dealt from a seed, must record
-// picks that R.replayDebate scores exactly like the screen did (node --test, no server needed).
+// Tests for the browser side of the Débat chrono (solo and duel): web/minigames.mjs plays it against the server's
+// referee (POST /api/debate), here a stand-in built on the rules' own engine (R.debateReveal / debateAnswer), on the
+// game's clock. The game never holds a seed, a deck or which answer is right (node --test, no server needed).
 import {test} from "node:test";
 import assert from "node:assert/strict";
 import * as R from "../web/rules.mjs";
@@ -13,137 +14,123 @@ const fakeCtx=()=>new Proxy({},{
 });
 globalThis.document={createElement:()=>({width:0,height:0,getContext:()=>fakeCtx()})};
 const M=await import("../web/minigames.mjs");
+const tick=()=>new Promise(ok=>setImmediate(ok));
 
-const make=(seed,camp="left")=>M.createMini("debate",{p:{},camp,ctx:fakeCtx(),scale:()=>1,drawCand:()=>{},now:0,seed});
-// The answers on screen, as kinds, and the question index: what the player sees.
-const shown=g=>({i:g.q.i,kinds:g.q.answers.map(a=>a.k),texts:g.q.answers.map(a=>a.t)});
-// Plays a whole game with a seeded "player": fractional clock steps, picks too fast, picks after the whistle.
-function playGame(g,rand,{skill=.7,frame=16.7}={}){
- let now=0;
- while(!g.endT&&now<40000){
-  now+=frame*(0.5+rand());g.step(now,frame/1000);
-  if(rand()<.3){
-   const right=g.q.answers.findIndex(a=>a.k===g.camp),n=rand()<skill?right:Math.floor(rand()*3);
-   g.answer(n,now);
-  }
- }
- // A few late taps: they must change nothing.
- for(let k=0;k<5;k++){now+=300;g.answer(0,now);}
+// The referee, as the server runs it: one turn, the same reply shape as POST /api/debate. clock() is the game's.
+function referee(seed,camp,clock,{result=st=>({score:R.debateResult(st).points,bonus:R.debateResult(st).points}),lag=0}={}){
+ const st=R.debateNew(seed,camp,{now:0}),log=[];
+ const ask=async body=>{
+  log.push(body);await tick();const now=clock()+lag;
+  let a={};
+  if("choice" in body){a=R.debateAnswer(st,body.choice,now,body.idx);if(!a)return {ok:false,status:400,error:"Réponse invalide."};}
+  const done=R.debateDone(st,now),q=done?null:R.debateReveal(st,now);
+  return {ok:true,status:200,q,points:st.points,errors:st.errors,leftMs:R.debateLeft(st,now),done,...(a.right!==undefined?{right:a.right}:{}),
+   ...(a.miss?{miss:a.miss}:{}),...(a.ignored?{ignored:true}:{}),...(done?{result:result(st)}:{})};
+ };
+ return {st,ask,log};
+}
+const make=(o={})=>M.createMini("debate",{p:{},camp:"left",ctx:fakeCtx(),scale:()=>1,drawCand:()=>{},now:0,...o});
+// Runs the game frame by frame; answer(g,now) may tap. Each frame lets the pending reply land.
+async function drive(g,{frame=16.7,answer=()=>{},until=40000}={}){
+ let now=g.now;
+ while(!g.endT&&now<until){now+=frame;g.step(now,frame/1000);answer(g,now);await tick();await tick();}
  return now;
 }
+const rightIdx=(st,camp)=>R.debateRounds(R.seeded(st.seed),st.idx+1,st.count)[st.idx].order.indexOf(R.ANSWER_KINDS.indexOf(camp));
 
 test("QUESTIONS is the rules' list, kept for older imports",()=>{
  assert.equal(M.QUESTIONS,R.QUESTIONS);
 });
 
-test("same seed, same rounds; the answers follow debateRounds' order",()=>{
- const rounds=R.debateRounds(R.seeded(12345));
- const a=make(12345),b=make(12345);
- for(let k=0;k<30;k++){
-  assert.equal(a.picks.length,k);
-  const sa=shown(a),sb=shown(b),{i,order}=rounds[k];
-  assert.deepEqual(sa,sb,`round ${k}`);
-  assert.equal(sa.i,i);
-  assert.deepEqual(sa.kinds,order.map(j=>R.ANSWER_KINDS[j]));
-  assert.deepEqual(sa.texts,order.map(j=>R.QUESTIONS[i][1+j]));
-  const t=a.t0+k*400,n=a.q.answers.findIndex(x=>x.k==="left");a.answer(n,t);b.answer(n,t);   // no penalty: 30 rounds fit
- }
- const c=make(54321);
- assert.notDeepEqual([shown(c).i,shown(c).kinds],[shown(make(12345)).i,shown(make(12345)).kinds],"another seed deals another game (here)");
-});
-
-test("the replay of the recorded picks gives the score shown, for many seeded games",()=>{
- for(let s=1;s<=300;s++){
-  const seed=(s*2654435761)>>>0,camp=s%2?"left":"right",g=make(seed,camp),rand=R.seeded(s);
-  playGame(g,rand,{skill:[.2,.6,.95][s%3],frame:[8.3,16.7,33.4][s%3]});
-  const r=R.replayDebate(seed,camp,g.picks);
-  assert.ok(r,`seed ${seed}: replay accepted`);
-  assert.equal(r.points,g.score(),`seed ${seed}: points`);
-  assert.equal(r.errors,g.errors,`seed ${seed}: errors`);
-  assert.ok(g.picks.length<=R.DUEL.maxPicks);
-  for(let k=0;k<g.picks.length;k++){
-   const [n,t]=g.picks[k];
-   assert.ok(Number.isInteger(n)&&n>=0&&n<=2&&Number.isInteger(t)&&t>=0);
-   if(k)assert.ok(t-g.picks[k-1][1]>=R.DUEL.minGap,`seed ${seed}: gap at ${k}`);
-  }
- }
-});
-
-test("a pick on the final whistle, rounded, is judged as the replay judges it",()=>{
- const ms=R.MINI.debate.ms;
- // 14999.6 ms rounds to 15000: the replay would not count it, so the screen must not either.
- const g=make(99);g.answer(0,g.t0+ms-0.4);
- assert.equal(g.picks.length,0);assert.ok(g.endT,"the whistle went");
- const h=make(99);h.answer(0,h.t0+ms-0.6);
- assert.deepEqual(h.picks,[[0,ms-1]]);
- assert.equal(R.replayDebate(99,"left",h.picks).points,h.score());
- // Penalties shorten the game the same way.
- const p=make(7),wrong=()=>p.q.answers.findIndex(a=>a.k!=="left");
- p.answer(wrong(),p.t0+100);p.answer(wrong(),p.t0+400);
- p.answer(0,p.t0+ms-2000);
- assert.equal(p.picks.length,2,"2 s of penalties: 13 s was the end");
- assert.deepEqual(R.replayDebate(7,"left",p.picks),{points:0,errors:2,last:400});
-});
-
-test("picks closer than the flash are ignored, and none before the countdown ends",()=>{
- const g=make(5);
- g.answer(0,g.t0-1);assert.equal(g.picks.length,0,"countdown");
- g.answer(0,g.t0+10);g.answer(1,g.t0+10+R.DEBATE.flash-1);
- assert.equal(g.picks.length,1);
- g.answer(1,g.t0+10+R.DEBATE.flash);assert.equal(g.picks.length,2);
- assert.ok(R.replayDebate(5,"left",g.picks));
-});
-
-test("the game stops at DUEL.maxPicks",()=>{
- // Only reachable with a forged clock; the cap keeps a replayable list anyway.
- const ms=R.MINI.debate.ms,step=R.DEBATE.flash;
- R.MINI.debate.ms=1e9;
- let g;try{g=make(3);}finally{R.MINI.debate.ms=ms;}
- const right=()=>g.q.answers.findIndex(a=>a.k==="left");
- for(let k=0;k<R.DUEL.maxPicks+10;k++)g.answer(right(),g.t0+k*step);
- assert.equal(g.picks.length,R.DUEL.maxPicks);assert.ok(g.endT);
-});
-
-test("a solo debate deals from Math.random and still records its picks",()=>{
- const g=M.createMini("debate",{p:{},camp:"right",ctx:fakeCtx(),scale:()=>1,drawCand:()=>{},now:0});
+test("the countdown first, then the first question asked for; nothing about the deck on the client",async()=>{
+ let clock=0;const ref=referee(42,"left",()=>clock),g=make({ask:ref.ask});
+ for(const k of ["seed","picks","rounds"])assert.ok(g[k]==null||k==="seed",k);
  assert.equal(g.seed,null);
- playGame(g,R.seeded(1));
- assert.ok(g.picks.length>0);assert.ok(g.score()>=0);
+ clock=R.DEBATE.intro-1;g.step(clock,.016);await tick();assert.equal(ref.log.length,0,"no request during the countdown");
+ g.answer(0,clock);assert.equal(ref.log.length,0,"no answer during the countdown");
+ clock=R.DEBATE.intro;g.step(clock,.016);
+ assert.deepEqual(ref.log,[{}]);
+ await tick();await tick();
+ assert.ok(g.q&&typeof g.q.text==="string"&&g.q.answers.length===3);
+ assert.ok(g.q.answers.every(a=>typeof a==="string"),"labels only, no kinds");
+ assert.equal(ref.st.t0,R.DEBATE.intro,"the server's clock starts with the first question");
 });
 
-test("the result panel promises XP in a solo game, not in a duel",()=>{
- for(const [seed,xp] of [[undefined,true],[42,false]]){
-  const g=M.createMini("debate",{p:{},camp:"left",ctx:fakeCtx(),scale:()=>1,drawCand:()=>{},now:0,seed});
-  g.abort(g.t0+1000);
-  texts.length=0;g.draw(g.endT+600);
-  const all=texts.join(" | ");
-  assert.equal(/XP d'éloquence/.test(all),xp,all);
-  assert.equal(/arbitre/.test(all),!xp,all);
+test("answers go by index with the question's idx, one at a time; the score is the referee's",async()=>{
+ let clock=0;const ref=referee(7,"left",()=>clock),g=make({ask:ref.ask});
+ await drive(g,{until:R.DEBATE.intro+50,answer:(g,now)=>{clock=now;}});await tick();await tick();clock=g.now;
+ // Right answers, 700 ms apart (a human pace): each is counted.
+ for(let k=0;k<5;k++){
+  clock+=700;g.step(clock,.016);const n=rightIdx(ref.st,"left");
+  g.answer(n,clock);g.answer((n+1)%3,clock+1);   // a second tap while the verdict is on its way is dropped
+  await tick();await tick();
  }
+ assert.equal(ref.st.points,5);assert.equal(g.points,5);assert.equal(g.score(),5);
+ const answers=ref.log.filter(b=>"choice" in b);
+ assert.equal(answers.length,5);assert.deepEqual(answers.map(b=>b.idx),[0,1,2,3,4]);
+ // A wrong one costs the second on the clock shown too.
+ clock+=700;g.step(clock,.016);const left0=g.endAt;g.answer((rightIdx(ref.st,"left")+1)%3,clock);await tick();await tick();
+ assert.equal(g.errors,1);assert.equal(g.flashOk,false);assert.ok(g.endAt<=left0-R.DEBATE.penalty+1);
 });
 
-// Halloween: a solo debate in costume deals from a bigger deck, a duel never does (the server replays R.QUESTIONS),
-// and the Manif games only change their drawings.
+test("the clock up on screen asks for the verdict; the end screen shows the referee's result",async()=>{
+ let clock=0;const ref=referee(9,"right",()=>clock,{result:()=>({score:3,bonus:3,game:"debate"})}),g=make({ask:ref.ask,camp:"right"});
+ const end=await drive(g,{answer:(g,now)=>{clock=now;}});
+ assert.ok(g.endT,"over");assert.ok(end>=R.DEBATE.intro+R.MINI.debate.ms,"not before the 15 s");
+ assert.deepEqual(g.result,{score:3,bonus:3,game:"debate"});
+ texts.length=0;g.draw(g.endT+600);
+ assert.match(texts.join(" | "),/\+3 XP d'éloquence/);
+});
+
+test("a duel's end screen tells the outcome; a solo one the XP; a game given up waits for the referee",async()=>{
+ for(const [duel,res,re] of [[true,{res:"win",mine:9,theirs:4},/Victoire 9 à 4/],[true,{res:"loss",mine:2,theirs:4},/Défaite 2 à 4/],
+  [true,{res:"tie",mine:4,theirs:4},/Match nul, 4 partout/],[true,{res:null,mine:5,score:5},/24 h/],[false,{score:2,bonus:2},/\+2 XP/]]){
+  let clock=0;const ref=referee(3,"left",()=>clock,{result:()=>res}),g=make({ask:ref.ask,duel});
+  await drive(g,{answer:(g,now)=>{clock=now;}});
+  texts.length=0;g.draw(g.endT+600);const all=texts.join(" | ");
+  assert.match(all,re,all);assert.equal(/Fin du duel/.test(all),duel);
+ }
+ const g=make({ask:()=>new Promise(()=>{})});g.abort(2000);
+ texts.length=0;g.draw(g.endT+600);assert.match(texts.join(" | "),/fin du temps/);
+});
+
+test("a refused request ends the game (the referee closed it); answers too fast are ignored and said",async()=>{
+ const g=make({ask:async()=>({ok:false,status:422,error:"Aucune partie en cours."})});
+ await drive(g,{until:3000});assert.ok(g.endT);assert.equal(g.failed,true);
+ texts.length=0;g.draw(g.endT+600);assert.match(texts.join(" | "),/close par l'arbitre/);
+ let clock=0;const ref=referee(5,"left",()=>clock),h=make({ask:ref.ask});
+ await drive(h,{until:R.DEBATE.intro+20,answer:(g,now)=>{clock=now;}});await tick();await tick();clock=h.now;
+ clock+=300;h.step(clock,.016);h.answer(rightIdx(ref.st,"left"),clock);await tick();await tick();
+ assert.equal(ref.st.fast,1);assert.equal(h.points,0);assert.equal(h.q.idx,0,"same question");
+});
+
+test("same seed, same game for both duellists: the server deals, the clients only show",async()=>{
+ const shown=[];
+ for(let k=0;k<2;k++){
+  let clock=0;const ref=referee(12345,"left",()=>clock),g=make({ask:ref.ask,duel:true}),qs=[];
+  await drive(g,{answer:(g,now)=>{clock=now;if(g.q&&qs.at(-1)!==g.q.text)qs.push(g.q.text);if(!g.wait&&now%800<17)g.answer(rightIdx(ref.st,"left"),now);}});
+  shown.push(qs);
+ }
+ assert.ok(shown[0].length>3);assert.deepEqual(shown[0],shown[1]);
+});
+
+// Halloween: the costume changes the drawings only; the Manif games play the same from the same seed.
 const makeKey=(key,o={})=>M.createMini(key,{p:{},camp:"left",ctx:fakeCtx(),scale:()=>1,drawCand:()=>{},now:0,...o});
-test("Halloween: a solo debate can deal a costume question, a plain one never does",()=>{
- const hq=new Set(R.HALLOWEEN.questions.map(q=>q[0]));let seen=false;
- for(let k=0;k<20&&!seen;k++){const g=makeKey("debate",{season:"halloween"});for(let n=0;n<R.DUEL.maxPicks&&!g.endT&&!seen;n++){if(hq.has(g.q.text))seen=true;g.answer(g.q.answers.findIndex(a=>a.k==="left"),g.t0+n*400);}}
- assert.ok(seen);
- const g=makeKey("debate");for(let n=0;n<R.DUEL.maxPicks&&!g.endT;n++){assert.ok(!hq.has(g.q.text));g.answer(0,g.t0+n*400);}
-});
-test("Halloween: a duel deals and records exactly the same with or without the costume",()=>{
- for(const seed of [1,42,12345,987654321]){
-  const a=makeKey("debate",{seed}),b=makeKey("debate",{seed,season:"halloween"});
-  for(let n=0;n<R.DUEL.maxPicks;n++){assert.deepEqual([b.q.i,b.q.text,b.q.answers],[a.q.i,a.q.text,a.q.answers]);const t=a.t0+n*400,x=a.q.answers.findIndex(q=>q.k==="left");a.answer(x,t);b.answer(x,t);if(a.endT)break;}
-  assert.deepEqual(b.picks,a.picks);
- }
-});
 test("Halloween: the Manif games play the same in costume, and every drawing runs",()=>{
  for(const key of ["cortege","epervier"]){
-  const run=season=>{const r0=Math.random;Math.random=R.seeded(7);try{const g=makeKey(key,{season,camp:key==="cortege"?"left":"right"});g.target=[300,300];let now=0;
+  const run=season=>{const g=makeKey(key,{season,seed:7,camp:key==="cortege"?"left":"right"});g.target=[300,300];let now=0;
    for(let f=0;f<2400;f++){now+=16.7;g.step(now,.0167);if(f%7===0)g.target=[150+(f*13)%170,200+(f*29)%200];if(f%300===0)g.special?.(now);g.draw(now);}
-   g.draw(now+1000);return JSON.stringify([g.score(),g.hp,g.endT,g.x,g.y,Math.random()]);}finally{Math.random=r0;}};
+   g.draw(now+1000);return JSON.stringify([g.score(),g.hp,g.endT,g.x,g.y,g.rand()]);};
   assert.equal(run("halloween"),run(""),key);
  }
- const d=makeKey("debate",{season:"halloween"});d.draw(0);d.draw(5000);d.abort(6000);d.draw(7000);
+ const d=makeKey("debate",{season:"halloween",ask:()=>new Promise(()=>{})});d.draw(0);d.draw(5000);d.abort(6000);d.draw(7000);
+});
+test("the Manif games are dealt by the server's seed: same seed, same game; Math.random is never used",()=>{
+ for(const key of ["cortege","epervier"]){
+  const run=seed=>{const g=makeKey(key,{seed});g.target=[300,300];let now=0;
+   for(let f=0;f<1800;f++){now+=16.7;g.step(now,.0167);if(f%11===0)g.target=[150+(f*17)%170,200+(f*23)%200];}
+   return JSON.stringify([g.score(),g.hp,g.x,g.y,g.items?.length,g.prot?.length,g.wave]);};
+  const r0=Math.random;Math.random=()=>{throw new Error("Math.random in a seeded game");};
+  try{assert.equal(run(11),run(11),key);assert.notEqual(run(11),run(12),key);}finally{Math.random=r0;}
+ }
 });
