@@ -429,7 +429,10 @@ export function createChat({api,sheet,getCamp,getTz,onBadge,reduced,onClosed=()=
  // ---------- keyboard on phones: the sheet follows the visual viewport, so the composer stays above it ----------
  const vv=window.visualViewport;
  function fit(){if(!vv||!shown)return;sheet.style.setProperty("--vvh",`${vv.height}px`);sheet.style.setProperty("--vvt",`${vv.offsetTop}px`);if(pinned)toBottom();}
- vv?.addEventListener("resize",fit);vv?.addEventListener("scroll",fit);
+ vv?.addEventListener("resize",fit);vv?.addEventListener("scroll",fit);addEventListener("resize",fit);
+ // iOS reports the keyboard's height late, and some keyboards only once their animation ends: measured again a few times.
+ ta.addEventListener("focus",()=>{for(const ms of [50,300,600])setTimeout(fit,ms);});
+ ta.addEventListener("blur",()=>{setTimeout(fit,300);});
 
  return {
   // Called by renderSheet("chat"): the same DOM every time, so a draft survives closing the sheet.

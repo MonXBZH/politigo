@@ -967,7 +967,16 @@ function armedButton(label,armedLabel,cls,onConfirm){
 // What a sheet's content depends on: when this changes while it is open, the sheet is redrawn in place.
 const sheetSig=()=>[S.fm,curIdx(),R.actsToday(S),R.actsThisVisit(S),S.energy<20,S.coffees,S.breadIdx,S.lvl,S.best,S.equipped[person().name]||0,isAsleep(),S.camp,!rematchBlock(),season(),S.treatDay].join("|");
 let shownSig="";
-function setBackgroundInert(on){for(const el of document.querySelectorAll(".topbar,.app,footer"))el.inert=on;}
+function setBackgroundInert(on){for(const el of document.querySelectorAll(".topbar,.app,footer"))el.inert=on;lockScroll(on);}
+// The page behind an open sheet does not move: a swipe that reaches the end of a list (the chat) no longer scrolls the
+// game underneath, and iOS cannot pan it when the keyboard comes up. The body is pinned where it was (position: fixed
+// at minus the scroll), and put back on close.
+let lockedY=null;
+function lockScroll(on){
+ const b=document.body;
+ if(on&&lockedY===null){lockedY=scrollY;b.style.top=`-${lockedY}px`;document.documentElement.classList.add("sheet-open");}
+ else if(!on&&lockedY!==null){document.documentElement.classList.remove("sheet-open");b.style.removeProperty("top");scrollTo(0,lockedY);lockedY=null;}
+}
 // An open sheet takes a history entry, so the phone's Back button closes it instead of leaving the game.
 // history.back() is asynchronous: the popstate it causes is ours, and must not close a sheet reopened meanwhile.
 let sheetInHistory=false,pendingBack=false;

@@ -180,7 +180,7 @@ async function render(){
  try{
   const nodes=await fn(arg);
   if(seq!==renderSeq)return;   // a newer navigation won the race
-  view.replaceChildren(...[nodes].flat());
+  view.replaceChildren(...[nodes].flat(Infinity).filter(x=>x!=null&&x!==false));   // an absent block (null, false) is not text
  }catch(e){
   if(e instanceof Unauthorized||seq!==renderSeq)return;
   view.replaceChildren(h("div",{class:"card"},h("h2",{},"Impossible de charger"),h("p",{class:"err"},e.message),h("button",{class:"btn",type:"button",onclick:render},"Réessayer")));
@@ -501,23 +501,58 @@ async function showMedia(btn,media){
  btn.replaceWith(h("img",{class:"reported",src:`data:${r.type};base64,${r.data}`,alt:"Image signalée",referrerPolicy:"no-referrer"}));
 }
 const ROOM={global:"salon Tous",left:"salon Gauche",right:"salon Droite"};
+// Reported messages first, then every room at once (both camps included), refreshed every 10 s: the newest at the bottom,
+// older ones on demand. Delete and mute when allowed, never on one's own messages.
+const ROOM_FILTER=[["","Tous les salons"],["global","Pour tous"],["left","Gauche"],["right","Droite"]];
+let chatRoom="";
+function chatActions(m,after){
+ if(isMe(m.authorId))return null;
+ const author=who(m.author),target=m.authorId!=null?{id:m.authorId}:{name:author};
+ const hrs=h("select",{class:"inline","aria-label":"Durée"},[[24,"24 h"],[72,"3 jours"],[168,"7 jours"],[720,"30 jours"]].map(([v,t])=>h("option",{value:v},t)));
+ const del=can("chat-delete")&&h("button",{class:"btn small danger",type:"button",onclick:e=>{const b=e.currentTarget;confirmBox("Supprimer ce message ?","Il disparaît des écrans de tous les joueurs.","Supprimer").then(ok=>ok&&act(b,()=>call("chat-delete",{id:m.id}),"Message supprimé.",after));}},"Supprimer");
+ const mute=can("chat-mute")&&[hrs,h("button",{class:"btn small danger",type:"button",onclick:e=>{const b=e.currentTarget;confirmBox(`Couper le chat de ${author} ?`,`${author} ne pourra plus écrire pendant ${hrs.selectedOptions[0].textContent}.`,"Couper").then(ok=>ok&&act(b,()=>call("chat-mute",{...target,hours:+hrs.value}),"Chat de l'auteur coupé.",after));}},"Couper son chat")];
+ return del||mute?h("div",{class:"btn-row"},del,mute):null;
+}
+const mediaBtn=m=>m.media?h("button",{class:"btn small",type:"button",onclick:e=>act(e.currentTarget,()=>showMedia(e.currentTarget,m.media),null,null)},`Voir l'image (${m.media.type||"image"})`):null;
+const authorLink=m=>sees("joueurs")&&m.authorId!=null?h("a",{href:`#joueurs/${m.authorId}`},h("b",{},who(m.author))):h("b",{},who(m.author));
 async function viewChat(){
  const [{items},st]=await Promise.all([call("chat-reports"),call("stats")]);
- const closed=st.chatRooms&&!st.chatRooms.global&&!st.chatRooms.camp;
- return [head("Chat · messages signalés",refreshBtn()),
-  closed?h("div",{class:"card notice"},h("b",{},"Le chat est fermé : "),"les signalements restent consultables. ",owner()?h("a",{href:"#reglages"},"Réglages →"):null):null,items.length?h("div",{class:"list"},items.map(m=>{
-  const author=who(m.author),hrs=h("select",{"aria-label":"Durée"},[[24,"24 h"],[72,"3 jours"],[168,"7 jours"],[720,"30 jours"]].map(([v,t])=>h("option",{value:v},t)));
-  const target=m.authorId!=null?{id:m.authorId}:{name:author};
-  return h("div",{class:"card"},
-   h("div",{class:"btn-row"},h("b",{},author),h("span",{class:`badge ${m.room==="global"?"":m.room}`},ROOM[m.room]||m.room),
-    h("span",{class:"badge bad"},`${m.reports} signalement${m.reports>1?"s":""}`),h("span",{class:"muted small"},fmt(m.t))),
-   h("p",{class:"wrap msg"},m.text||(m.media?"":"(vide)")),
-   m.media?h("button",{class:"btn small",type:"button",onclick:e=>act(e.currentTarget,()=>showMedia(e.currentTarget,m.media),null,null)},`Voir l'image jointe (${m.media.type||"image"})`):null,
-   h("p",{class:"muted small"},`Signalé par : ${(m.reporters||[]).join(", ")||"—"}`),
-   h("div",{class:"btn-row"},
-    can("chat-delete")&&h("button",{class:"btn small danger",type:"button",onclick:e=>{const b=e.currentTarget;confirmBox("Supprimer ce message ?","Il disparaît des écrans de tous les joueurs.","Supprimer").then(ok=>ok&&act(b,()=>call("chat-delete",{id:m.id}),"Message supprimé."));}},"Supprimer le message"),
-    can("chat-mute")&&hrs,can("chat-mute")&&h("button",{class:"btn small danger",type:"button",onclick:e=>{const b=e.currentTarget;confirmBox(`Couper le chat de ${author} ?`,`${author} ne pourra plus écrire pendant ${hrs.selectedOptions[0].textContent}.`,"Couper").then(ok=>ok&&act(b,()=>call("chat-mute",{...target,hours:+hrs.value}),"Chat de l'auteur coupé."));}},"Couper le chat de l'auteur")));
- })):h("div",{class:"card"},empty("Aucun message signalé."))];
+ const rooms=st.chatRooms||{},state=(on,label)=>h("span",{class:`badge ${on?"good":""}`},`${label} : ${on?"ouvert":"fermé"}`);
+ // The live feed: drawn once, then topped up in place (the scroll position stays where the reader left it).
+ const box=h("ol",{class:"chat-feed","aria-live":"off"}),more=h("button",{class:"btn small",type:"button"},"Messages plus anciens");
+ let msgs=[],full=false;
+ const atBottom=()=>box.scrollHeight-box.scrollTop-box.clientHeight<40;
+ const row=m=>h("li",{class:`chat-line${m.reports?" reported":""}`},
+  h("div",{class:"btn-row"},h("span",{class:"muted small nowrap"},fmt(m.t)),h("span",{class:`badge ${m.room==="global"?"":m.room}`},ROOM[m.room]||m.room),authorLink(m),
+   m.reports?h("span",{class:"badge bad"},`${m.reports} signalement${m.reports>1?"s":""}`):null),
+  m.text?h("p",{class:"wrap msg"},m.text):null,mediaBtn(m),chatActions(m,()=>load(true)));
+ const draw=(stick)=>{const keep=box.scrollHeight-box.scrollTop;box.replaceChildren(...(msgs.length?msgs.map(row):[h("li",{class:"empty"},"Aucun message.")]));
+  // The first drawing happens before the box is on the page: the scroll is set once it is laid out.
+  const place=()=>{box.scrollTop=stick?box.scrollHeight:box.scrollHeight-keep;};place();if(!box.isConnected)requestAnimationFrame(place);
+  more.hidden=full||!msgs.length;};
+ async function load(reset=false,older=false){
+  const r=await call("chat-feed",{limit:100,room:chatRoom,...(older&&msgs.length?{before:msgs[0].id}:{})});
+  const stick=!older&&(reset||atBottom());
+  if(older){full=r.items.length<100;msgs=[...r.items,...msgs];}
+  else if(reset)msgs=r.items;
+  else{const min=r.items[0]?.id??Infinity;msgs=[...msgs.filter(m=>m.id<min),...r.items];}   // the latest page replaces what it covers: deletions show
+  draw(stick);
+ }
+ more.addEventListener("click",e=>act(e.currentTarget,()=>load(false,true),null,null));
+ const filter=h("select",{class:"inline","aria-label":"Salon",onchange:e=>{chatRoom=e.target.value;full=false;load(true).catch(fail);}},ROOM_FILTER.map(([v,t])=>h("option",{value:v,selected:v===chatRoom},t)));
+ await load(true);
+ refreshT=setInterval(()=>{if(!document.hidden&&route().id==="chat")load().catch(()=>{});},10000);
+ return [head("Chat",h("span",{class:"muted small"},"actualisé toutes les 10 s"),refreshBtn()),
+  h("div",{class:"card"},h("h2",{},"Salons"),h("div",{class:"btn-row"},state(rooms.global,"Pour tous"),state(rooms.camp,"De camp (gauche et droite)"),
+   owner()?h("a",{class:"btn small",href:"#reglages"},"Ouvrir ou fermer →"):null)),
+  h("div",{class:"card"},h("h2",{},`Messages signalés (${items.length})`),
+   items.length?h("div",{class:"list"},items.map(m=>h("div",{class:"alert-item"},
+    h("div",{class:"btn-row"},authorLink(m),h("span",{class:`badge ${m.room==="global"?"":m.room}`},ROOM[m.room]||m.room),
+     h("span",{class:"badge bad"},`${m.reports} signalement${m.reports>1?"s":""}`),h("span",{class:"muted small"},fmt(m.t))),
+    h("p",{class:"wrap msg"},m.text||(m.media?"":"(vide)")),mediaBtn(m),
+    h("p",{class:"muted small"},`Signalé par : ${(m.reporters||[]).join(", ")||"—"}`),chatActions(m,render)))):empty("Aucun message signalé.")),
+  h("div",{class:"card"},h("div",{class:"btn-row"},h("h2",{},"Tous les messages"),filter),h("p",{class:"muted small"},"Tous les salons, les deux camps compris ; le plus récent en bas. Les messages restent 7 jours."),
+   more,box)];
 }
 
 // ===================================================================== Fil

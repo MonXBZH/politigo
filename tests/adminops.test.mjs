@@ -341,3 +341,24 @@ test("the admin log records every mutating command, never a password",async()=>{
  for(const x of items)assert.deepEqual(Object.keys(x).sort(),["actor","cmd","detail","t","target","via"]);assert.ok(items.every(x=>x.actor===null),"the owner and the command line: no moderator name");
  assert.equal((await ok({cmd:"audit",limit:2})).items.length,2);
 });
+
+test("chat-feed: every room at once, both camps, newest last, by room and page",async()=>{
+ await ok({cmd:"chat-set",global:true,camp:true});
+ // The invite code was regenerated earlier in this file: sign up with the current one.
+ await ok({cmd:"registrations-set",open:true});const invite=(await ok({cmd:"invite-get"})).invite;
+ const reg=async(name,camp)=>{const c=client(PORT),r=await c.call("POST","/api/register",{name,password:PW,invite,camp});assert.equal(r.status,201,JSON.stringify(r.json));return c;};
+ const g=await reg("Fil Gauche","left"),d=await reg("Fil Droite","right");
+ const say=async(c,room,text)=>assert.equal((await c.call("POST","/api/chat",{room,text})).status,200);
+ await say(g,"global","Bonjour à tous");await say(g,"camp","Entre nous, camarades");await say(d,"camp","Côté droit");await say(d,"global","Salut");
+ const all=(await ok({cmd:"chat-feed"})).items,mine=all.filter(m=>m.author.startsWith("Fil "));
+ assert.deepEqual(mine.map(m=>[m.room,m.text]),[["global","Bonjour à tous"],["left","Entre nous, camarades"],["right","Côté droit"],["global","Salut"]]);
+ assert.ok(all.every((m,i)=>!i||all[i-1].id<m.id),"newest last");
+ assert.equal(mine[2].camp,"right");assert.equal(mine[0].reports,0);assert.ok(Number.isInteger(mine[0].authorId));
+ assert.deepEqual((await ok({cmd:"chat-feed",room:"right"})).items.map(m=>m.text).filter(t=>t==="Côté droit"),["Côté droit"]);
+ assert.ok((await ok({cmd:"chat-feed",room:"right"})).items.every(m=>m.room==="right"));
+ const page=(await ok({cmd:"chat-feed",limit:2})).items;assert.equal(page.length,2);
+ const older=(await ok({cmd:"chat-feed",limit:2,before:page[0].id})).items;assert.ok(older.every(m=>m.id<page[0].id));
+ await ok({cmd:"chat-delete",id:mine[3].id});
+ assert.ok(!(await ok({cmd:"chat-feed"})).items.some(m=>m.id===mine[3].id),"a deleted message leaves the feed");
+ await ok({cmd:"chat-set",global:false,camp:false});
+});
