@@ -77,6 +77,8 @@ services:
   # this container's logs. Publish it only to your LAN, or behind your reverse proxy with HTTPS (see .env.example).
   # Behind Nginx Proxy Manager: POLITIGO_ADMIN_BIND=127.0.0.1 (or firewall port 8090) AND POLITIGO_ADMIN_PROXY_HOPS=1;
   # with the port still open to everyone, a direct client could fake X-Forwarded-For and dodge the per-address limit.
+  # Host facing the internet (VPS, public IP): NEVER keep 0.0.0.0 with a generated password; bind 127.0.0.1 and go
+  # through the reverse proxy with HTTPS, or firewall 8090 to your own addresses. The container warns at start.
   # Login limits: 5 failures per address and 30 in all per 15 min; under attack the global cap can lock you out for 15 min.
   admin:
     image: ${POLITIGO_IMAGES:-ghcr.io/monxbzh/politigo}-admin:${POLITIGO_TAG:-latest}

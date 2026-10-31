@@ -58,15 +58,17 @@ async function checkPass(pw,stored){
 }
 // The env password wins; otherwise a hash kept in the admin volume, created once from a generated password that is
 // printed once (only its hash is stored, so a copy of the volume does not reveal it).
-let PASS_HASH;
+let PASS_HASH,GENERATED=false;
 if(env.POLITIGO_ADMIN_PASSWORD){
  if([...env.POLITIGO_ADMIN_PASSWORD].length<12){console.error("POLITIGO_ADMIN_PASSWORD must be at least 12 characters: refusing to start.");process.exit(1);}
  PASS_HASH=await hashPass(env.POLITIGO_ADMIN_PASSWORD);
 }else{
  const file=join(DATA,"admin-pass");
  try{PASS_HASH=fs.readFileSync(file,"utf8").trim();}catch(e){if(e.code!=="ENOENT"){console.error(`reading ${file}: ${e.message}`);process.exit(1);}}
+ if(PASS_HASH)GENERATED=true;   // a generated password, kept from an earlier start
  if(PASS_HASH&&!PASS_HASH.startsWith("scrypt:")){console.error(`${file} is not a password hash: delete it and restart for a new password.`);process.exit(1);}
  if(!PASS_HASH){
+  GENERATED=true;
   const pw=generate();PASS_HASH=await hashPass(pw);let kept=true;
   try{fs.writeFileSync(file,PASS_HASH+"\n",{mode:0o600,flag:"wx"});}catch(e){kept=false;console.error(`cannot keep the admin password hash in ${file} (${e.message}): this password only lasts until the next restart.`);}
   console.log("==================================================================");
@@ -133,7 +135,7 @@ const CMDS={
  stats:[],list:[],player:WHO,signout:WHO,rename:[...WHO,"newName"],suspend:[...WHO,"on"],unlock:WHO,
  announce:["text","to","camp"],"schedule-list":[],"schedule-add":["text","target","kind","at","time","days","until"],
  "schedule-delete":["id"],"schedule-toggle":["id","enabled"],"announce-history":[],"feed-list":["limit"],"feed-delete":["id"],
- "duels-list":[],"duel-cancel":["id"],"invite-get":[],"invite-regenerate":[],"registrations-set":["open"],"event-set":["mode"],
+ "duels-list":[],"duel-cancel":["id"],"duels-suspects":[],"duel-annul":["id"],"invite-get":[],"invite-regenerate":[],"registrations-set":["open"],"event-set":["mode"],
  bots:[],"chat-reports":[],"chat-media":["id"],"chat-delete":["id"],"chat-mute":[...WHO,"hours"],"chat-set":["global","camp"],audit:["limit"],
 };
 const pick=(b,keys)=>Object.fromEntries(keys.filter(k=>b[k]!==undefined).map(k=>[k,b[k]]));
@@ -233,10 +235,10 @@ let health=null;
 const HEALTH_MS=env.ADMIN_HEALTH_CACHE_MS!=null?+env.ADMIN_HEALTH_CACHE_MS:10e3;   // tests shorten it
 async function route(req,res,path){
  if(req.method==="GET"){
-  // No auth, no secrets: which servers answer (a container healthcheck or an uptime probe).
+  // No auth, no secrets, not even the games' names: which server ids answer (a container healthcheck or an uptime probe).
   // Cached 10 s (the promise itself, so a burst of probes costs one round of calls): unauthenticated, it must not tie up the sockets.
   if(path==="/health"){
-   if(!health||health.t<Date.now()-HEALTH_MS)health={t:Date.now(),p:Promise.all(SERVERS.map(s=>status(s))).then(l=>({up:l.some(s=>s.up),servers:l.map(s=>({id:s.id,name:s.name,up:s.up}))}))};
+   if(!health||health.t<Date.now()-HEALTH_MS)health={t:Date.now(),p:Promise.all(SERVERS.map(s=>status(s))).then(l=>({up:l.some(s=>s.up),servers:l.map(s=>({id:s.id,up:s.up}))}))};
    const r=await health.p;
    return send(res,r.up?200:503,{ok:r.up,servers:r.servers});
   }
@@ -302,5 +304,16 @@ const server=http.createServer(async(req,res)=>{
  }
 });
 server.headersTimeout=15000;server.requestTimeout=60000;   // a backup download can take a moment
-server.listen(PORT,()=>console.log(`PolitiGo admin on :${PORT} (${SERVERS.map(s=>`${s.name||s.id}=${s.socket}`).join(", ")}${PROXY_HOPS?`, proxy hops ${PROXY_HOPS}`:""})`));
+const HOST=env.ADMIN_HOST||"0.0.0.0";
+server.listen(PORT,HOST,()=>{
+ // The owner wants LAN access (0.0.0.0 by default), but a generated password on an open address deserves a loud reminder.
+ if(GENERATED&&!/^(127\.|::1$|localhost$)/.test(HOST)){
+  console.warn("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+  console.warn(`WARNING: the admin page listens on ${HOST}:${PORT} with a GENERATED password (POLITIGO_ADMIN_PASSWORD is not set).`);
+  console.warn("Anyone who can reach this port can try it. Keep the published port on your LAN (POLITIGO_ADMIN_BIND, firewall),");
+  console.warn("never on a host facing the internet without a reverse proxy with HTTPS; or set your own long POLITIGO_ADMIN_PASSWORD.");
+  console.warn("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+ }
+ console.log(`PolitiGo admin on :${PORT} (${SERVERS.map(s=>`${s.name||s.id}=${s.socket}`).join(", ")}${PROXY_HOPS?`, proxy hops ${PROXY_HOPS}`:""})`);
+});
 for(const sig of ["SIGTERM","SIGINT"])process.on(sig,()=>{server.close();process.exit(0);});

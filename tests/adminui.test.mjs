@@ -140,6 +140,18 @@ test("chat rooms: closed by default, switched one by one through the admin, on t
  assert.deepEqual((await b.call("test-e","chat-set",{camp:false})).json.chat,{global:false,camp:false});
 });
 
+test("anti-cheat views: suspect duels, duel annulment and mini-game stats pass through the admin to the right server",async()=>{
+ const b=browser();await b.login();
+ const sus=await b.call("test-e","duels-suspects");
+ assert.equal(sus.status,200,JSON.stringify(sus.json));assert.ok(Array.isArray(sus.json.suspects));
+ const an=await b.call("test-e","duel-annul",{id:999999});
+ assert.equal(an.status,422,"reaches the API, which refuses an unknown duel");assert.ok(an.json.error);
+ const id=(await b.call("test-e","list")).json.players[0].id,pl=await b.call("test-e","player",{id});
+ assert.equal(pl.status,200);assert.equal(typeof pl.json.player.activity.games,"object","per-game stats for the player sheet");
+ const bots=await b.call("test-e","bots");assert.equal(bots.status,200);assert.ok(bots.json.items.every(r=>typeof r.games==="object"));
+ assert.equal((await b.call("test-e","duel-annul",{id:1,extra:"x"})).status,422,"extra fields are dropped, the command still runs");
+});
+
 test("backup: server 2's database is streamed as a SQLite file, then removed from its socket directory",async()=>{
  const b=browser();await b.login();
  const r=await b.req("/api/s/test-e/backup",{},{raw:true});
@@ -159,6 +171,7 @@ test("a generated password: printed once in the logs, only its hash kept, the si
  try{
   const pw=/Admin password \(generated, shown ONCE\): (\S+)/.exec(p.out)?.[1];
   assert.match(pw,/^[a-km-zA-HJ-NP-Z2-9]{18}$/);
+  assert.match(p.err,/WARNING: the admin page listens on 0\.0\.0\.0:\d+ with a GENERATED password/,"loud warning on an open address");
   const {readFileSync}=await import("node:fs"),stored=readFileSync(join(p.dataDir,"admin-pass"),"utf8");
   assert.match(stored,/^scrypt:/);assert.ok(!stored.includes(pw));
   const b=browser(ADMIN_GEN);assert.equal((await b.login(pw)).status,200);
@@ -183,6 +196,7 @@ test("health: 200 while one server answers, with each server's state; 503 when n
  await sleep(500);
  h=await fetch(`http://127.0.0.1:${ADMIN}/health`);
  assert.equal(h.status,200);const j=await h.json();
+ assert.ok(j.servers.every(s=>!("name" in s)),"no game names in the public health reply");
  assert.deepEqual(j.servers.map(s=>[s.id,s.up]),[["prod",true],["test-e",false]]);
  const b=browser();await b.login();
  const down=await b.call("test-e","stats");assert.equal(down.status,502);assert.match(down.json.error,/injoignable/i);

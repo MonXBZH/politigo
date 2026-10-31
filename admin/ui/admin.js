@@ -28,7 +28,7 @@ const dur=s=>{if(s==null)return "—";s=Math.floor(s);const d=Math.floor(s/86400
 const campBadge=c=>c?h("span",{class:`badge ${c}`},CAMP[c]||c):null;
 const who=a=>typeof a==="string"?a:a?.name??"?";
 // Raw values from the API, in French.
-const DUEL_STATUS={c_play:"le lanceur joue",pending:"en attente du défié",d_play:"le défié joue",done:"terminé",refused:"refusé",expired:"expiré",void:"annulé"};
+const DUEL_STATUS={c_play:"le lanceur joue",pending:"en attente du défié",d_play:"le défié joue",done:"terminé",refused:"refusé",expired:"expiré",void:"annulé",annulled:"annulé, gains rendus"};
 const DUEL_RES={win:"victoire",loss:"défaite",tie:"égalité",chicken:"refusé ou sans réponse"};
 const EVENT={halloween:"Halloween"};
 const VIA={cli:"console",web:"web",schedule:"planif."};
@@ -303,10 +303,12 @@ async function viewPlayer(id){
    h("div",{class:"card"},h("h2",{},"Partie"),kv(["Niveau",String(p.lvl??"—")],["XP",String(p.xp??"—")],["Score",String(p.score??"—")],["Fonds (FM)",String(p.fm??"—")],["Morts",String(p.deaths??"—")],
     ...GAUGES.map(([k,l])=>[l,p[k]==null?"—":String(Math.round(p[k]))])))),
   h("div",{class:"card"},h("h2",{},"Derniers duels"),p.duels?.length?h("div",{class:"table-wrap"},h("table",{},
-   h("thead",{},h("tr",{},["Date","Contre","Rôle","Statut","Résultat"].map(t=>h("th",{},t)))),
+   h("thead",{},h("tr",{},["Date","Contre","Rôle","Statut","Résultat","Signaux",""].map(t=>h("th",{},t)))),
    h("tbody",{},p.duels.map(d=>h("tr",{},h("td",{class:"nowrap"},fmt(d.created)),h("td",{},who(d.vs)),h("td",{},d.role==="challenger"?"lanceur":d.role==="defender"?"défié":d.role??"—"),
-    h("td",{},tr(DUEL_STATUS,d.status)),h("td",{},tr(DUEL_RES,d.res))))))):empty("Aucun duel.")),
-  h("div",{class:"card"},h("h2",{},"Activité (14 jours)"),p.activity?botReport(p.activity,false):empty("Pas de rapport d'activité.")),
+    h("td",{},tr(DUEL_STATUS,d.status)),h("td",{},tr(DUEL_RES,d.res)),h("td",{},flagBadges(d.flags)||"—"),
+    h("td",{},d.status==="done"&&d.id!=null?annulBtn({id:d.id,label:`${p.name} contre ${who(d.vs)}`}):null)))))):empty("Aucun duel.")),
+  p.games&&!p.activity?.games?h("div",{class:"card"},h("h2",{},"Mini-jeux (14 jours)"),gamesTable(p.games)):null,
+  h("div",{class:"card"},h("h2",{},"Activité et mini-jeux (14 jours)"),p.activity?botReport(p.activity,false):empty("Pas de rapport d'activité.")),
  ];
 }
 
@@ -437,11 +439,26 @@ async function viewFeed(){
 
 // ===================================================================== Duels
 async function viewDuels(){
- const {items}=await call("duels-list");
- return [head("Duels ouverts",refreshBtn()),h("div",{class:"card"},items.length?h("div",{class:"table-wrap"},h("table",{},
-  h("thead",{},h("tr",{},["Lancé","Lanceur","Défié","Statut","Expire",""].map(t=>h("th",{},t)))),
-  h("tbody",{},items.map(d=>h("tr",{},h("td",{class:"nowrap"},fmt(d.created)),h("td",{},who(d.challenger)),h("td",{},who(d.defender)),h("td",{},tr(DUEL_STATUS,d.status)),h("td",{class:"nowrap"},fmt(d.expires)),
-   h("td",{},h("button",{class:"btn small danger",type:"button",onclick:e=>{const b=e.currentTarget;confirmBox("Annuler ce duel ?",`${who(d.challenger)} contre ${who(d.defender)} : annulé sans effet sur les jauges.`,"Annuler le duel").then(ok=>ok&&act(b,()=>call("duel-cancel",{id:d.id}),"Duel annulé."));}},"Annuler"))))))):empty("Aucun duel ouvert."))];
+ const [{items},sus]=await Promise.all([call("duels-list"),call("duels-suspects").catch(e=>({error:e.message}))]);
+ const susItems=Array.isArray(sus.items)?sus.items:Array.isArray(sus.suspects)?sus.suspects:[];
+ const ids=x=>(Array.isArray(x.duels)?x.duels:[]).map(d=>typeof d==="object"?d:{id:d}).filter(d=>d.id!=null);
+ return [head("Duels",refreshBtn()),
+  h("div",{class:"card"},h("h2",{},"Duels ouverts"),items.length?h("div",{class:"table-wrap"},h("table",{},
+   h("thead",{},h("tr",{},["Lancé","Lanceur","Défié","Statut","Expire","Signaux",""].map(t=>h("th",{},t)))),
+   h("tbody",{},items.map(d=>h("tr",{},h("td",{class:"nowrap"},fmt(d.created)),h("td",{},who(d.challenger)),h("td",{},who(d.defender)),h("td",{},tr(DUEL_STATUS,d.status)),h("td",{class:"nowrap"},fmt(d.expires)),
+    h("td",{},flagBadges(d.flags)||"—"),
+    h("td",{},d.status==="done"?annulBtn({id:d.id,label:`${who(d.challenger)} contre ${who(d.defender)}`})
+     :h("button",{class:"btn small danger",type:"button",onclick:e=>{const b=e.currentTarget;confirmBox("Annuler ce duel ?",`${who(d.challenger)} contre ${who(d.defender)} : annulé sans effet sur les jauges.`,"Annuler le duel").then(ok=>ok&&act(b,()=>call("duel-cancel",{id:d.id}),"Duel annulé."));}},"Annuler")))))))
+   :empty("Aucun duel ouvert.")),
+  h("div",{class:"card"},h("h2",{},"Duels suspects"),
+   h("p",{class:"muted small"},"Indices de comptes multiples sur 30 jours : comptes créés à quelques minutes d'écart qui s'affrontent, tours synchronisés, toujours le même perdant. Un indice n'est pas une preuve : ouvre la fiche des joueurs pour annuler un duel terminé et rendre ses gains."),
+   sus.error?h("p",{class:"err"},sus.error):susItems.length?h("div",{class:"list"},susItems.map(x=>h("div",{class:"row"},h("span",{class:"grow"},
+    h("div",{},(Array.isArray(x.names)?x.names:[]).map((n,i)=>[i?" · ":"",Array.isArray(x.ids)&&x.ids[i]!=null?h("a",{href:`#joueurs/${x.ids[i]}`},h("b",{},String(n))):h("b",{},String(n))]),
+     typeof x.duels==="number"?h("span",{class:"muted small"},` — ${x.duels} duel${x.duels>1?"s":""} en 30 jours`):null),
+    Array.isArray(x.reasons)&&x.reasons.length?h("ul",{class:"reasons"},x.reasons.map(r=>h("li",{},String(r)))):null,
+    ids(x).length?h("div",{class:"btn-row"},ids(x).map(d=>[h("span",{class:"muted small"},`#${d.id}${d.status?` ${tr(DUEL_STATUS,d.status)}`:""}`),d.status==null||d.status==="done"?annulBtn(d):null])):null))))
+   :empty("Aucun duel suspect.")),
+ ];
 }
 
 // ===================================================================== Réglages
@@ -498,6 +515,36 @@ function bars(byHour){
  const wrap=h("div",{class:"bars",role:"img","aria-label":`Actions par heure : ${byHour.map((n,i)=>`${i} h ${n}`).join(", ")}`},byHour.map((n,i)=>{const b=h("i",{class:i>=1&&i<6?"night":"",title:`${i} h : ${n}`});b.style.height=`${n/max*100}%`;return b;}));
  return [wrap,h("div",{class:"hours","aria-hidden":"true"},byHour.map((_,i)=>h("span",{},i%3===0?String(i):"")))];
 }
+// ===================================================================== mini-games, flags, suspect duels (anti-cheat data)
+const GAME={debate:"Débat chrono",duel:"Duels",pong:"Pong",manif:"Cortège",cortege:"Cortège",epervier:"Épervier"};
+const FLAG={plafond:"au plafond",trop_rapide:"trop rapide",zero_erreur:"zéro erreur",rythme_regulier:"rythme régulier"};
+// Flags come as strings, as a {flag:count} tally (bot report), or per duel side ({side,name,flags}).
+const flagText=x=>typeof x==="string"?tr(FLAG,x):x&&typeof x==="object"&&Array.isArray(x.flags)?`${x.name??x.side??"?"} : ${x.flags.map(f=>tr(FLAG,f)).join(", ")}`:String(x);
+function flagBadges(f){
+ const list=Array.isArray(f)?f.map(flagText):f&&typeof f==="object"?Object.entries(f).map(([k,n])=>`${tr(FLAG,k)} ×${n}`):[];
+ return list.length?h("span",{class:"flags"},list.map(t=>h("span",{class:"badge bad"},t))):null;
+}
+const num=v=>typeof v==="number"&&Number.isFinite(v)?String(Math.round(v*10)/10):v==null?"—":String(v);
+// A histogram of scores, if the server sends one (array of counts): same CSSOM bars as the hours chart.
+function histo(counts,label){
+ if(counts&&!Array.isArray(counts))counts=counts.counts;   // {max,counts}: ten bins from 0 to the game's maximum
+ if(!Array.isArray(counts)||!counts.length||!counts.every(n=>typeof n==="number"))return null;
+ const max=Math.max(1,...counts);
+ return h("div",{class:"bars histo",role:"img","aria-label":`${label} : ${counts.join(", ")}`},counts.map((n,i)=>{const b=h("i",{title:`tranche ${i+1} : ${n}`});b.style.height=`${n/max*100}%`;return b;}));
+}
+function gamesTable(games){
+ const rows=games&&typeof games==="object"?Object.entries(games).filter(([,g])=>g&&typeof g==="object"):[];
+ if(!rows.length)return empty("Aucune partie enregistrée.");
+ return h("div",{class:"table-wrap"},h("table",{},
+  h("thead",{},h("tr",{},["Jeu","Parties","Moyenne","Max","Bonus max","Au plus tôt","Régularité (CV)","Scores"].map(t=>h("th",{},t)))),
+  h("tbody",{},rows.map(([k,g])=>h("tr",{},h("td",{},tr(GAME,k),flagBadges(g.flags)),h("td",{},num(g.n)),h("td",{},num(g.avg)),h("td",{},num(g.max)),
+   h("td",{class:g.capShare>=0.8?"hot":""},pct(g.capShare)),h("td",{class:g.fastShare>0.5?"hot":""},pct(g.fastShare)),h("td",{class:g.cv!=null&&g.cv<0.1&&g.n>=10?"hot":""},g.cv==null?"—":g.cv.toFixed(2)),
+   h("td",{},histo(g.hist,`Répartition des scores, ${tr(GAME,k)}`)||"—"))))));
+}
+const annulBtn=d=>h("button",{class:"btn small danger",type:"button",onclick:e=>{const b=e.currentTarget;
+ confirmBox("Annuler ce duel et rendre les gains ?",`Duel #${d.id}${d.label?` (${d.label})`:""} : ses gains d'XP, de moral et d'énergie sont repris aux deux joueurs, le résultat est effacé.`,"Annuler et rendre les gains")
+  .then(ok=>ok&&act(b,()=>call("duel-annul",{id:d.id}),"Duel annulé, gains rendus."));}},"Annuler ce duel (rendre les gains)");
+
 function botReport(r,withName=true){
  const lvl=r.score>=60?"bad":r.score>=30?"warn":"good";
  return h("div",{},
@@ -505,12 +552,14 @@ function botReport(r,withName=true){
   h("div",{class:"metrics"},[["sans écran ouvert",pct(r.noLiveShare)],["hors navigateur",pct(r.nonBrowserShare)],["la nuit (1 h-6 h)",pct(r.nightShare)],["écart médian",r.medianGapS==null?"—":`${Math.round(r.medianGapS)} s`],["régularité (CV)",r.gapCv==null?"—":r.gapCv.toFixed(2)]]
    .map(([k,v])=>h("span",{},`${k} : `,h("b",{},v)))),
   r.reasons?.length?h("ul",{class:"reasons"},r.reasons.map(x=>h("li",{},x))):null,
-  Array.isArray(r.byHour)&&r.byHour.length===24?bars(r.byHour):null);
+  Array.isArray(r.byHour)&&r.byHour.length===24?bars(r.byHour):null,
+  flagBadges(r.gameFlags),
+  r.games&&Object.keys(r.games).length?[h("h3",{class:"sub"},"Mini-jeux"),gamesTable(r.games)]:null);
 }
 async function viewBots(){
  const {items}=await call("bots");
  return [head("Détection de bots",refreshBtn()),
-  h("p",{class:"muted small"},"Indices sur 14 jours, jamais une preuve : actions sans écran ouvert (+35), hors navigateur (+35), la nuit (+15), rythme trop régulier (+15). Aucune adresse IP n'est conservée. Heures dans le fuseau du jeu."),
+  h("p",{class:"muted small"},"Indices sur 14 jours, jamais une preuve. Les mini-jeux pèsent le plus (résultats invraisemblables, bonus maximal presque à chaque partie, scores trop constants, parties envoyées au plus tôt permis), puis le client (hors navigateur, sans écran ouvert), la nuit et le rythme des actions. Le détail des points est dans chaque rapport. Aucune adresse IP n'est conservée. Heures dans le fuseau du jeu."),
   items.length?h("div",{class:"grid wide"},items.map(r=>h("div",{class:"card"},botReport(r)))):h("div",{class:"card"},empty("Aucune activité enregistrée."))];
 }
 

@@ -1,5 +1,8 @@
 # PolitiGo API: plain Node, no npm dependency, running as the unprivileged "node" user.
-FROM node:24-alpine
+# Pinned by digest (Dependabot proposes updates): a re-pushed tag cannot change what gets built.
+FROM node:24-alpine@sha256:8a32c8cf649a49915a66e81e7a609223c708d0adabf288ee3f4077d765542f85
+# Node's package managers are never used here (no npm dependency): removed, less code an intruder could run.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /opt/yarn*  /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/yarn /usr/local/bin/yarnpkg
 ENV NODE_ENV=production NODE_NO_WARNINGS=1 TZ=Europe/Paris PORT=3000 DB_PATH=/data/politigo.db
 WORKDIR /app
 COPY web/rules.mjs server/server.mjs server/admin.mjs server/push.mjs server/chat.mjs ./
