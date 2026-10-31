@@ -88,6 +88,7 @@ body.playing #screen{touch-action:none}
 .announce-bar>div{flex:1;min-width:0}
 .announce-bar b{color:var(--accent)}
 .announce-bar p{margin:4px 0 0;overflow-wrap:anywhere}
+.push-ask .btn{padding:8px 14px}
 .feed li.announce{color:#d6f5e4}
 
 /* panel */

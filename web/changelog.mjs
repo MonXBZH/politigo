@@ -10,7 +10,8 @@ export const CHANGELOG=[
    "Le chat s'ouvre seulement si l'organisateur de ta partie l'active, salon par salon : les joueurs ne peuvent pas l'activer eux-mêmes. Pas de touche Chat ? C'est qu'il est fermé pour le moment.",
    "Emojis à volonté, et images ou GIF : colle celui de ton clavier, ou envoie un fichier de 2 Mo maximum.",
    "Un message déplacé ? Signale-le en un geste. Tu peux aussi effacer les tiens. Les messages disparaissent au bout de 7 jours.",
-   "Pas de dérangement : une simple pastille compte les messages non lus, sans notification ni son, et rien ne s'affiche pendant un mini-jeu."
+   "Pas de dérangement : une simple pastille compte les messages non lus, sans notification ni son, et rien ne s'affiche pendant un mini-jeu.",
+   "Notifications de duel : quand tu lances un défi ou qu'un rival te défie, le jeu te propose de les activer en un geste. « Plus tard » le fait patienter une semaine, et l'interrupteur reste dans Dossier → Compte."
   ],
   changed:[
    "Débat chrono et duels : c'est désormais le serveur qui pose les questions une à une et chronomètre tes réponses. Rien ne change pour toi, mais une réponse donnée en moins de 0,6 s n'est plus comptée, et un débat rapporte 20 points au plus.",
