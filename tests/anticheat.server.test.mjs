@@ -291,3 +291,23 @@ test("chores purge closed duels past 30 days, old audits and tombstones; open du
  assert.equal(B.db.prepare("SELECT COUNT(*) n FROM mini_scores WHERE t<?").get(Date.now()-14*864e5).n,0);
  assert.equal(B.db.prepare("SELECT COUNT(*) n FROM tombstones WHERE name_key='vieux'").get().n,0);
 });
+
+test("alerts: flagged duels and suspect groups to review, filed away by alerts-ack on every console",async()=>{
+ const x=await player(A,"Alerte X"),y=await player(A,"Alerte Y","right");
+ const xid=idOf(A,"Alerte X"),yid=idOf(A,"Alerte Y"),now=Date.now();
+ const {lastInsertRowid}=A.db.prepare("INSERT INTO duels(game,challenger,defender,seed,status,created,flags) VALUES('debate',?,?,1,'done',?,?)")
+  .run(xid,yid,now,JSON.stringify([{side:"c",name:"Alerte X",flags:["reflexe"]}]));
+ const id=Number(lastInsertRowid);
+ let r=await ok(A,{cmd:"alerts"});
+ const d=r.items.find(i=>i.key===`duel:${id}`);
+ assert.ok(d,JSON.stringify(r.items.map(i=>i.key)));assert.equal(d.kind,"duel");assert.equal(d.ref,xid,"opens the flagged player's sheet");assert.equal(d.duel,id);assert.match(d.detail,/Alerte X \(reflexe\)/);
+ assert.ok(r.items.some(i=>i.kind==="suspect"&&i.title.includes("Alerte X")&&i.title.includes("Alerte Y")),"created together and dueling: a suspect group");
+ for(const i of r.items)assert.match(i.key,/^(chat|duel|bot|suspect):[0-9-]+$/);
+ assert.equal((await adm(A,{cmd:"alerts-ack",keys:["duel:1;DROP"]})).ok,false,"keys are checked");
+ assert.equal((await adm(A,{cmd:"alerts-ack",keys:[]})).ok,false);
+ assert.equal((await ok(A,{cmd:"alerts-ack",keys:[`duel:${id}`]})).acked,1);
+ r=await ok(A,{cmd:"alerts"});
+ assert.ok(!r.items.some(i=>i.key===`duel:${id}`),"filed away");assert.ok(r.acked>=1);
+ A.db.prepare("UPDATE duels SET status='annulled' WHERE id=?").run(id);
+ assert.ok(x&&y);
+});

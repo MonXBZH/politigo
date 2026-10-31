@@ -213,6 +213,11 @@ compose ; supprimer le bloc `admin` et ses volumes pour s'en passer, le jeu n'en
   d'intervalle, même perdant face au même gagnant, et joueur qui bat l'un après l'autre plusieurs rivaux qui ne jouent
   presque pas (une ferme de comptes). Chaque tour de duel compte aussi dans la détection de bots. Un duel terminé peut être **annulé** : XP, niveau, moral et énergie des deux
   joueurs reviennent à leur valeur d'avant le duel. Aucune adresse IP n'est enregistrée.
+- **À traiter** : sur tous les serveurs, vérifiés toutes les 20 s, les messages signalés du chat, les duels signalés par
+  l'anti-triche, les joueurs au score de bot de 50/100 ou plus et les groupes de duels suspects. Le nombre s'affiche dans
+  le menu et dans le titre de l'onglet, un son marque chaque nouvelle alerte, et une notification système s'affiche quand
+  la console est en arrière-plan. Cette notification n'est possible qu'en HTTPS (Nginx Proxy Manager) ou sur `localhost` :
+  les navigateurs la refusent en `http://IP-du-LAN`. « Vu » range une alerte pendant 30 jours, pour toutes les consoles.
 - **Journal d'admin** : chaque action d'administration (web, ligne de commande, annonce planifiée), sans mot de passe.
 
 **Plusieurs parties sur le même hôte Docker** : chaque pile a son propre socket d'administration. Monter le volume du socket
@@ -332,7 +337,7 @@ interdire la suppression et le force push, exiger une pull request (0 approbatio
 ## 6. Tests
 
 ```bash
-bash tests/run-server.sh                       # 338 tests : règles (dont l'équilibrage J15) + mini-jeux + test politique + changelog + API + duels + notifications + chat + migrations + outils et interface d'admin, dans l'image Node de production
+bash tests/run-server.sh                       # 341 tests : règles (dont l'équilibrage J15) + mini-jeux + test politique + changelog + API + duels + notifications + chat + migrations + outils et interface d'admin, dans l'image Node de production
 bash tests/run-server.sh tests/chat.test.mjs   # un seul fichier
 docker compose restart api                     # remet à zéro les limites d'inscription avant l'e2e
 powershell -ExecutionPolicy Bypass -File tests\e2e.ps1   # parcours complet dans Chrome (crée deux joueurs de test)

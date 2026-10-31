@@ -176,7 +176,7 @@ async function refuseDuel(x){const r=await send({op:"refuse",id:x.id},"/api/duel
 function duelDone(d,r){
  const [a,b]=[r.mine,r.theirs].map(v=>Number.isFinite(v)?v:0);
  if(d.role==="challenger"||!["win","loss","tie"].includes(r.res)){
-  toast(`Score de ${Number.isFinite(r.score)?r.score:a} envoyé : ${d.vs} a ${Math.round(R.DUEL.window/R.H)} h pour répondre.`);return;
+  toast(`Score de ${Number.isFinite(r.score)?r.score:a} envoyé : ${d.vs} a ${Math.round(R.DUEL.window/R.H)} h pour répondre.`);pushAsk();return;
  }
  const q=toastQ.findIndex(t=>/^(Duel gagné|Duel perdu|Match nul) contre /.test(t));
  if(q>=0)toast(toastQ.splice(q,1)[0],true);
@@ -783,6 +783,7 @@ function toast(text,now=false){
 const announceQ=[];
 function showAnnounce(){
  if(!announceQ.length||quiet()||scene||!$("#announce").hidden)return;
+ if(!$("#push-ask").hidden){$("#push-ask").hidden=true;pushAsked=false;pushAskWanted=true;}   // same spot: the announcement first, the invitation after
  $("#announce").hidden=false;$("#announce-text").textContent=announceQ.shift();   // shown first: screen readers hear the text land
 }
 $("#announce-close").addEventListener("click",()=>{$("#announce").hidden=true;showAnnounce();});
@@ -1185,7 +1186,7 @@ async function duelsLoad(){
  if(!S)return null;
  const seq=++duelSeq,who=me,r=await api("GET","/api/duels");
  if(seq!==duelSeq||!S||me!==who)return duelData;             // a newer load, or another player, won the race
- if(r.ok){duelData=r;duelErr="";pushSync(r.pushKey);}else duelErr=r.error;
+ if(r.ok){duelData=r;duelErr="";pushSync(r.pushKey);if(incoming().length)pushAsk();}else duelErr=r.error;
  refresh();
  if(sheetKind==="duels"||(r.ok&&(sheetKind==="play"||sheetKind==="more")))liveSheet(true);
  return duelData;
@@ -1269,7 +1270,7 @@ function duelEvent(v){
   void:`Le duel contre ${vs} est annulé.`};
  const text=Object.hasOwn(texts,v.kind)?texts[v.kind]:"";
  if(text&&(v.kind==="challenged"||Date.now()-duelJournalT>5000))toast(text);
- if(v.kind==="challenged")notifyHidden(text,v.id);
+ if(v.kind==="challenged"){notifyHidden(text,v.id);pushAsk();}
  duelsLoad();
 }
 
@@ -1347,6 +1348,22 @@ function notifyHidden(body,id){
   if(reg&&await reg.pushManager.getSubscription())await reg.showNotification("PolitiGo",{body,tag:`duel-${String(id).slice(0,40)}`,data:{url:"/"}});
  }).catch(()=>{});
 }
+// Asking at the right moment (a challenge sent or received) rather than at load: browsers only show their prompt for
+// a tap, and penalise sites that ask out of the blue. One tap on "Activer" is that gesture. "Plus tard" waits a week
+// on this device; nothing is asked once notifications are on or blocked, nor during a game (kept for its end).
+const PUSH_ASK_KEY="politigo.pushAsk",PUSH_ASK_WAIT=7*864e5;
+let pushAskWanted=false,pushAsked=false;
+async function pushAsk(){
+ if(pushAsked||!S||!pushable()||Notification.permission==="denied"||!duelData?.pushKey)return;
+ try{if(Date.now()-(Number(localStorage.getItem(PUSH_ASK_KEY))||0)<PUSH_ASK_WAIT)return;}catch{}
+ if(quiet()||scene||!$("#announce").hidden){pushAskWanted=true;return;}
+ pushAskWanted=false;
+ if(await pushSub()||pushAsked||!S||quiet()||scene||!$("#announce").hidden)return;
+ pushOn=false;pushAsked=true;$("#push-ask").hidden=false;
+}
+function pushAskDone(){$("#push-ask").hidden=true;try{localStorage.setItem(PUSH_ASK_KEY,String(Date.now()));}catch{}}
+$("#push-ask-yes").addEventListener("click",()=>{pushAskDone();if(!pushOn)togglePush();});   // the permission prompt, inside this tap
+$("#push-ask-later").addEventListener("click",pushAskDone);
 $("#sheet").addEventListener("click",e=>{if(e.target.id==="sheet")closeSheet();});
 
 // ---------- political test and dice ----------
@@ -1409,7 +1426,7 @@ function armRestart(camp,text){
 const authEl=$("#auth");
 let regCamp="left";
 function showAuth(message=""){
- closeSheet();chat.reset();chatFlags(null);es?.close();es=null;S=null;anim=pong=mini=scene=null;newsPending=false;toastQ.length=0;announceQ.length=0;$("#announce").hidden=true;duelData=null;duelErr="";duelSeq++;pushOn=null;pushSynced=false;setNet(true);$("#tips").hidden=true;
+ closeSheet();chat.reset();chatFlags(null);es?.close();es=null;S=null;anim=pong=mini=scene=null;newsPending=false;toastQ.length=0;announceQ.length=0;$("#announce").hidden=true;$("#push-ask").hidden=true;pushAskWanted=pushAsked=false;duelData=null;duelErr="";duelSeq++;pushOn=null;pushSynced=false;setNet(true);$("#tips").hidden=true;
  authEl.hidden=false;setBackgroundInert(true);
  $("#auth-error").textContent=message;regQuizShow(false);$("#camp-note").textContent="";document.body.dataset.camp=regCamp;
  document.querySelectorAll(".camp").forEach(b=>{
@@ -1515,6 +1532,7 @@ function tickFrame(now){
    else if(newsPending){newsPending=false;maybeShowNews();}
    else if(toastQ.length&&Date.now()-toastAt>=4000)toast(toastQ.shift());
    if(announceQ.length)showAnnounce();
+   if(pushAskWanted)pushAsk();
   }
   if(hw()&&!hwHello&&!scene&&!quiet()&&!toastQ.length&&sheetKind!=="news"&&Date.now()-toastAt>4000)halloweenHello();
  }

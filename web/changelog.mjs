@@ -8,9 +8,11 @@ export const CHANGELOG=[
   added:[
    "Le chat de la République : touche Chat sur l'écran principal. Un salon pour tout le monde, et un salon réservé à ton camp pour comploter entre camarades… ou entre amis de la majorité.",
    "Le chat s'ouvre seulement si l'organisateur de ta partie l'active, salon par salon : les joueurs ne peuvent pas l'activer eux-mêmes. Pas de touche Chat ? C'est qu'il est fermé pour le moment.",
-   "Emojis à volonté, et images ou GIF : colle celui de ton clavier, ou envoie un fichier de 2 Mo maximum.",
+   "Plus de 1 500 emojis rangés par catégorie, tes derniers utilisés en tête, et des exclusivités PolitiGo : la saucisse, la méga saucisse, le drapeau français et le drapeau soviétique. Envoyés seuls, ils s'affichent en grand.",
+   "Images ou GIF : colle celui de ton clavier, ou envoie un fichier de 2 Mo maximum.",
    "Un message déplacé ? Signale-le en un geste. Tu peux aussi effacer les tiens. Les messages disparaissent au bout de 7 jours.",
-   "Pas de dérangement : une simple pastille compte les messages non lus, sans notification ni son, et rien ne s'affiche pendant un mini-jeu."
+   "Pas de dérangement : une simple pastille compte les messages non lus, sans notification ni son, et rien ne s'affiche pendant un mini-jeu.",
+   "Notifications de duel : quand tu lances un défi ou qu'un rival te défie, le jeu te propose de les activer en un geste. « Plus tard » le fait patienter une semaine, et l'interrupteur reste dans Dossier → Compte."
   ],
   changed:[
    "Débat chrono et duels : c'est désormais le serveur qui pose les questions une à une et chronomètre tes réponses. Rien ne change pour toi, mais une réponse donnée en moins de 0,6 s n'est plus comptée, et un débat rapporte 20 points au plus.",
@@ -23,6 +25,7 @@ export const CHANGELOG=[
   admin:[
    "L'organisateur dispose désormais d'une console d'administration privée, réservée à lui seul et inaccessible depuis le jeu.",
    "Mesures anti-triche : les scores impossibles pour un humain sont refusés, et les comportements automatisés (scripts, comptes multiples) sont repérés.",
+   "Les signalements et les comportements suspects remontent en direct à l'organisateur, qui est prévenu dès qu'un cas demande son attention.",
    "En cas d'abus, un joueur peut être exclu de la partie ou son compte gelé : connexion bloquée, élu figé et retiré du classement le temps de la sanction."
   ]},
  {version:"1.4.1",date:"2026-10-31",

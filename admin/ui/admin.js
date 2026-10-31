@@ -127,10 +127,11 @@ async function act(btn,fn,okMsg,after=render){
 }
 
 // ===================================================================== login
-function showLogin(){stopRefresh();$("#app").hidden=true;$("#login").hidden=false;$("#login-pw").value="";setTimeout(()=>$("#login-pw").focus(),0);}
+function showLogin(){stopRefresh();stopAlerts();$("#app").hidden=true;$("#login").hidden=false;$("#login-pw").value="";setTimeout(()=>$("#login-pw").focus(),0);}
 async function showApp(){
  $("#login").hidden=true;$("#app").hidden=false;
  try{await loadServers();}catch(e){fail(e);}
+ startAlerts();
  if(!location.hash)location.hash=multi()?"#apercu":"#tableau";
  buildNav();await render();
 }
@@ -144,7 +145,7 @@ $("#logout").addEventListener("click",async()=>{try{await api("/api/logout");}ca
 
 // ===================================================================== navigation
 const SECTIONS=[
- ["apercu","Vue d'ensemble",viewOverview],["tableau","Tableau de bord",viewDashboard],["joueurs","Joueurs",viewPlayers],["annonces","Annonces",viewAnnounces],
+ ["apercu","Vue d'ensemble",viewOverview],["tableau","Tableau de bord",viewDashboard],["traiter","À traiter",viewAlerts],["joueurs","Joueurs",viewPlayers],["annonces","Annonces",viewAnnounces],
  ["chat","Chat",viewChat],["fil","Fil",viewFeed],["duels","Duels",viewDuels],["reglages","Réglages",viewSettings],
  ["sauvegarde","Sauvegarde",viewBackup],["bots","Détection de bots",viewBots],["journal","Journal d'admin",viewAudit],
 ];
@@ -154,6 +155,7 @@ const route=()=>{const [s,...rest]=location.hash.slice(1).split("/");return {id:
 function buildNav(){
  const {id}=route();
  $("#nav").replaceChildren(...sections().map(([k,label])=>h("a",{href:`#${k}`,"aria-current":k===id?"page":null},label)));
+ drawAlertCount();
 }
 let refreshT=null,renderSeq=0;
 const stopRefresh=()=>{clearInterval(refreshT);refreshT=null;};
@@ -172,6 +174,80 @@ async function render(){
 }
 window.addEventListener("hashchange",()=>{render().then(()=>$("#view").focus({preventScroll:true}));});
 document.addEventListener("visibilitychange",()=>{if(!document.hidden&&route().id==="tableau"&&!$("#app").hidden)render();});
+// ===================================================================== À traiter (every game server)
+// Polled every 20 s on every server, the page hidden or not: the count heads the menu and the tab's title, a new item
+// chimes (sound on) and, the console in the background, shows a system notification (HTTPS or localhost only: browsers
+// refuse it on plain http). "Vu" files an item away on its game server, for every console.
+const ALERT_MS=20000,KIND={chat:"Chat",duel:"Duel",bot:"Bot",suspect:"Comptes"},BASE_TITLE=document.title,SOUND_KEY="politigo-admin-sound";
+const alertLink=a=>a.kind==="chat"?"#chat":a.kind==="suspect"?"#duels":`#joueurs/${a.ref}`;
+let alerts=new Map(),alertsKnown=null,alertsT=null,audio=null;   // server id -> {items,acked,error}; "server|key" seen so far (null: first poll)
+const soundOn=()=>{try{return localStorage.getItem(SOUND_KEY)!=="off";}catch{return true;}};
+const notifiable=()=>window.isSecureContext&&"Notification" in window;
+// Browsers only let a page play sound after a gesture: the context is made (or woken) by the first click or key.
+const unlockAudio=()=>{try{audio??=new AudioContext();if(audio.state==="suspended")audio.resume();}catch{}};
+for(const ev of ["pointerdown","keydown"])document.addEventListener(ev,unlockAudio);
+function chime(){
+ if(!soundOn()||!audio)return;
+ try{const o=audio.createOscillator(),g=audio.createGain(),t=audio.currentTime;
+  o.frequency.setValueAtTime(880,t);o.frequency.setValueAtTime(1320,t+0.12);
+  g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(0.15,t+0.02);g.gain.exponentialRampToValueAtTime(0.0001,t+0.35);
+  o.connect(g).connect(audio.destination);o.start(t);o.stop(t+0.4);}catch{}
+}
+const alertCount=()=>[...alerts.values()].reduce((n,s)=>n+s.items.length,0);
+function drawAlertCount(){
+ const n=alertCount(),a=$('#nav a[href="#traiter"]');
+ document.title=n?`(${n}) ${BASE_TITLE}`:BASE_TITLE;
+ if(a)a.replaceChildren("À traiter",n?h("span",{class:"badge bad"},String(n)):null);
+}
+const srvCall=(id,cmd,args={})=>api(`/api/s/${encodeURIComponent(id)}/call`,{cmd,...args});
+async function pollAlerts(redraw=true){
+ const next=new Map(await Promise.all(servers.map(s=>srvCall(s.id,"alerts").then(r=>[s.id,{items:r.items||[],acked:r.acked||0}],
+  e=>[s.id,{items:alerts.get(s.id)?.items||[],acked:alerts.get(s.id)?.acked||0,error:e.message}]))));   // a server out for a moment keeps its list: no flood when it is back
+ if($("#app").hidden)return;
+ const keys=[...next].flatMap(([id,s])=>s.items.map(a=>[`${id}|${a.key}`,id,a])),before=alertCount();
+ const fresh=alertsKnown?keys.filter(([k])=>!alertsKnown.has(k)):[];
+ alertsKnown=new Set(keys.map(([k])=>k));alerts=next;drawAlertCount();
+ if(fresh.length)announceAlerts(fresh.map(([,id,a])=>({id,a})));
+ if(redraw&&(fresh.length||alertCount()!==before)&&route().id==="traiter"&&!document.hidden&&!$("#dlg").open)render();
+}
+function announceAlerts(fresh){
+ chime();
+ const {id,a}=fresh[0],more=fresh.length>1?` (et ${fresh.length-1} autre${fresh.length>2?"s":""})`:"",where=multi()?` · ${servers.find(s=>s.id===id)?.name||id}`:"";
+ if(notifiable()&&Notification.permission==="granted"&&(document.hidden||!document.hasFocus())){
+  try{const n=new Notification(`PolitiGo · à traiter${where}`,{body:a.title+more,tag:"politigo-admin",renotify:true});
+   n.onclick=()=>{window.focus();location.hash="#traiter";n.close();};return;}catch{}   // no page notifications here (Android Chrome): the toast says it
+ }
+ toast(`À traiter${where} : ${a.title}${more}`);
+}
+function startAlerts(){stopAlerts();pollAlerts().catch(()=>{});alertsT=setInterval(()=>pollAlerts().catch(()=>{}),ALERT_MS);}
+function stopAlerts(){clearInterval(alertsT);alertsT=null;alerts=new Map();alertsKnown=null;drawAlertCount();}
+async function viewAlerts(){
+ await pollAlerts(false);
+ const ack=(id,keys,btn)=>act(btn,async()=>{for(let i=0;i<keys.length;i+=50)await srvCall(id,"alerts-ack",{keys:keys.slice(i,i+50)});},keys.length>1?"Tout est marqué comme vu.":"Marqué comme vu.");
+ const open=(id,a)=>{if(id!==cur){cur=id;store.set(id);drawSwitcher();}location.hash=alertLink(a);};
+ const perm=!notifiable()?h("p",{class:"muted small"},"Notifications système : seulement quand la console est en HTTPS (Nginx Proxy Manager) ou ouverte sur localhost. Ici : compteur, titre de l'onglet et son.")
+  :Notification.permission==="granted"?h("p",{class:"muted small"},"Notifications système activées sur ce navigateur : elles s'affichent quand la console est en arrière-plan.")
+  :Notification.permission==="denied"?h("p",{class:"muted small"},"Notifications bloquées pour cette console : autorise-les dans les réglages du site (le cadenas à côté de l'adresse).")
+  :h("div",{class:"btn-row"},h("button",{class:"btn small go",type:"button",onclick:async()=>{try{await Notification.requestPermission();}catch{}render();}},"Activer les notifications système"));
+ const snd=h("label",{class:"btn-row"},h("input",{type:"checkbox",checked:soundOn(),onchange:e=>{try{localStorage.setItem(SOUND_KEY,e.target.checked?"on":"off");}catch{}unlockAudio();chime();}}),"Son à chaque nouvelle alerte");
+ const blocks=servers.map(s=>{
+  const st=alerts.get(s.id)||{items:[],acked:0},items=st.items;
+  return h("div",{class:"card"},
+   h("div",{class:"btn-row"},h("h2",{},multi()?s.name:"Alertes"),items.length>1?h("button",{class:"btn small",type:"button",onclick:e=>ack(s.id,items.map(a=>a.key),e.currentTarget)},"Tout marquer comme vu"):null),
+   st.error?h("p",{class:"err"},st.error):null,
+   items.length?h("div",{class:"list"},items.map(a=>h("div",{class:"alert-item"},
+    h("div",{class:"btn-row"},h("span",{class:`badge ${a.kind==="chat"?"warn":"bad"}`},KIND[a.kind]||a.kind),h("b",{},a.title),a.t?h("span",{class:"muted small"},fmt(a.t)):null),
+    a.detail?h("p",{class:"wrap muted small"},a.detail):null,
+    h("div",{class:"btn-row"},h("button",{class:"btn small go",type:"button",onclick:()=>open(s.id,a)},"Ouvrir"),
+     h("button",{class:"btn small",type:"button",onclick:e=>ack(s.id,[a.key],e.currentTarget)},"Vu"))))):empty("Rien à traiter."),
+   st.acked?h("p",{class:"muted small"},`${st.acked} déjà vue${st.acked>1?"s":""} : elle${st.acked>1?"s":""} ne compte${st.acked>1?"nt":""} plus pendant 30 jours.`):null);
+ });
+ return [h("div",{class:"view-head"},h("h1",{},"À traiter"),h("div",{class:"btn-row"},h("span",{class:"muted small"},"vérifié toutes les 20 s, sur tous les serveurs"),refreshBtn())),
+  h("div",{class:"card"},h("h2",{},"Me prévenir"),snd,perm,
+   h("p",{class:"muted small"},"Signalements du chat, duels signalés par l'anti-triche, joueurs au score de bot élevé (50/100 et plus) et groupes de duels suspects.")),
+  ...blocks];
+}
+
 // The current game server's name heads every page.
 const srvTag=()=>h("span",{class:"srv-tag",title:"Serveur de jeu"},h("i",{class:`dot ${curSrv()?.up?"up":"down"}`}),srvName());
 const head=(title,...extra)=>h("div",{class:"view-head"},h("div",{class:"btn-row"},h("h1",{},title),srvTag()),h("div",{class:"btn-row"},extra));
