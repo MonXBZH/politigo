@@ -178,3 +178,6 @@ h3.sub{margin:12px 0 4px;font-size:14px}
 .alert-item:first-child{border-top:0;padding-top:0}
 .alert-item p{margin:6px 0}
 .alert-item .wrap{overflow-wrap:anywhere}
+.checks{display:flex;flex-wrap:wrap;gap:6px 14px;margin:6px 0}
+#who{align-self:center}
+#who[hidden]{display:none}

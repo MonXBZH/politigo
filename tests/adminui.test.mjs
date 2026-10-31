@@ -187,6 +187,52 @@ test("a generated password: printed once in the logs, only its hash kept, the si
  assert.match(String(short),/at least 12 characters/);
 });
 
+test("moderators: chosen among a server's players, only their panels and actions, never on their own account, revoked at once",async()=>{
+ const b=browser();assert.equal((await b.login()).status,200);
+ await player(API1,"Modo Un");await player(API1,"Cible Modo","right");await player(API2,"Modo Un");
+ const id=(await b.call("prod","list")).json.players.find(p=>p.name==="Modo Un").id;
+ const cat=(await b.req("/api/mods")).json;
+ assert.ok(cat.presets.some(p=>p.id==="chat")&&cat.presets.some(p=>p.id==="full"));
+ assert.ok(!cat.presets.find(p=>p.id==="full").actions.includes("invite"),"the invite code stays out of the full profile");
+ const made=await b.req("/api/mods/save",{server:"prod",player:id,panels:["chat","joueurs","traiter"],actions:["chat-mute","alerts-ack"],servers:["test-e"]});
+ assert.equal(made.status,200,JSON.stringify(made.json));
+ assert.match(made.json.password,/^[A-Za-z0-9+/]{27}=$/,"20 random bytes in base64");
+ assert.deepEqual(made.json.mod.servers.sort(),["prod","test-e"]);
+ assert.equal((await b.req("/api/mods/save",{server:"prod",player:id,panels:["chat"]})).status,409,"once");
+ const m=browser();
+ assert.equal((await m.req("/api/login",{name:"Modo Un",password:"pas le bon"})).json.error,"Pseudo ou mot de passe incorrect.");
+ assert.equal((await m.req("/api/login",{name:"inconnu",password:made.json.password})).status,401);
+ assert.equal((await m.req("/api/login",{name:" modo un ",password:made.json.password})).status,200,"the name, whatever its case");
+ const me=(await m.req("/api/me")).json;assert.equal(me.role,"mod");assert.equal(me.name,"Modo Un");assert.equal(me.self.prod,id);
+ const srv=(await m.req("/api/servers")).json.servers;assert.equal(srv.length,2);
+ assert.equal((await m.req("/api/servers",{full:true})).json.servers.some(s=>"invite" in s),false,"no invite code without the right");
+ assert.equal((await m.call("prod","stats")).status,200);
+ assert.equal((await m.call("prod","chat-reports")).status,200);
+ for(const [c,a] of [["bots",{}],["invite-get",{}],["suspend",{name:"Cible Modo",on:true}],["chat-set",{global:true}],["registrations-set",{open:false}],["audit",{}]])
+  assert.equal((await m.call("prod",c,a)).status,403,c);
+ assert.equal((await m.req("/api/s/prod/reset-password",{name:"Cible Modo"})).status,403);
+ assert.equal((await m.req("/api/s/prod/backup")).status,403);
+ assert.equal((await m.req("/api/mods")).status,403);
+ const mute=await m.call("prod","chat-mute",{name:"Cible Modo",hours:1});assert.equal(mute.status,200,JSON.stringify(mute.json));
+ for(const s of ["prod","test-e"]){
+  const r=await m.call(s,"chat-mute",{name:"Modo Un",hours:1});
+  assert.equal(r.status,422,s);assert.equal(r.json.error,"Action impossible sur ton propre compte.",s);
+ }
+ const log=(await b.call("prod","audit")).json.items.find(x=>x.cmd==="chat-mute"&&x.target==="Cible Modo");
+ assert.equal(log.actor,"Modo Un","the log names the moderator");assert.equal(log.via,"web");
+ // Rights changed: the session is closed; a new password: the old one is dead.
+ assert.equal((await b.req("/api/mods/save",{id:made.json.mod.id,panels:["chat"],actions:[]})).status,200);
+ assert.equal((await m.req("/api/me")).status,401);
+ const pw=(await b.req("/api/mods/password",{id:made.json.mod.id})).json.password;
+ assert.equal((await m.req("/api/login",{name:"Modo Un",password:made.json.password})).status,401);
+ assert.equal((await m.req("/api/login",{name:"Modo Un",password:pw})).status,200);
+ assert.deepEqual((await m.req("/api/me")).json.actions,[]);
+ assert.equal((await m.call("prod","chat-mute",{name:"Cible Modo",hours:0})).status,403);
+ assert.equal((await b.req("/api/mods/delete",{id:made.json.mod.id})).status,200);
+ assert.equal((await m.req("/api/me")).status,401,"removed: out at once");
+ assert.equal((await b.req("/api/mods")).json.mods.length,0);
+});
+
 test("health: 200 while one server answers, with each server's state; 503 when none does",async()=>{
  let h=await fetch(`http://127.0.0.1:${ADMIN}/health`);
  assert.equal(h.status,200);assert.deepEqual((await h.json()).servers.map(s=>s.up),[true,true]);

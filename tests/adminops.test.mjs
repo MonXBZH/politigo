@@ -338,6 +338,6 @@ test("the admin log records every mutating command, never a password",async()=>{
  assert.ok(!JSON.stringify(items).includes("secret-tres-long-1"));
  const reset=items.find(x=>x.cmd==="reset-password");assert.equal(reset.via,"web");assert.equal(reset.target,"Bavard");
  assert.ok(items.some(x=>x.via==="cli"));
- for(const x of items)assert.deepEqual(Object.keys(x).sort(),["cmd","detail","t","target","via"]);
+ for(const x of items)assert.deepEqual(Object.keys(x).sort(),["actor","cmd","detail","t","target","via"]);assert.ok(items.every(x=>x.actor===null),"the owner and the command line: no moderator name");
  assert.equal((await ok({cmd:"audit",limit:2})).items.length,2);
 });

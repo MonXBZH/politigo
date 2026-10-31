@@ -317,6 +317,7 @@ CREATE TABLE IF NOT EXISTS chat_mutes(player_id INTEGER PRIMARY KEY REFERENCES p
     return {id:m.id,t:m.t,room:m.room,author:players.get(m.player_id)?.name??"?",authorId:m.player_id,text:m.text,
      media:m.media&&m.mtype?{id:m.media,type:m.mtype}:null,reports:rs.length,reporters:rs};});
   },
+  authorOf(id){return (msgId(Number(id))&&q.msg.get(Number(id)))?.player_id??null;},
   deleteMessage(id){const m=msgId(Number(id))&&q.msg.get(Number(id));return m?softDelete(m):false;},
   mute(playerId,until){if(until&&until>Date.now())q.mute.run(playerId,Math.floor(until));else q.unmute.run(playerId);},
   mutedUntil,
