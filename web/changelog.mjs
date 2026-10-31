@@ -4,6 +4,13 @@
 import {cmpRelease} from "./rules.mjs";
 
 export const CHANGELOG=[
+  {version:"1.5.3",date:"2026-10-31",
+  added:[],
+  fixed:[
+   "Chat sur téléphone : la fenêtre reste bien en place quand le clavier s'ouvre, et faire défiler les messages ne fait plus bouger le jeu derrière."
+  ],
+  admin:[]
+ },
  {version:"1.5.2",date:"2026-10-31",
   added:[],
   fixed:[
