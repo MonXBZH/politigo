@@ -1478,6 +1478,7 @@ async function adminCommand(b){
   for(const k of b.keys)q.ack.run(k,now);
   return {acked:b.keys.length};
  }
+ if(cmd==="chat-feed")return {items:chat.admin.feed({before:b.before,limit:b.limit,room:b.room})};
  if(cmd==="chat-reports")return {items:chat.admin.reports().filter(m=>!mine(m.authorId))};
  if(cmd==="chat-delete"){
   if(Number.isSafeInteger(b.id))notSelf(chat.admin.authorOf(b.id));

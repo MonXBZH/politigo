@@ -111,6 +111,8 @@ CREATE TABLE IF NOT EXISTS chat_mutes(player_id INTEGER PRIMARY KEY REFERENCES p
  const q={
   page:db.prepare(`${MSG} WHERE m.room=? AND m.deleted=0 AND m.id<? ORDER BY m.id DESC LIMIT ${PAGE}`),
   msg:db.prepare(`${MSG} WHERE m.id=? AND m.deleted=0`),
+  feed:db.prepare(`${MSG} WHERE m.deleted=0 AND m.id<? AND (?='' OR m.room=?) ORDER BY m.id DESC LIMIT ?`),
+  reportCount:db.prepare("SELECT COUNT(*) AS n FROM chat_reports WHERE message_id=?"),
   insert:db.prepare("INSERT INTO chat_messages(room,player_id,t,text,media) VALUES(?,?,?,?,?)"),
   softDelete:db.prepare("UPDATE chat_messages SET deleted=1,text='',media=NULL WHERE id=? AND deleted=0"),
   unread:db.prepare(`SELECT COUNT(*) AS n FROM (SELECT 1 FROM chat_messages WHERE room=? AND id>? AND deleted=0 AND player_id<>? LIMIT ${UNREAD_CAP})`),
@@ -316,6 +318,14 @@ CREATE TABLE IF NOT EXISTS chat_mutes(player_id INTEGER PRIMARY KEY REFERENCES p
    return q.reports.all().map(m=>{const rs=q.reportersOf.all(m.id).map(r=>r.name);
     return {id:m.id,t:m.t,room:m.room,author:players.get(m.player_id)?.name??"?",authorId:m.player_id,text:m.text,
      media:m.media&&m.mtype?{id:m.media,type:m.mtype}:null,reports:rs.length,reporters:rs};});
+  },
+  // Every room at once for the admin's live view, newest last: the page before message id "before" (0: the latest).
+  feed({before=0,limit=100,room=""}={}){
+   const b=Number.isSafeInteger(before)&&before>0?before:Number.MAX_SAFE_INTEGER,n=Math.min(Math.max(Number.isInteger(limit)?limit:100,1),200);
+   const r=["global","left","right"].includes(room)?room:"";
+   return q.feed.all(b,r,r,n).reverse().map(m=>{const pl=players.get(m.player_id);
+    return {id:m.id,t:m.t,room:m.room,author:pl?.name??"?",authorId:m.player_id,camp:pl?.state?.camp??null,text:m.text,
+     media:m.media&&m.mtype?{id:m.media,type:m.mtype}:null,reports:q.reportCount.get(m.id).n};});
   },
   authorOf(id){return (msgId(Number(id))&&q.msg.get(Number(id)))?.player_id??null;},
   deleteMessage(id){const m=msgId(Number(id))&&q.msg.get(Number(id));return m?softDelete(m):false;},

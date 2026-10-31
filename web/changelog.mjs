@@ -5,9 +5,13 @@ import {cmpRelease} from "./rules.mjs";
 
 export const CHANGELOG=[
  {version:"1.5.2",date:"2026-10-31",
-  added:[],fixed:[],
+  added:[],
+  fixed:[
+   "Chat sur téléphone : la fenêtre reste bien en place quand le clavier s'ouvre, et faire défiler les messages ne fait plus bouger le jeu derrière."
+  ],
   admin:[
-   "L'organisateur peut nommer des modérateurs parmi les joueurs, avec des droits choisis un par un : ce qu'ils voient et ce qu'ils peuvent faire. Un modérateur n'agit jamais sur son propre compte, et chacune de ses actions est signée de son nom."
+   "L'organisateur peut nommer des modérateurs parmi les joueurs, avec des droits choisis un par un : ce qu'ils voient et ce qu'ils peuvent faire. Un modérateur n'agit jamais sur son propre compte, et chacune de ses actions est signée de son nom.",
+   "La console suit le chat en direct : l'état des salons, les messages signalés et le fil de tous les salons, des deux camps."
   ]},
  {version:"1.5.1",date:"2026-10-31",
   added:[

@@ -181,3 +181,14 @@ h3.sub{margin:12px 0 4px;font-size:14px}
 .checks{display:flex;flex-wrap:wrap;gap:6px 14px;margin:6px 0}
 #who{align-self:center}
 #who[hidden]{display:none}
+.chat-feed{list-style:none;margin:8px 0 0;padding:0 4px 0 0;max-height:60vh;overflow-y:auto;display:grid;gap:2px;overscroll-behavior:contain}
+.chat-line{padding:8px 10px;border-radius:12px;border:1px solid transparent}
+.chat-line:nth-child(odd){background:var(--glass)}
+.chat-line.reported{border-color:#ff6b7a66}
+.chat-line .msg{margin:4px 0}
+
+.nowrap{white-space:nowrap}
+select.inline{width:auto;min-width:0;padding:6px 10px;margin:0}
+.chat-line .btn-row{gap:6px;margin-top:4px;align-items:center}
+.chat-line .btn-row .btn{padding:6px 12px}
+
