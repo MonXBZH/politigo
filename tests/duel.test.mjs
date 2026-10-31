@@ -1,5 +1,6 @@
 // Duel and push-subscription tests: a real server on a temporary database, driven over HTTP (node --test).
 // Run inside the API image layout: server.mjs, rules.mjs and push.mjs side by side (see tests/run-server.sh).
+// A duel turn is the server-paced debate (POST /api/debate), shortened to 3.5 s of play by POLITIGO_DEBATE_MS.
 import {test,before,after} from "node:test";
 import assert from "node:assert/strict";
 import {spawn} from "node:child_process";
@@ -9,6 +10,7 @@ import {tmpdir} from "node:os";
 import {join} from "node:path";
 import crypto from "node:crypto";
 import * as R from "../web/rules.mjs";
+import {answerOf,debateTurn} from "./server-helpers.mjs";
 
 const PORT=3910,OFF_PORT=3911,INVITE="code-secret-de-test-123",PW="motdepasse1";
 // The server runs in a time zone where it is early afternoon right now: daytime-only actions are always testable.
@@ -16,8 +18,8 @@ const off=((14-new Date().getUTCHours()+36)%24)-12,DAY_TZ=off>=0?`Etc/GMT-${off}
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 let proc,DIR,DB;
 function boot(port,dir,extra={}){
- const env={...process.env,PORT:String(port),DB_PATH:join(dir,"t.db"),POLITIGO_INVITE:INVITE,COOKIE_SECURE:"0",PROXY_HOPS:"1",SWEEP_MS:"200",
-  POLITIGO_SPEED:"1",POLITIGO_TZ:DAY_TZ,POLITIGO_ADMIN_SOCKET:"off",POLITIGO_DUEL_MIN_LEVEL:"1",POLITIGO_DUEL_MIN_AGE_H:"0",...extra};
+ const env={...process.env,PORT:String(port),DB_PATH:join(dir,"t.db"),POLITIGO_INVITE:INVITE,COOKIE_SECURE:"0",PROXY_HOPS:"1",SWEEP_MS:"200",BOARD_MS:"50",
+  POLITIGO_SPEED:"1",POLITIGO_TZ:DAY_TZ,POLITIGO_ADMIN_SOCKET:"off",POLITIGO_DUEL_MIN_LEVEL:"1",POLITIGO_DUEL_MIN_AGE_H:"0",POLITIGO_DEBATE_MS:"3500",...extra};
  const p=spawn("node",[process.env.SERVER||"/app/server.mjs"],{env,stdio:["ignore","pipe","pipe"]});
  p.out="";p.err="";p.stderr.on("data",d=>{p.err+=d;});
  return new Promise((ok,ko)=>{p.stdout.on("data",d=>{p.out+=d;if(/PolitiGo API/.test(p.out))ok(p);});p.on("exit",code=>ko(new Error("server exited "+code+": "+p.err)));});
@@ -42,21 +44,17 @@ async function player(name,camp="left",port=PORT){
  const c=client(port),r=await c.call("POST","/api/register",{name,password:PW,invite:INVITE,camp});
  assert.equal(r.status,201,JSON.stringify(r.json));c.name=name;c.camp=camp;return c;
 }
-// Picks as the browser records them: [answer shown, ms since play started], the right answer for the camp unless wrong.
-function picksFor(seed,camp,{n=3,wrong=[],gap=300}={}){
- return R.debateRounds(R.seeded(seed),n).map((r,k)=>[r.order.indexOf(R.ANSWER_KINDS.indexOf(wrong.includes(k)?"decoy":camp)),k*gap]);
-}
 const duel=(c,body)=>c.call("POST","/api/duel",body);
+const debate=(c,body)=>c.call("POST","/api/debate",{op:"next",...body});
 const duels=c=>c.call("GET","/api/duels");
 const find=async(c,id)=>(await duels(c)).json.duels.find(d=>d.id===id);
 const top=async c=>(await c.call("GET","/api/me")).json.state.journal[0];
 const feedTexts=async c=>(await c.call("GET","/api/board")).json.feed.map(f=>f.text);
-// Challenge and play a valid turn: returns the duel id and seed.
+// Challenge and play a turn (3 right answers by default): returns the duel id.
 async function challenged(a,b,opts={}){
  const ch=await duel(a,{op:"challenge",name:b.name});assert.equal(ch.status,200,JSON.stringify(ch.json));
- ago("c_started",ch.json.duel.id);
- const sub=await duel(a,{op:"submit",id:ch.json.duel.id,picks:picksFor(ch.json.duel.seed,a.camp,opts)});
- assert.equal(sub.status,200,JSON.stringify(sub.json));
+ const end=await debateTurn(a,ch.json.duel.id,opts);
+ assert.equal(end.status,200,JSON.stringify(end.json));assert.equal(end.json.result.status,"pending");
  return ch.json.duel;
 }
 // The live stream of one player, collected in the background.
@@ -72,9 +70,6 @@ function stream(c){
  }).catch(()=>{});
  return {events,close:()=>ac.abort()};
 }
-// The 1.3 s countdown plus the last pick (600 ms), spent in the database instead of waiting: the server measures a
-// turn from c_started / d_started, so moving them back is the same as having waited.
-const ago=(col,id,ms=2300)=>DB.prepare(`UPDATE duels SET ${col}=${col}-? WHERE id=?`).run(ms,id);
 async function until(fn,ms=3000){const end=Date.now()+ms;while(Date.now()<end){const v=await fn();if(v)return v;await sleep(50);}return null;}
 
 test("a full duel: challenge, play, the defender answers blind, both candidates change and the feed tells",async()=>{
@@ -88,21 +83,26 @@ test("a full duel: challenge, play, the defender answers blind, both candidates 
  assert.ok(!list.json.opponents.some(o=>o.name==="Duelliste A"),"never oneself");
 
  const ch=await duel(a,{op:"challenge",name:"duelliste b"});
- assert.equal(ch.status,200);assert.equal(typeof ch.json.duel.id,"number");assert.ok(Number.isInteger(ch.json.duel.seed));assert.equal(ch.json.me.name,"Duelliste A");
- const {id,seed}=ch.json.duel;
+ assert.equal(ch.status,200);assert.deepEqual(Object.keys(ch.json.duel),["id"],"no seed: the deal stays on the server");assert.equal(ch.json.me.name,"Duelliste A");
+ const {id}=ch.json.duel;
  assert.equal((await duels(a)).json.sent,1,"counted as soon as it is sent");
  assert.equal((await find(a,id)).status,"c_play");
  assert.equal(await find(b,id),undefined,"the defender is not told before the challenger has a score");
  assert.equal((await duel(b,{op:"accept",id})).status,422);
- assert.equal((await duel(b,{op:"submit",id,picks:[]})).status,422,"not the defender's turn");
- for(const op of ["accept","refuse","submit"])assert.equal((await duel(z,{op,id,picks:[]})).json.error,"Duel introuvable.",`outsider ${op}`);
+ assert.equal((await debate(b,{ref:id})).status,422,"not the defender's turn");
+ for(const op of ["accept","refuse"])assert.equal((await duel(z,{op,id})).json.error,"Duel introuvable.",`outsider ${op}`);
+ assert.equal((await debate(z,{ref:id})).json.error,"Duel introuvable.","outsider debate");
+ assert.equal((await duel(a,{op:"submit",id,picks:[[0,0]]})).status,410,"picks are no longer taken");
 
  const sb=stream(b);await until(()=>sb.events.some(e=>e.ev==="me"));
- ago("c_started",id);
- const sub=await duel(a,{op:"submit",id,picks:picksFor(seed,"left")});
- assert.equal(sub.status,200,JSON.stringify(sub.json));
- assert.deepEqual({score:sub.json.score,errors:sub.json.errors,status:sub.json.status,mine:sub.json.mine,theirs:sub.json.theirs,res:sub.json.res},
-  {score:3,errors:0,status:"pending",mine:3,theirs:null,res:null});
+ // The first question: text and three answers, nothing that says which one is right.
+ const q1=await debate(a,{ref:id});
+ assert.equal(q1.status,200,JSON.stringify(q1.json));
+ assert.deepEqual(Object.keys(q1.json.q).sort(),["answers","idx","text"]);assert.equal(q1.json.q.answers.length,3);assert.equal(q1.json.done,false);
+ assert.ok(!/seed|kind/i.test(JSON.stringify(q1.json)));
+ const sub=await debateTurn(a,id);
+ assert.equal(sub.status,200,JSON.stringify(sub.json));assert.equal(sub.json.done,true);assert.equal(sub.json.q,null);
+ assert.deepEqual(sub.json.result,{score:3,errors:0,status:"pending",mine:3,theirs:null,res:null});
  const ev=await until(()=>sb.events.find(e=>e.ev==="duel"));sb.close();
  assert.deepEqual(ev?.data,{id,kind:"challenged",role:"defender",vs:"Duelliste A"});
  assert.ok((await feedTexts(a)).includes("Duelliste A défie Duelliste B au Débat chrono."));
@@ -111,17 +111,15 @@ test("a full duel: challenge, play, the defender answers blind, both candidates 
  assert.equal(seen.role,"defender");assert.equal(seen.status,"pending");assert.equal(seen.vs,"Duelliste A");
  assert.equal(seen.mine,null);assert.equal(seen.theirs,null,"the challenger's score stays hidden");assert.equal(seen.res,null);
  assert.ok(seen.expires>Date.now()+23*3600e3);
- assert.equal((await duel(a,{op:"submit",id,picks:picksFor(seed,"left")})).status,422,"no second turn");
+ assert.equal((await debate(a,{ref:id})).status,422,"no second turn");
 
  const moralB=(await b.call("GET","/api/me")).json.state.moral;
  const acc=await duel(b,{op:"accept",id});
- assert.equal(acc.status,200);assert.deepEqual(acc.json.duel,{id,seed},"the same debate");
+ assert.equal(acc.status,200);assert.deepEqual(acc.json.duel,{id},"no seed for the defender either");
  assert.equal((await find(b,id)).status,"d_play");
- ago("d_started",id);
- const res=await duel(b,{op:"submit",id,picks:picksFor(seed,"right",{wrong:[1]})});
+ const res=await debateTurn(b,id,{wrong:[1]});
  assert.equal(res.status,200,JSON.stringify(res.json));
- assert.deepEqual({score:res.json.score,errors:res.json.errors,status:res.json.status,mine:res.json.mine,theirs:res.json.theirs,res:res.json.res},
-  {score:2,errors:1,status:"done",mine:2,theirs:3,res:"loss"});
+ assert.deepEqual(res.json.result,{score:2,errors:1,status:"done",mine:2,theirs:3,res:"loss"});
  assert.equal(res.json.me.state.journal[0].k,"duel");assert.equal(res.json.me.state.journal[0].d.res,"loss");
  assert.ok(res.json.me.state.moral<moralB,"the loser's moral drops");
 
@@ -131,7 +129,10 @@ test("a full duel: challenge, play, the defender answers blind, both candidates 
  assert.ok((await a.call("GET","/api/me")).json.state.xp>=40);
  assert.equal((await find(b,id)).theirs,3,"revealed once done");
  assert.ok((await feedTexts(a)).includes("Duelliste A bat Duelliste B au Débat chrono, 3 à 2."));
- assert.equal(DB.prepare("SELECT paid FROM duels WHERE id=?").get(id).paid,1);
+ const row=DB.prepare("SELECT paid,turn,fx,c_first,d_first,c_done FROM duels WHERE id=?").get(id);
+ assert.equal(row.paid,1);assert.equal(row.turn,null,"the turn state is gone once played");
+ assert.ok(row.c_first&&row.d_first&&row.c_done,"request times kept for the multi-account signals");
+ const fx=JSON.parse(row.fx);assert.equal(fx.c.xp,40);assert.ok(fx.d.moral<0,"what each side really got is kept");
 });
 
 test("a refused challenge: the challenger gets the chicken, the defender's game is untouched",async()=>{
@@ -148,60 +149,45 @@ test("a refused challenge: the challenger gets the chicken, the defender's game 
  assert.equal((await duel(b,{op:"refuse",id})).status,422,"refused once");
 });
 
-test("forged picks void the challenge, and the pair waits 24 h either way",async()=>{
+test("a turn begun too late is over, and the pair waits 24 h either way",async()=>{
  const a=await player("Tricheur"),b=await player("Victime");
- const ch=await duel(a,{op:"challenge",name:"Victime"});const {id,seed}=ch.json.duel;
- ago("c_started",id);
- // Claimed after the time really spent playing.
- const r=await duel(a,{op:"submit",id,picks:picksFor(seed,"left",{gap:2000})});
- assert.equal(r.status,422);assert.equal(r.json.error,"Score refusé : le défi est annulé.");
+ const ch=await duel(a,{op:"challenge",name:"Victime"});const {id}=ch.json.duel;
+ // Waiting before the first question does not buy time: past the countdown and the grace, the turn is void.
+ DB.prepare("UPDATE duels SET c_started=c_started-? WHERE id=?").run(80000,id);
+ const r=await debate(a,{ref:id});
+ assert.equal(r.status,422);assert.match(r.json.error,/Trop tard/);
  assert.equal((await find(a,id)).status,"void");assert.equal(await find(b,id),undefined);
- assert.equal((await duel(a,{op:"submit",id,picks:picksFor(seed,"left")})).status,422,"a void duel is over");
+ assert.equal((await debate(a,{ref:id})).status,422,"a void duel is over");
  assert.equal((await duel(a,{op:"challenge",name:"Victime"})).json.error,"Déjà un duel entre vous il y a moins de 24 h.");
  assert.equal((await duel(b,{op:"challenge",name:"Tricheur"})).json.error,"Déjà un duel entre vous il y a moins de 24 h.");
  const row=(await duels(b)).json.opponents.find(o=>o.name==="Tricheur");assert.equal(row.ok,false);assert.equal(row.why,"Déjà un duel entre vous il y a moins de 24 h");
- // Other forgeries, each on a fresh pair: faster than the screen allows, a bad shape, too many points for the time.
- for(const [i,bad] of [[1,s=>picksFor(s,"left",{gap:100})],[2,()=>[[0,0],[1]]],[3,s=>picksFor(s,"left",{n:12,gap:250})],[4,()=>"oops"]].entries()){
-  const x=await player("Faussaire "+i),y=await player("Cible "+i);
-  const c=await duel(x,{op:"challenge",name:y.name});ago("c_started",c.json.duel.id);
-  assert.equal((await duel(x,{op:"submit",id:c.json.duel.id,picks:bad[1](c.json.duel.seed)})).status,422,"forgery "+bad[0]);
- }
- // A forged defender forfeits: the duel ends, scored 0.
+ // Bad requests: an unknown op, a choice out of range, an answer with no question on screen.
+ const x=await player("Faussaire"),y=await player("Cible");
+ const c=await duel(x,{op:"challenge",name:y.name}),xid=c.json.duel.id;
+ assert.equal((await debate(x,{ref:xid,choice:1})).status,400,"no question shown yet");
+ assert.equal((await x.call("POST","/api/debate",{op:"submit",ref:xid})).status,400);
+ await debate(x,{ref:xid});await sleep(650);
+ for(const choice of [3,-1,"1",1.5]){await sleep(200);assert.equal((await debate(x,{ref:xid,choice})).status,400,String(choice));}
+ // A defender too late forfeits: the duel ends, scored 0.
  const c2=await player("Honnête"),d2=await player("Filou");
  const {id:id2}=await challenged(c2,d2);
- assert.equal((await duel(d2,{op:"accept",id:id2})).status,200);await sleep(300);
- const f=await duel(d2,{op:"submit",id:id2,picks:[[0,0],[0,1]]});
- assert.equal(f.status,422);
- assert.deepEqual({ok:f.json.ok,error:f.json.error,res:f.json.res,mine:f.json.mine,theirs:f.json.theirs},
-  {ok:false,error:"Score refusé ou envoyé trop tard : duel perdu par forfait.",res:"loss",mine:0,theirs:3});
- assert.equal(f.json.me.name,"Filou");
+ assert.equal((await duel(d2,{op:"accept",id:id2})).status,200);
+ DB.prepare("UPDATE duels SET d_started=d_started-? WHERE id=?").run(80000,id2);
+ const f=await debate(d2,{ref:id2});
+ assert.equal(f.status,422);assert.match(f.json.error,/Trop tard/);
  const done=await find(d2,id2);assert.equal(done.status,"done");assert.equal(done.mine,0);assert.equal(done.res,"loss");
  assert.equal((await find(c2,id2)).res,"win");
 });
 
-test("waiting before sending never raises the human-pace cap: 60 perfect answers are refused",async()=>{
- const {debate}=R.MINI,cap=Math.ceil(debate.ms/1000*debate.perSecond)+1;   // 15 s of play at most: 39
- assert.equal(cap,39);
- // A turn begun 25 s ago (24 s of "play" after the countdown): a cap counted on the elapsed time would allow 61.
- const WAITED=25000,oldCap=el=>Math.ceil((el-R.DEBATE.intro)/1000*debate.perSecond)+1;
- async function turn(n){
-  const a=await player("Pressé "+n),b=await player("Témoin "+n);
-  const ch=await duel(a,{op:"challenge",name:b.name});const {id,seed}=ch.json.duel;
-  ago("c_started",id,WAITED);
-  const picks=picksFor(seed,"left",{n,gap:R.DUEL.minGap});
-  const replay=R.replayDebate(seed,"left",picks);
-  assert.equal(replay.points,n,"every pick lands within the 15 s of play");
-  assert.ok(n<=oldCap(WAITED),`the old elapsed-based cap (${oldCap(WAITED)}) would have taken ${n}`);
-  return {id,a,r:await duel(a,{op:"submit",id,picks})};
- }
- const t60=await turn(60);
- assert.equal(t60.r.status,422);assert.equal(t60.r.json.error,"Score refusé : le défi est annulé.");
- assert.equal((await find(t60.a,t60.id)).status,"void");
- // Exactly the cap passes (39 picks, the last at 9.5 s), one more is refused: the pace cap is what refused 60.
- const atCap=await turn(cap);
- assert.equal(atCap.r.status,200,JSON.stringify(atCap.r.json));assert.equal(atCap.r.json.score,cap);
- const over=await turn(cap+1);
- assert.equal(over.r.status,422);assert.equal((await find(over.a,over.id)).status,"void");
+test("a turn left half-played is closed by the clock with what was scored",async()=>{
+ const a=await player("Pressé"),b=await player("Témoin");
+ const ch=await duel(a,{op:"challenge",name:b.name}),{id}=ch.json.duel;
+ let r=await debate(a,{ref:id});await sleep(650);
+ r=await debate(a,{ref:id,choice:answerOf(r.json.q,"left")});
+ assert.equal(r.json.points,1);assert.equal(r.json.right,true);
+ // The page is closed: the sweep ends the turn once its 3.5 s (and a short grace) have run out.
+ assert.ok(await until(async()=>(await find(a,id)).status==="pending",9000));
+ assert.equal((await find(a,id)).mine,1);
 });
 
 test("limits: one open duel per pair, three challenges a day",async()=>{
@@ -262,7 +248,7 @@ test("a deleted account mid-duel takes its duels away and breaks nothing",async(
  const {id:id2}=await challenged(c,d);
  assert.equal((await duel(d,{op:"accept",id:id2})).status,200);
  assert.equal((await c.call("DELETE","/api/account",{password:PW})).status,200);
- assert.equal((await duel(d,{op:"submit",id:id2,picks:[]})).json.error,"Duel introuvable.");
+ assert.equal((await debate(d,{ref:id2})).json.error,"Duel introuvable.");
  await sleep(500);
  assert.equal((await d.call("GET","/api/health")).status,200);
 });

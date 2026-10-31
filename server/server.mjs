@@ -20,7 +20,7 @@ const DB_PATH=env.DB_PATH||"/data/politigo.db";
 // Invite code: POLITIGO_INVITE, "off" to close registrations, or unset for a code generated once and kept next to
 // the database (same code across restarts and image updates; delete the file and restart for a new one).
 const INVITE_FILE=join(dirname(DB_PATH),"invite.txt");
-let INVITE=(env.POLITIGO_INVITE||"").trim(),INVITE_GENERATED=false;
+let INVITE=(env.POLITIGO_INVITE||"").trim(),INVITE_GENERATED=false,INVITE_NEW=false;
 if(INVITE.toLowerCase()==="off")INVITE="";
 else if(INVITE){
  // A short or example invite code would open the game to anyone who reads the repository: refuse to start.
@@ -30,7 +30,7 @@ else if(INVITE){
 }else{
  try{INVITE=readFileSync(INVITE_FILE,"utf8").trim();}catch(e){if(e.code!=="ENOENT")console.error(`${INVITE_FILE}: ${e.message}`);}
  if(INVITE.length<16){
-  INVITE="politigo-"+crypto.randomBytes(12).toString("base64url");
+  INVITE="politigo-"+crypto.randomBytes(12).toString("base64url");INVITE_NEW=true;
   // An unwritable volume must not take the game down: the code then just changes at every start (and says so).
   try{writeFileSync(INVITE_FILE,INVITE+"\n",{mode:0o600});}
   catch(e){console.error(`Invite code NOT saved (${e.message}): it will change at the next start. Set POLITIGO_INVITE to keep one.`);}
@@ -47,8 +47,14 @@ const SWEEP_MS=Number(env.SWEEP_MS||30000);
 // Presence changes reach the board at most once per PRESENCE_MS: a refresh or a reconnect does not flicker, and a
 // client opening and closing streams in a loop cannot make the server rebroadcast the board to everyone.
 const PRESENCE_MS=Math.max(0,Number(env.PRESENCE_MS??8000));
+// Every game change used to resend the whole board to every stream: now at most one board per BOARD_MS.
+const BOARD_MS=Math.max(0,Number(env.BOARD_MS??1000));
 const MAX_PLAYERS=Math.max(1,Number(env.MAX_PLAYERS)||50);   // a leaked invite code cannot flood the database
-const SESSION_DAYS=90,BODY_LIMIT=4096,FEED_KEEP=200,SESSIONS_PER_PLAYER=10,SSE_PER_PLAYER=3,SSE_TOTAL=300;
+const SESSION_DAYS=90,BODY_LIMIT=4096,FEED_KEEP=200,SESSIONS_PER_PLAYER=10,SSE_PER_PLAYER=3,SSE_TOTAL=300,SSE_PER_IP=12;
+// Sign-ups per address and hour: a group of friends behind one box, not a farm of accounts.
+const REG_PER_HOUR=3;
+// Said at start: the streams the players may open together must fit within the server-wide cap.
+if(MAX_PLAYERS*SSE_PER_PLAYER>SSE_TOTAL*0.8)console.warn(`MAX_PLAYERS ${MAX_PLAYERS} × ${SSE_PER_PLAYER} live streams is close to or above the server cap of ${SSE_TOTAL}: some screens may be turned away.`);
 // The __Host- prefix makes the browser refuse the cookie unless it is Secure, host-only and Path=/.
 const COOKIE=COOKIE_SECURE?"__Host-pg_session":"pg_session";
 R.setTimeZone(env.POLITIGO_TZ||"Europe/Paris");
@@ -59,6 +65,9 @@ const DUEL_MIN_LEVEL=knob(env.POLITIGO_DUEL_MIN_LEVEL,R.DUEL.minLevel),DUEL_MIN_
 if(DUEL_MIN_LEVEL!==R.DUEL.minLevel||DUEL_MIN_AGE!==R.DUEL.minAgeMs)console.warn(`Duel test settings active: level ${DUEL_MIN_LEVEL}+, accounts ${DUEL_MIN_AGE/R.H} h old+ (normal: ${R.DUEL.minLevel}, ${R.DUEL.minAgeMs/R.H} h).`);
 // A turn is void past the debate, its countdown and the same grace as the solo mini-games.
 const DUEL_TURN_MS=R.MINI.debate.ms+R.DEBATE.intro+R.MINI_RULES.graceSeconds*1000;
+// The server-paced debate's length. The knob exists for tests (a turn in 2 s) and can only SHORTEN it.
+const DEBATE_MS=knob(env.POLITIGO_DEBATE_MS,R.MINI.debate.ms);
+if(DEBATE_MS!==R.MINI.debate.ms)console.warn(`Debate test setting active: ${DEBATE_MS} ms of play (normal: ${R.MINI.debate.ms}).`);
 // Seasonal events (Halloween): "auto" follows the calendar, "off" switches them off, "halloween" forces it (a test).
 let EVENT_MODE=R.EVENT_MODES.includes(env.POLITIGO_EVENT)?env.POLITIGO_EVENT:"auto";
 if(env.POLITIGO_EVENT&&EVENT_MODE!==env.POLITIGO_EVENT)console.error(`POLITIGO_EVENT must be one of ${R.EVENT_MODES.join(", ")}: using auto.`);
@@ -96,7 +105,18 @@ CREATE TABLE IF NOT EXISTS schedules(id INTEGER PRIMARY KEY,text TEXT NOT NULL,t
  until INTEGER,next INTEGER,last INTEGER,enabled INTEGER NOT NULL DEFAULT 1,created INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS activity(player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,t INTEGER NOT NULL,kind TEXT NOT NULL,live INTEGER NOT NULL,ua TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS activity_player ON activity(player_id,t);
-CREATE INDEX IF NOT EXISTS activity_t ON activity(t);`);
+CREATE INDEX IF NOT EXISTS activity_t ON activity(t);
+CREATE TABLE IF NOT EXISTS mini_scores(id INTEGER PRIMARY KEY,player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,t INTEGER NOT NULL,
+ game TEXT NOT NULL,score INTEGER,secs REAL,errors INTEGER,flags TEXT);
+CREATE INDEX IF NOT EXISTS mini_scores_player ON mini_scores(player_id,t);
+CREATE INDEX IF NOT EXISTS mini_scores_t ON mini_scores(t);
+CREATE TABLE IF NOT EXISTS tombstones(name_key TEXT PRIMARY KEY,created INTEGER NOT NULL,deleted INTEGER NOT NULL);`);
+// Duels from before the server-paced debate: its turn state, the per-turn flags, what the result changed (to annul
+// it) and when each side first answered and finished (the multi-account signals).
+for(const [col,type] of [["turn","TEXT"],["flags","TEXT"],["fx","TEXT"],["c_first","INTEGER"],["d_first","INTEGER"],["c_done","INTEGER"]]){
+ if(db.prepare("PRAGMA table_info(duels)").all().some(c=>c.name===col))continue;
+ try{db.exec(`ALTER TABLE duels ADD COLUMN ${col} ${type}`);}catch(e){if(!/duplicate column/i.test(e.message))throw e;}
+}
 // Databases from before the changelog (or the suspensions) lack the column: NULL means "has read nothing yet".
 // Another process starting on the same file at the same moment may have added it first: that is fine too.
 for(const [col,type] of [["seen_version","TEXT"],["suspended","INTEGER NOT NULL DEFAULT 0"]]){
@@ -173,12 +193,34 @@ const q={
  // What limits a new challenge: open duels and those created within the window, in either direction.
  recentDuelsOf:db.prepare("SELECT challenger,defender,status FROM duels WHERE (challenger=? OR defender=?) AND (status IN ('c_play','pending','d_play') OR created>?)"),
  sentOn:db.prepare("SELECT COUNT(*) AS n FROM duels WHERE challenger=? AND sday=?"),
- paidWinsOn:db.prepare("SELECT COUNT(*) AS n FROM duels WHERE winner=? AND paid=1 AND rday=?"),
- duelPending:db.prepare("UPDATE duels SET status='pending',c_score=?,expires=? WHERE id=? AND status='c_play'"),
- duelAccept:db.prepare("UPDATE duels SET status='d_play',d_started=? WHERE id=? AND status='pending'"),
- duelClose:db.prepare("UPDATE duels SET status=?,resolved=?,rday=? WHERE id=? AND status=?"),
- duelDone:db.prepare("UPDATE duels SET status='done',d_score=?,resolved=?,winner=?,paid=?,rday=? WHERE id=? AND status='d_play'"),
- staleDuels:db.prepare("SELECT * FROM duels WHERE (status='c_play' AND c_started<?) OR (status='d_play' AND d_started<?) OR (status='pending' AND expires<=?)"),
+ // An annulled win still used its slot: annulling a cheater's duel does not free one for the same day.
+ paidWinsOn:db.prepare("SELECT COUNT(*) AS n FROM duels WHERE winner=? AND paid=1 AND rday=? AND status IN ('done','annulled')"),
+ // Every win as the defender counts, paid or not: past DUEL.defWinsPerDay a defence pays nothing at all.
+ defWinsOn:db.prepare("SELECT COUNT(*) AS n FROM duels WHERE winner=? AND defender=? AND rday=? AND status IN ('done','annulled')"),
+ duelPending:db.prepare("UPDATE duels SET status='pending',c_score=?,expires=?,c_done=?,turn=NULL WHERE id=? AND status='c_play'"),
+ duelAccept:db.prepare("UPDATE duels SET status='d_play',d_started=?,turn=NULL WHERE id=? AND status='pending'"),
+ duelClose:db.prepare("UPDATE duels SET status=?,resolved=?,rday=?,turn=NULL WHERE id=? AND status=?"),
+ duelDone:db.prepare("UPDATE duels SET status='done',d_score=?,resolved=?,winner=?,paid=?,rday=?,turn=NULL WHERE id=? AND status='d_play'"),
+ // A turn's state is written before each reply, only while it is still that turn: a restart resumes it, never replays it.
+ duelTurn:db.prepare("UPDATE duels SET turn=? WHERE id=? AND status=?"),
+ firstC:db.prepare("UPDATE duels SET c_first=COALESCE(c_first,?) WHERE id=?"),
+ firstD:db.prepare("UPDATE duels SET d_first=COALESCE(d_first,?) WHERE id=?"),
+ duelFlags:db.prepare("UPDATE duels SET flags=? WHERE id=?"),
+ duelSetFx:db.prepare("UPDATE duels SET fx=? WHERE id=?"),
+ duelAnnul:db.prepare("UPDATE duels SET status='annulled',paid=0 WHERE id=? AND status='done'"),
+ turnDuels:db.prepare("SELECT * FROM duels WHERE turn IS NOT NULL AND status IN ('c_play','d_play')"),
+ duelsSince:db.prepare("SELECT id,challenger,defender,status,created,c_first,c_done,d_started,d_first,winner,c_score,d_score FROM duels WHERE created>? ORDER BY id"),
+ purgeDuels:db.prepare("DELETE FROM duels WHERE status NOT IN ('c_play','pending','d_play') AND COALESCE(resolved,created)<?"),
+ insertMini:db.prepare("INSERT INTO mini_scores(player_id,t,game,score,secs,errors,flags) VALUES(?,?,?,?,?,?,?)"),
+ purgeMini:db.prepare("DELETE FROM mini_scores WHERE t<?"),
+ miniOf:db.prepare("SELECT player_id,t,game,score,secs,errors,flags FROM mini_scores WHERE player_id=? AND t>? ORDER BY t"),
+ miniSince:db.prepare("SELECT player_id,t,game,score,secs,errors,flags FROM mini_scores WHERE t>? ORDER BY player_id,t"),
+ tombstone:db.prepare("INSERT INTO tombstones(name_key,created,deleted) VALUES(?,?,?) ON CONFLICT(name_key) DO UPDATE SET created=excluded.created,deleted=excluded.deleted"),
+ tombstoneOf:db.prepare("SELECT created,deleted FROM tombstones WHERE name_key=?"),
+ purgeTombstones:db.prepare("DELETE FROM tombstones WHERE deleted<?"),
+ deleteFeedOf:db.prepare("DELETE FROM feed WHERE player=?"),
+ // A turn being played (its state written) is closed by its own clock instead.
+ staleDuels:db.prepare("SELECT * FROM duels WHERE (status='c_play' AND c_started<? AND turn IS NULL) OR (status='d_play' AND d_started<? AND turn IS NULL) OR (status='pending' AND expires<=?)"),
  upsertSub:db.prepare("INSERT INTO push_subs(player_id,endpoint,p256dh,auth,created) VALUES(?,?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET player_id=excluded.player_id,p256dh=excluded.p256dh,auth=excluded.auth,created=excluded.created"),
  trimSubs:db.prepare("DELETE FROM push_subs WHERE player_id=? AND id NOT IN (SELECT id FROM push_subs WHERE player_id=? ORDER BY created DESC,id DESC LIMIT ?)"),
  deleteSub:db.prepare("DELETE FROM push_subs WHERE endpoint=? AND player_id=?"),
@@ -246,24 +288,55 @@ function update(p,fn){
 
 // ===================================================================== SECURITY HELPERS
 const sha256=s=>crypto.createHash("sha256").update(s).digest("hex");
+// Every random draw of the game (stresses, the debate's seed, the games' ids) from the OS, not a guessable Math.random.
+const rand=()=>crypto.randomInt(0,2**48-1)/2**48;
 const SCRYPT={N:1<<15,r:8,p:1,maxmem:64*1024*1024};
 // Asynchronous scrypt: a login (~100 ms of hashing) never freezes the game clock or the live streams.
 const scryptRaw=promisify(crypto.scrypt);
-// Each hash takes 32 MB: a burst of logins from many addresses is turned away instead of exhausting memory.
+// Each hash takes 32 MB: at most HASH_MAX run at once, the others wait in a bounded line (HASH_QUEUE, HASH_WAIT_MS)
+// instead of being turned away. One hash at a time per address (its others wait their turn, HASH_PER_IP in line at
+// most), and a request for a name that exists goes first: a flood of logins for made-up names (which still pay the
+// dummy hash, for the timing) cannot starve the real players.
+const HASH_MAX=4,HASH_QUEUE=32,HASH_WAIT_MS=10000,HASH_PER_IP=4;
+const hashActive=new Map(),hashLine=[];   // ip -> running hashes; waiting {ip,prio,go,timer}
 let hashing=0;
-async function scrypt(...args){
- if(hashing>=6)throw new HttpError(503,"Serveur occupé, réessaie dans un instant.");
- hashing++;try{return await scryptRaw(...args);}finally{hashing--;}
+const BUSY="Serveur occupé, réessaie dans un instant.";
+function hashNext(){
+ while(hashing<HASH_MAX){
+  const free=w=>!hashActive.get(w.ip);
+  const i=hashLine.findIndex(w=>w.prio&&free(w)),j=i>=0?i:hashLine.findIndex(free);
+  if(j<0)return;
+  const [w]=hashLine.splice(j,1);clearTimeout(w.timer);w.go();
+ }
 }
-async function hashPassword(pw){
+function hashSlot(ip,prio){
+ if(hashLine.filter(w=>w.ip===ip).length>=HASH_PER_IP)return Promise.reject(new HttpError(503,BUSY));
+ if(hashLine.length>=HASH_QUEUE){
+  // A full line makes room for a real name by turning away the newest made-up one.
+  const k=prio?hashLine.findLastIndex(w=>!w.prio):-1;if(k<0)return Promise.reject(new HttpError(503,BUSY));
+  const [out]=hashLine.splice(k,1);clearTimeout(out.timer);out.no();
+ }
+ return new Promise((ok,ko)=>{
+  const w={ip,prio,go:()=>{hashing++;hashActive.set(ip,(hashActive.get(ip)||0)+1);ok();},no:()=>ko(new HttpError(503,BUSY))};
+  w.timer=setTimeout(()=>{const k=hashLine.indexOf(w);if(k>=0)hashLine.splice(k,1);ko(new HttpError(503,BUSY));},HASH_WAIT_MS);w.timer.unref?.();
+  hashLine.push(w);hashNext();
+ });
+}
+// who: {ip, prio}; the server's own hashes (start-up, admin) use their own line.
+async function scrypt(pw,salt,who={ip:"server",prio:true}){
+ const ip=String(who.ip||"?");await hashSlot(ip,!!who.prio);
+ try{return await scryptRaw(pw,salt,64,SCRYPT);}
+ finally{hashing--;const n=(hashActive.get(ip)||1)-1;if(n)hashActive.set(ip,n);else hashActive.delete(ip);hashNext();}
+}
+async function hashPassword(pw,who){
  const salt=crypto.randomBytes(16);
- return `scrypt$${salt.toString("base64")}$${(await scrypt(pw,salt,64,SCRYPT)).toString("base64")}`;
+ return `scrypt$${salt.toString("base64")}$${(await scrypt(pw,salt,who)).toString("base64")}`;
 }
 const DUMMY_HASH=await hashPassword("timing-equaliser");
-async function checkPassword(pw,stored){
+async function checkPassword(pw,stored,who){
  const [kind,salt,hash]=String(stored).split("$");
  if(kind!=="scrypt"||!salt||!hash)return false;
- const got=await scrypt(pw,Buffer.from(salt,"base64"),64,SCRYPT),want=Buffer.from(hash,"base64");
+ const got=await scrypt(pw,Buffer.from(salt,"base64"),who),want=Buffer.from(hash,"base64");
  return got.length===want.length&&crypto.timingSafeEqual(got,want);
 }
 const sameSecret=(a,b)=>crypto.timingSafeEqual(Buffer.from(sha256(a)),Buffer.from(sha256(b)));
@@ -377,25 +450,36 @@ function closeStream(c,quiet=false){
 let presenceTimer=null;
 function presenceChanged(){
  if(presenceTimer)return;
- presenceTimer=setTimeout(()=>{presenceTimer=null;try{publishBoard();}catch(e){console.error("board on presence change:",e);}},PRESENCE_MS);
+ presenceTimer=setTimeout(()=>{presenceTimer=null;try{flushBoard();}catch(e){console.error("board on presence change:",e);}},PRESENCE_MS);
  presenceTimer.unref?.();
 }
 function broadcast(event,data){for(const c of clients)sse(c.res,event,data);}
 function pushMe(p){const data=mePayload(p);for(const c of clients)if(c.playerId===p.id)sse(c.res,"me",data);}
-// True when the board was sent to every stream.
+// A change only marks the board dirty: one board goes out per BOARD_MS whatever the number of actions, so forty
+// quick actions no longer cost forty boards to every stream. force: now (a player removed, suspended).
+let boardTimer=null;
 function publishBoard(force=false){
- const rows=boardRows(),json=JSON.stringify(rows);
- if(force||json!==lastBoard){lastBoard=json;broadcast("board",rows);return true;}
+ if(force){clearTimeout(boardTimer);boardTimer=null;return flushBoard();}
+ if(boardTimer)return false;
+ boardTimer=setTimeout(()=>{boardTimer=null;try{flushBoard();}catch(e){console.error("board:",e);}},BOARD_MS);boardTimer.unref?.();
  return false;
 }
-function mePayload(p){return {name:p.name,state:p.state,speed:SPEED,tz:R.timeZone(),serverNow:Date.now(),event:EVENT_MODE,version:VERSION,release:RELEASE,seenVersion:p.seen??null,chat:chatRooms()};}
+// True when the board changed and was sent to every stream.
+function flushBoard(){
+ const rows=boardRows(),json=JSON.stringify(rows);
+ if(json!==lastBoard){lastBoard=json;broadcast("board",rows);return true;}
+ return false;
+}
+// The debate's seed deals its answers: it never leaves the server (the other games' seeds only shape what is drawn).
+const publicState=S=>S.mini?.k==="debate"&&"seed" in S.mini?{...S,mini:Object.fromEntries(Object.entries(S.mini).filter(([k])=>k!=="seed"))}:S;
+function mePayload(p){return {name:p.name,state:publicState(p.state),speed:SPEED,tz:R.timeZone(),serverNow:Date.now(),event:EVENT_MODE,version:VERSION,release:RELEASE,seenVersion:p.seen??null,chat:chatRooms()};}
 // The clock runs for everyone, connected or not: needs drain and deaths happen while the page is closed.
 setInterval(()=>{
  const now=Date.now();
  for(const p of players.values()){
   // One broken player (or a full disk) is logged and skipped; it must not stop everyone else's clock.
   if(p.suspended)continue;   // frozen: their companion neither lives nor dies until the suspension is lifted
-  try{update(p,S=>R.advance(S,now,SPEED,Math.random));}
+  try{update(p,S=>R.advance(S,now,SPEED,rand));}
   catch(e){console.error(`sweep, player ${p.id}:`,e);}
  }
  try{sweepSchedules(now);}catch(e){console.error("sweep, schedules:",e);}
@@ -459,10 +543,14 @@ function duelFeed(player,text){
 }
 // An outcome lands like any other change: clock brought up to date, written, pushed to the player's screens.
 // A player who deleted their account in the meantime is simply skipped.
+// Returns what really changed ({xp,lvl,moral,energy}, after the floors), kept with the duel so the admin can annul it.
 function duelFx(id,res,opts,now){
- const pl=players.get(id);if(!pl)return;
- try{update(pl,S=>{R.advance(S,now,SPEED,Math.random);return R.duelApply(S,res,opts);});}
- catch(e){console.error(`duel result "${res}" NOT applied to player ${id} (the duel itself is closed):`,e);}
+ const pl=players.get(id);if(!pl)return null;
+ let fx=null;
+ try{update(pl,S=>{R.advance(S,now,SPEED,rand);const b={xp:S.xp,lvl:S.lvl,moral:S.moral,energy:S.energy},ok=R.duelApply(S,res,opts);
+  fx={xp:S.xp-b.xp,lvl:S.lvl-b.lvl,moral:S.moral-b.moral,energy:S.energy-b.energy};return ok;});}
+ catch(e){fx=null;console.error(`duel result "${res}" NOT applied to player ${id} (the duel itself is closed):`,e);}
+ return fx;
 }
 // The rules' own check (asleep, level), at the level this server is configured for.
 const playBlock=S=>R.duelBlock(S,DUEL_MIN_LEVEL);
@@ -501,11 +589,14 @@ function duelView(d,me){
 // Returns the result from the defender's view, or null when the duel was already over.
 function resolveDuel(d,dScore,now){
  const c=d.c_score??0,w=c>dScore?d.challenger:dScore>c?d.defender:null,day=dayNow(now);
- const paid=w!==null&&q.paidWinsOn.get(w,day).n<R.DUEL.paidWins?1:0;
+ // Paid: within the day's paid wins, and for a defender within DUEL.defWinsPerDay wins (an alt challenging its main
+ // account all day long pays nothing past that).
+ const paid=w!==null&&R.duelPaid(q.paidWinsOn.get(w,day).n,q.defWinsOn.get(w,w,day).n,w===d.defender)?1:0;
  if(!q.duelDone.run(dScore,now,w,paid,day,d.id).changes)return null;
  const cn=nameOf(d.challenger),dn=nameOf(d.defender),view=id=>w===null?"tie":w===id?"win":"loss";
- duelFx(d.challenger,view(d.challenger),{vs:dn,mine:c,theirs:dScore,paid:!!paid},now);
- duelFx(d.defender,view(d.defender),{vs:cn,mine:dScore,theirs:c,paid:!!paid},now);
+ const fx={c:duelFx(d.challenger,view(d.challenger),{vs:dn,mine:c,theirs:dScore,paid:!!paid},now),
+  d:duelFx(d.defender,view(d.defender),{vs:cn,mine:dScore,theirs:c,paid:!!paid},now)};
+ try{q.duelSetFx.run(JSON.stringify(fx),d.id);}catch(e){console.error(`duel ${d.id}: effects not recorded`,e);}
  duelFeed(w===d.defender?dn:cn,w===null?`Match nul entre ${cn} et ${dn} au Débat chrono, ${c} partout.`
   :w===d.challenger?`${cn} bat ${dn} au Débat chrono, ${c} à ${dScore}.`:`${dn} bat ${cn} au Débat chrono, ${dScore} à ${c}.`);
  duelEvent(d,"resolved",[d.challenger,d.defender]);
@@ -521,7 +612,10 @@ function closeDuel(d,status,now){
  notify(d.challenger,{title:"Duel terminé",tag:`duel-${d.id}`,url:"/",body:`${nameOf(d.defender)} ${status==="refused"?"a esquivé":"n'a pas répondu à"} ton défi : moral +${R.DUEL.chicken.moral}.`});
  return true;
 }
-// Turns nobody finished and challenges nobody answered are closed by the clock.
+// Turns nobody finished and challenges nobody answered are closed by the clock; so are the debates whose time ran out
+// with nobody asking any more (what was scored counts), a few seconds after the whistle: the page asking for its
+// result right at the end gets it, instead of finding the turn already closed.
+const TURN_GRACE=3000;
 function sweepDuels(now){
  const cut=now-DUEL_TURN_MS;
  for(const d of q.staleDuels.all(cut,cut,now)){
@@ -531,6 +625,126 @@ function sweepDuels(now){
    else closeDuel(d,"expired",now);
   }catch(e){console.error(`sweep, duel ${d.id}:`,e);}
  }
+ for(const d of q.turnDuels.all()){
+  try{
+   const tn=turnOf(d);
+   if(!tn){q.duelTurn.run(null,d.id,d.status);continue;}   // unreadable: left to the turn limit above
+   const p=players.get(d.status==="c_play"?d.challenger:d.defender);
+   if(p&&debateOver(tn.st,now-TURN_GRACE))duelFinish(p,d,tn,now);
+  }catch(e){console.error(`sweep, duel turn ${d.id}:`,e);}
+ }
+ for(const [id,tn] of [...soloTurns]){
+  try{
+   const p=players.get(id);
+   if(!p||p.suspended||miniKey(p.state.mini)!==tn.t){soloTurns.delete(id);continue;}
+   if(debateOver(tn.st,now-TURN_GRACE))soloFinish(p,tn,now);
+  }catch(e){soloTurns.delete(id);console.error(`sweep, debate of player ${id}:`,e);}
+ }
+}
+
+// ---- The Débat chrono, solo and duel, is paced by the server: the browser asks for one question at a time and
+// answers it, and never sees the seed, the deal nor which answer is right (a script that knew them won every duel
+// 37 to 0). A turn lives in memory for a solo game (a restart ends it, like an expiry) and in its duel row for a duel
+// (written before every reply: a restart resumes the turn, never replays it).
+const soloTurns=new Map();   // playerId -> {t: the game it belongs to, st: the rules' turn state, q: the question on screen}
+const miniKey=m=>m&&m.k==="debate"?m.id??m.t??m.t0??null:null;
+const debateLeft=(st,now)=>st.t0==null?DEBATE_MS:Math.max(0,DEBATE_MS-st.lost-(now-st.t0));
+const debateOver=(st,now)=>st.t0!=null&&(debateLeft(st,now)<=0||R.debateDone(st,now));
+const turnOf=d=>{try{const t=d.turn&&JSON.parse(d.turn);return t&&t.st?t:null;}catch{return null;}};
+// One step: the answer to the question on screen (counted only while time is left), then the next question.
+function debateStep(tn,choice,now,idx){
+ let ans={right:null};
+ if(choice!==undefined){
+  if(choice!==0&&choice!==1&&choice!==2)throw new HttpError(400,"Réponse inconnue.");
+  if(!tn.q)throw new HttpError(400,"Aucune question à l'écran.");
+  if(!debateOver(tn.st,now)){
+   // Too fast to have been read, or a retried request (idx): ignored by the rules, the same question stays on screen.
+   const before=tn.st.idx,a=R.debateAnswer(tn.st,choice,now,Number.isInteger(idx)?idx:undefined);
+   if(!a)throw new HttpError(400,"Aucune question à l'écran.");
+   ans={right:a.right??null,...(a.miss?{miss:a.miss}:{}),...(a.ignored?{ignored:true}:{})};
+   if(tn.st.idx!==before)tn.q=null;
+  }
+ }
+ const done=debateOver(tn.st,now);
+ if(!done&&!tn.q){const v=R.debateReveal(tn.st,now);if(v)tn.q={idx:v.idx,text:v.text,answers:v.answers};}
+ return {...ans,done};
+}
+const debateReply=(tn,step,now)=>{const {done,...ans}=step;
+ return {ok:true,q:done?null:tn.q,points:Math.min(tn.st.points,R.DEBATE.maxPoints),errors:tn.st.errors,leftMs:debateLeft(tn.st,now),done,...ans};};
+function soloFinish(p,tn,now){
+ soloTurns.delete(p.id);
+ const res=R.debateResult(tn.st),ours=miniKey(p.state.mini)===tn.t,t=p.state.mini?.t??p.state.mini?.t0??now;
+ const r=update(p,S=>R.debateFinish(S,tn.st,{now,speed:SPEED,random:rand}));
+ if(ours)recordMini(p,{game:"debate",score:res.points,secs:(now-t)/1000,errors:res.errors,flags:[...new Set([...(res.flags||[]),...(r.audit?.flags||[])])]},now);
+ if(deferred.size)flushDeferred();
+ const {audit:_,...out}=r;
+ return {...out,score:res.points,errors:res.errors};
+}
+// A turn's end: the score is the server's, its flags are kept with the duel (and logged for the admin).
+function duelFinish(p,d,tn,now){
+ const mineC=d.challenger===p.id,res=R.debateResult(tn.st);
+ // Kept with the mini-games too: a duel turn weighs in the bot report (full scores, constant scores, flags).
+ recordMini(p,{game:"duel",score:res.points,secs:tn.st.t0===null?null:(now-tn.st.t0)/1000,errors:res.errors,flags:res.flags},now);
+ if(res.flags?.length){
+  let all=[];try{all=JSON.parse(d.flags||"[]");}catch{}
+  all.push({side:mineC?"c":"d",name:p.name,flags:res.flags});
+  try{q.duelFlags.run(JSON.stringify(all),d.id);}catch(e){console.error(`duel ${d.id}: flags not recorded`,e);}
+  audit("server","duel-flag",`#${d.id}`,`duel #${d.id} signalé : ${p.name} (${res.flags.join(", ")})`);
+ }
+ if(mineC){
+  if(!q.duelPending.run(res.points,now+R.DUEL.window,now,d.id).changes)throw new HttpError(422,"Ce n'est pas ton tour de jouer.");
+  const dn=nameOf(d.defender);
+  duelFeed(p.name,`${p.name} défie ${dn} au Débat chrono.`);
+  duelEvent(d,"challenged",[d.defender]);
+  notify(d.defender,{title:"Défi reçu !",body:`${p.name} te défie au Débat chrono. Tu as 24 h pour relever le défi.`,tag:`duel-${d.id}`,url:"/"});
+  return {score:res.points,errors:res.errors,status:"pending",mine:res.points,theirs:null,res:null};
+ }
+ const out=resolveDuel(d,res.points,now);
+ if(out===null)throw new HttpError(422,"Ce duel est déjà terminé.");
+ return {score:res.points,errors:res.errors,status:"done",mine:res.points,theirs:d.c_score??0,res:out};
+}
+// One step of a duel turn, for the player whose turn it is.
+function duelStep(p,d,choice,now,idx){
+ const mineC=d.challenger===p.id,status=mineC?"c_play":"d_play";
+ if(d.status!==status)throw new HttpError(422,"Ce n'est pas ton tour de jouer.");
+ let tn=turnOf(d);
+ if(!tn){
+  // The first question must come within the countdown and the grace, or the turn is over (as the sweep would say).
+  if(now-(mineC?d.c_started:d.d_started)>DUEL_TURN_MS-R.MINI.debate.ms){
+   if(mineC){if(q.duelClose.run("void",now,dayNow(now),d.id,"c_play").changes)duelEvent(d,"void",[p.id]);}
+   else resolveDuel(d,0,now);
+   throw new HttpError(422,"Trop tard : ce tour est terminé.");
+  }
+  tn={st:R.debateNew(d.seed,p.state.camp,{count:R.QUESTIONS.length,now,id:d.id}),q:null};   // a duel deals from QUESTIONS alone
+ }
+ const step=debateStep(tn,choice,now,idx);
+ if(choice!==undefined)(mineC?q.firstC:q.firstD).run(now,d.id);
+ if(step.done)return {tn,step,result:duelFinish(p,d,tn,now)};
+ if(!q.duelTurn.run(JSON.stringify(tn),d.id,status).changes)throw new HttpError(422,"Ce n'est pas ton tour de jouer.");
+ return {tn,step};
+}
+// POST /api/debate {op:"next", ref:"solo"|duel id, choice?:0|1|2}: answers the question on screen (if any) and shows
+// the next one; the reply that ends the game carries its result.
+async function debateRoute(req,res){
+ const p=auth(req);if(limited("debate:"+p.id,6,1000))throw new HttpError(429,"Doucement : une réponse à la fois.");
+ const b=await readJson(req);
+ if(!players.has(p.id))throw new HttpError(401,"Connexion requise.");   // deleted while the body was arriving
+ if(b.op!=="next")throw new HttpError(400,"Opération inconnue.");
+ const now=Date.now(),choice=b.choice??undefined;
+ if(b.choice===undefined||b.choice===null)logActivity(p,req,"debate:next");   // one line per question shown would drown the log
+ if(b.ref==="solo"){
+  update(p,S=>R.advance(S,now,SPEED,rand));
+  const tn=soloTurns.get(p.id);
+  if(!tn||miniKey(p.state.mini)!==tn.t){soloTurns.delete(p.id);throw new HttpError(422,"Aucun débat en cours.");}
+  const step=debateStep(tn,choice,now,b.idx);
+  if(!step.done)return send(res,200,debateReply(tn,step,now));
+  const result=soloFinish(p,tn,now);
+  return send(res,200,{...debateReply(tn,step,now),result,me:mePayload(p)});
+ }
+ const d=Number.isSafeInteger(b.ref)&&q.duel.get(b.ref);
+ if(!d||(d.challenger!==p.id&&d.defender!==p.id))throw new HttpError(422,"Duel introuvable.");
+ const {tn,step,result}=duelStep(p,d,choice,now,b.idx);
+ return send(res,200,{...debateReply(tn,step,now),...(result?{result,me:mePayload(p)}:{})});
 }
 async function duelRoute(req,res){
  const p=auth(req);if(limited("duel:"+p.id,30,60e3))throw new HttpError(429,"Doucement : trop de duels d'un coup.");
@@ -539,47 +753,26 @@ async function duelRoute(req,res){
  logActivity(p,req,"duel:"+(typeof b.op==="string"?b.op:"?"));
  const now=Date.now(),refuse=m=>new HttpError(422,m.endsWith(".")?m:m+".");
  if(b.op==="challenge"){
-  update(p,S=>R.advance(S,now,SPEED,Math.random));
+  update(p,S=>R.advance(S,now,SPEED,rand));
   const row=typeof b.name==="string"&&q.playerByKey.get(nameKey(cleanName(b.name).slice(0,40))),o=row&&players.get(row.id);
   if(!o||o.id===p.id||o.suspended)throw refuse("Adversaire introuvable.");
   const why=selfWhy(p,now)||targetWhy(o,duelTies(p,now),now);if(why)throw refuse(why);
+  // The seed stays here: the turn is played through /api/debate.
   const seed=crypto.randomInt(0,2**32),{lastInsertRowid}=q.insertDuel.run(R.DUEL.game,p.id,o.id,seed,now,now,dayNow(now));
-  return send(res,200,{ok:true,duel:{id:Number(lastInsertRowid),seed},me:mePayload(p)});
+  return send(res,200,{ok:true,duel:{id:Number(lastInsertRowid)},me:mePayload(p)});
  }
- if(!["accept","refuse","submit"].includes(b.op))throw new HttpError(400,"Opération inconnue.");
+ // The picks a browser used to send are gone: a page from before the server-paced debate is told to reload.
+ if(b.op==="submit")throw new HttpError(410,"Le Débat chrono se joue maintenant question par question : recharge la page.");
+ if(!["accept","refuse"].includes(b.op))throw new HttpError(400,"Opération inconnue.");
  const d=Number.isSafeInteger(b.id)&&q.duel.get(b.id);
  if(!d||(d.challenger!==p.id&&d.defender!==p.id))throw refuse("Duel introuvable.");
- if(b.op==="accept"||b.op==="refuse"){
-  if(d.defender!==p.id||d.status!=="pending")throw refuse("Ce défi n'attend pas ta réponse.");
-  if(b.op==="refuse"){closeDuel(d,"refused",now);return send(res,200,{ok:true,me:mePayload(p)});}
-  if(now>=d.expires){closeDuel(d,"expired",now);throw refuse("Ce défi a expiré.");}
-  update(p,S=>R.advance(S,now,SPEED,Math.random));
-  const e=playBlock(p.state);if(e)throw refuse(e);
-  q.duelAccept.run(now,d.id);
-  return send(res,200,{ok:true,duel:{id:d.id,seed:d.seed},me:mePayload(p)});
- }
- // Submit: the picks are replayed on the server's own deal, for the camp the player is in now.
- const mineC=d.challenger===p.id;
- if(d.status!==(mineC?"c_play":"d_play"))throw refuse("Ce n'est pas ton tour de jouer.");
- const el=now-(mineC?d.c_started:d.d_started),r=R.replayDebate(d.seed,p.state.camp,b.picks);
- // Play starts after the countdown: the last pick cannot land sooner. The human-pace cap counts the 15 s of play at
- // most: waiting before sending must not raise it.
- const play=el-R.DEBATE.intro,valid=!!r&&play>=r.last&&el<=DUEL_TURN_MS&&r.points<=Math.ceil(Math.max(0,Math.min(play,R.MINI.debate.ms))/1000*R.MINI.debate.perSecond)+1;
- if(mineC){
-  // A refused score voids the challenge: nobody was told yet, and nothing changes for anyone.
-  if(!valid){if(q.duelClose.run("void",now,dayNow(now),d.id,"c_play").changes)duelEvent(d,"void",[p.id]);throw refuse("Score refusé : le défi est annulé.");}
-  q.duelPending.run(r.points,now+R.DUEL.window,d.id);
-  const dn=nameOf(d.defender);
-  duelFeed(p.name,`${p.name} défie ${dn} au Débat chrono.`);
-  duelEvent(d,"challenged",[d.defender]);
-  notify(d.defender,{title:"Défi reçu !",body:`${p.name} te défie au Débat chrono. Tu as 24 h pour relever le défi.`,tag:`duel-${d.id}`,url:"/"});
-  return send(res,200,{ok:true,score:r.points,errors:r.errors,status:"pending",mine:r.points,theirs:null,res:null,me:mePayload(p)});
- }
- // The defender's refused score counts as 0: a broken or forged answer forfeits instead of stalling the duel.
- const out=resolveDuel(d,valid?r.points:0,now);
- // Said plainly: the duel is over and lost, it cannot be sent again.
- if(!valid)return send(res,422,{ok:false,error:"Score refusé ou envoyé trop tard : duel perdu par forfait.",res:out,mine:0,theirs:d.c_score??0,me:mePayload(p)});
- return send(res,200,{ok:true,score:r.points,errors:r.errors,status:"done",mine:r.points,theirs:d.c_score??0,res:out,me:mePayload(p)});
+ if(d.defender!==p.id||d.status!=="pending")throw refuse("Ce défi n'attend pas ta réponse.");
+ if(b.op==="refuse"){closeDuel(d,"refused",now);return send(res,200,{ok:true,me:mePayload(p)});}
+ if(now>=d.expires){closeDuel(d,"expired",now);throw refuse("Ce défi a expiré.");}
+ update(p,S=>R.advance(S,now,SPEED,rand));
+ const e=playBlock(p.state);if(e)throw refuse(e);
+ q.duelAccept.run(now,d.id);
+ return send(res,200,{ok:true,duel:{id:d.id},me:mePayload(p)});
 }
 async function pushRoute(req,res,path){
  const p=auth(req),off=path==="/api/push/unsubscribe";
@@ -614,7 +807,7 @@ async function route(req,res){
  }
 
  if(path==="/api/register"&&method==="POST"){
-  const ip=clientIp(req);if(limited("reg:"+ip,5,3600e3))throw new HttpError(429,"Trop d'inscriptions depuis cette adresse, réessaie plus tard.");
+  const ip=clientIp(req);if(limited("reg:"+ip,REG_PER_HOUR,3600e3))throw new HttpError(429,"Trop d'inscriptions depuis cette adresse, réessaie plus tard.");
   const b=await readJson(req);
   if(!INVITE||!REG_OPEN)throw new HttpError(403,"Les inscriptions sont fermées.");
   if(typeof b.invite!=="string"||!sameSecret(b.invite.trim(),INVITE))throw new HttpError(403,"Code d'invitation incorrect.");
@@ -623,14 +816,20 @@ async function route(req,res){
   if(reservedName(name))throw new HttpError(400,"Ce pseudo est réservé à l'organisation.");
   if(typeof b.password!=="string"||b.password.length<8||b.password.length>200)throw new HttpError(400,"Mot de passe : 8 caractères minimum.");
   if(!R.CAMPS.includes(b.camp))throw new HttpError(400,"Choisis une collection.");
-  if(q.countPlayers.get().n>=MAX_PLAYERS)throw new HttpError(403,"La partie est complète.");
-  if(q.playerByKey.get(nameKey(name)))throw new HttpError(409,"Ce pseudo est déjà pris.");
-  const pass=await hashPassword(b.password);
-  // Checked again after the hashing pause: of two sign-ups racing for one name (or the last seat), the second loses.
-  if(q.playerByKey.get(nameKey(name)))throw new HttpError(409,"Ce pseudo est déjà pris.");
-  if(q.countPlayers.get().n>=MAX_PLAYERS)throw new HttpError(403,"La partie est complète.");
-  const now=Date.now(),state=R.newGame(b.camp,now);
-  const {lastInsertRowid}=q.insertPlayer.run(name,nameKey(name),pass,now,JSON.stringify(state),R.score(state),now,RELEASE);
+  const seat=()=>{
+   if(q.countPlayers.get().n>=MAX_PLAYERS)throw new HttpError(403,"La partie est complète.");
+   if(q.playerByKey.get(nameKey(name)))throw new HttpError(409,"Ce pseudo est déjà pris.");
+   // A deleted account's name waits a day: deleting and signing up again no longer resets the duel limits.
+   const t=q.tombstoneOf.get(nameKey(name));if(t&&Date.now()-t.deleted<864e5)throw new HttpError(409,"Ce pseudo vient d'être libéré, réessaie demain.");
+  };
+  seat();
+  const pass=await hashPassword(b.password,{ip,prio:true});
+  // Checked again after the hashing pause, and in the same synchronous transaction as the insert (no await in
+  // between): of two sign-ups racing for one name or the last seat, the second loses.
+  const now=Date.now(),state=R.newGame(b.camp,now);let lastInsertRowid;
+  db.exec("BEGIN IMMEDIATE");
+  try{seat();({lastInsertRowid}=q.insertPlayer.run(name,nameKey(name),pass,now,JSON.stringify(state),R.score(state),now,RELEASE));db.exec("COMMIT");}
+  catch(e){db.exec("ROLLBACK");throw e;}
   const p={id:Number(lastInsertRowid),name,created:now,state,seen:RELEASE};players.set(p.id,p);   // a new player has nothing to catch up on
   // The account exists from here on: a failed announcement must not turn the sign-up into an error.
   try{const feed=newFeedEntries(p,0);if(feed.length)broadcast("feed",feed);publishBoard();}catch(e){console.error("register: announce failed",e);}
@@ -644,7 +843,7 @@ async function route(req,res){
   if(limited("login:"+ip,10,900e3)||limited("login-ipname:"+ip+"|"+key,5,900e3)||limited("login-name:"+key,50,900e3))
    throw new HttpError(429,"Trop de tentatives, réessaie dans un quart d'heure.");
   const row=q.playerByKey.get(key),pw=typeof b.password==="string"?b.password.slice(0,200):"";
-  const okPw=await checkPassword(pw,row?row.pass:DUMMY_HASH);   // same cost whether the name exists or not
+  const okPw=await checkPassword(pw,row?row.pass:DUMMY_HASH,{ip,prio:!!row});   // same cost whether the name exists or not
   // A password reset that landed during the hashing pause wins: the old password no longer opens a session.
   const p=row&&players.get(row.id);
   if(!p||!okPw||q.playerByKey.get(key)?.pass!==row.pass)throw new HttpError(401,"Pseudo ou mot de passe incorrect.");
@@ -657,7 +856,7 @@ async function route(req,res){
  }
  if(path==="/api/me"&&method==="GET"){
   const p=auth(req);
-  update(p,S=>R.advance(S,Date.now(),SPEED,Math.random));
+  update(p,S=>R.advance(S,Date.now(),SPEED,rand));
   return send(res,200,mePayload(p));
  }
  // The client never chooses the version: it only says "I read it", and the server records its own release.
@@ -673,10 +872,17 @@ async function route(req,res){
   const b=await readJson(req);
   if(!players.has(p.id))throw new HttpError(401,"Connexion requise.");   // deleted while the body was arriving
   logActivity(p,req,typeof b.type==="string"?b.type:"?");
-  const r=update(p,S=>R.act(S,b,{now:Date.now(),speed:SPEED,random:Math.random,event:eventNow()}));
+  const now=Date.now(),ev=eventNow();
+  // The debate's end is the server's (POST /api/debate): a score sent for it is not even looked at.
+  if(b.type==="miniEnd"&&p.state.mini?.k==="debate")throw new HttpError(422,"Le Débat chrono se joue question par question.");
+  const r=update(p,S=>R.act(S,b,{now,speed:SPEED,random:rand,event:ev}));
+  if(r.audit){recordMini(p,r.audit,now);delete r.audit;}   // for the admin, not for the player's script
+  // The rules hand the turn (its seed included) to the server only, out of the reply.
+  if(r.ok&&b.type==="debate"&&r.turn&&p.state.mini?.k==="debate")soloTurns.set(p.id,{t:miniKey(p.state.mini),st:r.turn,q:null});
   if(deferred.size)flushDeferred();
   return send(res,r.ok?200:422,{...r,me:mePayload(p)});
  }
+ if(path==="/api/debate"&&method==="POST")return debateRoute(req,res).finally(()=>{if(deferred.size)flushDeferred();});
  if(path==="/api/duels"&&method==="GET"){
   const p=auth(req),now=Date.now();
   return send(res,200,{ok:true,duels:q.duelsOf.all(p.id,p.id).sort((a,b)=>b.id-a.id).map(d=>duelView(d,p.id)),opponents:duelOpponents(p,now),
@@ -692,13 +898,19 @@ async function route(req,res){
   if(limited("del:"+p.id,5,900e3))throw new HttpError(429,"Trop de tentatives, réessaie dans un quart d'heure.");
   const b=await readJson(req);
   const row=q.playerByKey.get(nameKey(p.name));
-  if(!row||!await checkPassword(typeof b.password==="string"?b.password.slice(0,200):"",row.pass))throw new HttpError(401,"Mot de passe incorrect.");
+  if(!row||!await checkPassword(typeof b.password==="string"?b.password.slice(0,200):"",row.pass,{ip:clientIp(req),prio:true}))throw new HttpError(401,"Mot de passe incorrect.");
+  if(!players.has(p.id))throw new HttpError(401,"Connexion requise.");   // deleted by a twin request during the hash
   let after=null;try{after=chat.beforePlayerDelete?.(p.id);}catch(e){console.error("chat, before deleting a player:",e);}
-  q.deletePlayer.run(p.id);players.delete(p.id);deferred.delete(p.id);
+  // The name is kept a day (see the sign-up), and the player's lines leave the public feed with them.
+  const now=Date.now();
+  db.exec("BEGIN");
+  try{q.deletePlayer.run(p.id);q.tombstone.run(nameKey(p.name),p.created,now);q.deleteFeedOf.run(p.name);db.exec("COMMIT");}catch(e){db.exec("ROLLBACK");throw e;}
+  players.delete(p.id);deferred.delete(p.id);soloTurns.delete(p.id);
+  try{broadcast("feedInit",q.recentFeed.all(40));}catch(e){console.error("feed after deleting a player:",e);}
   try{after?.();}catch(e){console.error("chat, after deleting a player:",e);}
   try{chat.playerDeleted(p.id);}catch(e){console.error("chat, deleted player:",e);}
   for(const c of [...clients])if(c.playerId===p.id)closeStream(c,true);
-  publishBoard();
+  publishBoard(true);   // gone from every board at once
   return send(res,200,{ok:true},{"Set-Cookie":sessionCookie("",0)});
  }
  if(path==="/events"&&method==="GET"){
@@ -706,12 +918,14 @@ async function route(req,res){
   if(clients.size>=SSE_TOTAL)throw new HttpError(503,"Serveur plein, réessaie dans un instant.");
   // A few tabs or devices per player; one more pushes out that player's oldest stream, which is told to stay
   // closed (a plain end would make the browser reconnect and push out the next one, forever).
-  const mine=[...clients].filter(c=>c.playerId===p.id);
-  if(mine.length>=SSE_PER_PLAYER){sse(mine[0].res,"bye",0);closeStream(mine[0],true);}   // still online through the new one
+  const mine=[...clients].filter(c=>c.playerId===p.id),ip=clientIp(req),bump=mine.length>=SSE_PER_PLAYER;
+  // One address holds SSE_PER_IP streams at most, whatever the accounts (the one this stream pushes out excepted).
+  if([...clients].filter(c=>c.ip===ip).length-(bump&&mine[0].ip===ip?1:0)>=SSE_PER_IP)throw new HttpError(429,"Trop de connexions depuis cette adresse.");
+  if(bump){sse(mine[0].res,"bye",0);closeStream(mine[0],true);}   // still online through the new one
   res.writeHead(200,{"Content-Type":"text/event-stream; charset=utf-8","Cache-Control":"no-store","X-Accel-Buffering":"no"});
   res.on("error",()=>{});
   res.write("retry: 5000\n\n");
-  const c={res,playerId:p.id,ping:null};clients.add(c);
+  const c={res,playerId:p.id,ip,ping:null};clients.add(c);
   // The first stream brings the player online for everyone (this one included); otherwise only this one needs the board.
   sse(res,"me",mePayload(p));sse(res,"board",boardRows());if(!mine.length)presenceChanged();sse(res,"feedInit",q.recentFeed.all(40));   // newest first
   try{chat.onStream(c,p);}catch(e){console.error("chat on stream:",e);}
@@ -763,7 +977,7 @@ function adminTarget(id,name){
 }
 const who=b=>adminTarget(b.id,b.name);
 // One row per mutating command, kept to the last 1000. Never a password nor the invite code.
-const VIAS=["cli","web","schedule"];
+const VIAS=["cli","web","schedule","server"];   // server: what the game itself flags (a suspicious duel)
 function audit(via,cmd,target,detail=""){
  try{q.insertAudit.run(Date.now(),VIAS.includes(via)?via:"cli",cmd,String(target??"").slice(0,80),String(detail??"").slice(0,300));q.trimAudit.run(1000);}
  catch(e){console.error("admin log:",e);}
@@ -887,12 +1101,67 @@ function logActivity(p,req,kind){
  catch(e){console.error(`activity, player ${p.id}:`,e.message);}
 }
 const pct=x=>`${Math.round(x*100)} %`;
-// Suspicion score, 0 to 100, from the last 14 days of actions:
-//  +35 more than half of the actions sent with no live screen open (a script, not the page),
-//  +35 more than 20 % from a client that is not a browser (curl, python-requests, node...),
+// Mini-game results as the rules audited them, kept ACTIVITY_DAYS like the actions (score, seconds, errors, flags).
+function recordMini(p,a,now=Date.now()){
+ try{
+  const int=v=>Number.isFinite(v)?Math.round(v):null,flags=Array.isArray(a.flags)?a.flags.filter(f=>typeof f==="string").map(f=>f.slice(0,24)).slice(0,8):[];
+  q.insertMini.run(p.id,now,String(a.game??"?").slice(0,16),int(a.score),Number.isFinite(a.secs)?Math.round(a.secs*10)/10:null,int(a.errors),JSON.stringify(flags));
+ }catch(e){console.error(`mini-game audit, player ${p.id}:`,e.message);}
+}
+// Per game: what a full bonus takes, the top of the histogram, and the earliest a score may be sent (the rules'
+// pace cap over the time played; null for the debate, which the server paces itself).
+const P_=R.PONG_RULES;
+const GAMES={
+ debate:{full:Math.ceil(R.MINI.debate.bonusCap/R.MINI.debate.bonusRate),max:R.DEBATE.maxPoints,minSecs:null},
+ duel:{full:R.DEBATE.maxPoints,max:R.DEBATE.maxPoints,minSecs:null},   // a duel turn: the Débat chrono against a rival
+ pong:{full:Math.ceil(P_.bonusCap/P_.bonusPerReturn),max:P_.maxScore,minSecs:sc=>Math.max(P_.minSeconds,(sc-1)/P_.returnsPerSecond)},
+ ...Object.fromEntries(["cortege","epervier"].map(k=>{const m=R.MINI[k];
+  return [k,{full:Math.ceil(m.bonusCap/m.bonusRate),max:m.maxScore,minSecs:sc=>Math.max(R.MINI_RULES.minSeconds,(sc-1)/m.perSecond+(m.intro||0)/1000)}];}))
+};
+const HIST_BINS=10,NOT_IMPLAUSIBLE=new Set(["zero_erreur"]);
+function gameStats(rows){
+ const by={},flags={};
+ for(const r of rows){
+  (by[r.game]??=[]).push(r);
+  let f=[];try{f=JSON.parse(r.flags||"[]");}catch{}
+  for(const x of f)flags[x]=(flags[x]||0)+1;
+ }
+ const games={};
+ for(const [k,list] of Object.entries(by)){
+  const g=GAMES[k],sc=list.map(r=>r.score).filter(Number.isFinite),n=sc.length,mean=n?sc.reduce((a,b)=>a+b,0)/n:0;
+  const cv=n>1&&mean>0?Math.sqrt(sc.reduce((a,v)=>a+(v-mean)**2,0)/n)/mean:null,max=g?.max??Math.max(1,...sc);
+  const counts=Array(HIST_BINS).fill(0);for(const v of sc)counts[Math.max(0,Math.min(HIST_BINS-1,Math.floor(v/max*HIST_BINS)))]++;
+  const fast=g?.minSecs?list.filter(r=>Number.isFinite(r.secs)&&Number.isFinite(r.score)&&r.score>0&&r.secs<=g.minSecs(r.score)*1.05).length:0;
+  games[k]={n:list.length,avg:Math.round(mean*10)/10,max:n?Math.max(...sc):null,capShare:n&&g?sc.filter(v=>v>=g.full).length/n:0,
+   cv:cv===null?null:Math.round(cv*1000)/1000,fastShare:list.length?fast/list.length:0,hist:{max,counts}};
+ }
+ return {games,flags};
+}
+// The game signals of the bot report: they weigh more than the kind of client and the open screen, which a script
+// running in a real Chrome with a stream open evades.
+function gameSignals(st){
+ let score=0;const reasons=[],all=Object.entries(st.games),n=all.reduce((a,[,g])=>a+g.n,0);
+ const cap=all.reduce((a,[,g])=>a+g.capShare*g.n,0)/(n||1);
+ if(n>=5&&cap>=0.8){score+=25;reasons.push(`${pct(cap)} des mini-jeux au bonus maximal (${n} parties)`);}
+ const label=k=>R.MINI[k]?.label??({pong:"Pong",duel:"Duels"}[k]??k);
+ const flat=all.filter(([,g])=>g.n>=10&&g.cv!==null&&g.cv<0.1).map(([k])=>k);
+ if(flat.length){score+=20;reasons.push(`Scores trop constants (${flat.map(label).join(", ")})`);}
+ const fast=all.filter(([k,g])=>GAMES[k]?.minSecs&&g.n>=5&&g.fastShare>0.5).map(([k])=>k);
+ if(fast.length){score+=20;reasons.push(`Parties envoyées au plus tôt permis (${fast.map(label).join(", ")})`);}
+ const odd=Object.entries(st.flags).filter(([f])=>!NOT_IMPLAUSIBLE.has(f));
+ if(odd.length){score+=30;reasons.push(`Résultats invraisemblables : ${odd.map(([f,c])=>`${f.replace(/_/g," ")} ×${c}`).join(", ")}`);}
+ return {score,reasons};
+}
+// Suspicion score, 0 to 100, from the last 14 days of actions and mini-games:
+//  +30 an implausibility flag on a mini-game result (too fast, over the cap, a machine's rhythm),
+//  +25 80 % or more of at least 5 mini-games at the full bonus,
+//  +20 scores of one game too constant (coefficient of variation < 0.1 over at least 10 games),
+//  +20 most games of a kind sent within 5 % of the earliest moment allowed,
+//  +20 more than half of the actions sent with no live screen open (a script, not the page),
+//  +20 more than 20 % from a client that is not a browser (curl, python-requests, node...),
 //  +15 more than 25 % of the actions between 1 h and 6 h (game time zone),
 //  +15 gaps under 2 h too regular (coefficient of variation < 0.15 over at least 30 gaps): a timer, not a hand.
-function botReport(p,rows){
+function botReport(p,rows,minis=[]){
  const byHour=Array(24).fill(0),n=rows.length;let noLive=0,nonBrowser=0,night=0;const gaps=[];
  for(let i=0;i<n;i++){
   const r=rows[i],h=R.clockOf(r.t).hour;byHour[h]++;
@@ -902,25 +1171,74 @@ function botReport(p,rows){
  const sorted=[...gaps].sort((a,b)=>a-b),median=sorted.length?sorted[sorted.length>>1]:null;
  const short=gaps.filter(g=>g<7200),mean=short.length?short.reduce((a,b)=>a+b,0)/short.length:0;
  const cv=short.length>1&&mean>0?Math.sqrt(short.reduce((a,g)=>a+(g-mean)**2,0)/short.length)/mean:null;
- const noLiveShare=n?noLive/n:0,nonBrowserShare=n?nonBrowser/n:0,nightShare=n?night/n:0,reasons=[];let score=0;
- if(noLiveShare>0.5){score+=35;reasons.push(`${pct(noLiveShare)} des actions sans écran de jeu ouvert`);}
+ const noLiveShare=n?noLive/n:0,nonBrowserShare=n?nonBrowser/n:0,nightShare=n?night/n:0;
+ const games=gameStats(minis),sig=gameSignals(games),reasons=[...sig.reasons];let score=sig.score;
+ if(noLiveShare>0.5){score+=20;reasons.push(`${pct(noLiveShare)} des actions sans écran de jeu ouvert`);}
  if(nonBrowserShare>0.2){
   const tags=[...new Set(rows.filter(r=>r.ua!=="browser").map(r=>r.ua))].slice(0,3).join(", ");
-  score+=35;reasons.push(`${pct(nonBrowserShare)} des actions hors navigateur (${tags})`);
+  score+=20;reasons.push(`${pct(nonBrowserShare)} des actions hors navigateur (${tags})`);
  }
  if(nightShare>0.25){score+=15;reasons.push(`${pct(nightShare)} des actions entre 1 h et 6 h`);}
  if(cv!==null&&short.length>=30&&cv<0.15){score+=15;reasons.push(`Rythme trop régulier (variation ${cv.toFixed(2).replace(".",",")} sur ${short.length} intervalles)`);}
  return {id:p.id,name:p.name,actions14d:n,byHour,noLiveShare,nonBrowserShare,nightShare,medianGapS:median===null?null:Math.round(median),
-  gapCv:cv===null?null:Math.round(cv*1000)/1000,score:Math.min(100,score),reasons};
+  gapCv:cv===null?null:Math.round(cv*1000)/1000,score:Math.min(100,score),reasons,games:games.games,gameFlags:games.flags};
 }
 const activityCut=now=>now-ACTIVITY_DAYS*864e5;
 function botsAll(now){
- const by=new Map();for(const r of q.activitySince.all(activityCut(now))){let l=by.get(r.player_id);if(!l)by.set(r.player_id,l=[]);l.push(r);}
- return [...players.values()].map(p=>botReport(p,by.get(p.id)??[])).sort((a,b)=>b.score-a.score||b.actions14d-a.actions14d||a.name.localeCompare(b.name,"fr"));
+ const group=rows=>{const by=new Map();for(const r of rows){let l=by.get(r.player_id);if(!l)by.set(r.player_id,l=[]);l.push(r);}return by;};
+ const by=group(q.activitySince.all(activityCut(now))),mi=group(q.miniSince.all(activityCut(now)));
+ return [...players.values()].map(p=>botReport(p,by.get(p.id)??[],mi.get(p.id)??[])).sort((a,b)=>b.score-a.score||b.actions14d-a.actions14d||a.name.localeCompare(b.name,"fr"));
 }
-// Once a minute from the sweep: old activity rows, and backups the admin interface did not take away.
+// Accounts that look like one person playing both sides, from the duels of the last 30 days: created within 30 min
+// of each other and dueling each other, handing over to each other within 2 s again and again (one hand on two
+// screens), or one always losing to the other. Across rivals too: one duel a day per pair hides a farm of alts, so
+// a player who keeps beating different rivals who barely play (EASY_LOSS points or less), or keeps taking over from
+// them within 2 s, is listed with all of them.
+const SUSPECT_GAP=2000,EASY_LOSS=2;
+// A duel's stored flags: [{side:"c"|"d",name,flags:[...]}].
+const flagsOf=d=>{try{const f=JSON.parse(d.flags||"[]");return Array.isArray(f)?f:[];}catch{return [];}};
+function duelSuspects(now){
+ const pairs=new Map(),byWinner=new Map();
+ for(const d of q.duelsSince.all(now-30*864e5)){
+  if(d.status==="void")continue;
+  const [a,b]=d.challenger<d.defender?[d.challenger,d.defender]:[d.defender,d.challenger],k=a+":"+b;
+  let s=pairs.get(k);if(!s)pairs.set(k,s={ids:[a,b],duels:[],fast:0,wins:new Map()});
+  s.duels.push(d.id);
+  const cT=[d.created,d.c_first,d.c_done].filter(Number.isFinite),dT=[d.d_started,d.d_first].filter(Number.isFinite);
+  const fast=cT.some(x=>dT.some(y=>Math.abs(x-y)<SUSPECT_GAP));if(fast)s.fast++;
+  if(d.status==="done"&&d.winner!==null){
+   s.wins.set(d.winner,(s.wins.get(d.winner)||0)+1);
+   const other=d.winner===d.challenger?d.defender:d.challenger,lost=d.winner===d.challenger?d.d_score:d.c_score;
+   let w=byWinner.get(d.winner);if(!w)byWinner.set(d.winner,w=[]);
+   w.push({id:d.id,other,easy:Number.isFinite(lost)&&lost<=EASY_LOSS,fast});
+  }
+ }
+ const out=[];
+ for(const s of pairs.values()){
+  const [pa,pb]=s.ids.map(id=>players.get(id));if(!pa||!pb)continue;
+  const reasons=[];
+  if(Math.abs(pa.created-pb.created)<=30*60e3)reasons.push(`Comptes créés à ${Math.max(1,Math.round(Math.abs(pa.created-pb.created)/60e3))} min d'écart, qui se défient (${s.duels.length} duel${s.duels.length>1?"s":""})`);
+  if(s.fast>=2)reasons.push(`Tours enchaînés à moins de 2 s d'écart dans ${s.fast} duels`);
+  for(const [w,n] of s.wins){const other=w===pa.id?pb:pa;if(n>=3)reasons.push(`${other.name} a perdu ${n} fois contre ${players.get(w)?.name??"?"} (${s.wins.get(other.id)||0} victoire${(s.wins.get(other.id)||0)>1?"s":""} en retour)`);}
+  if(reasons.length)out.push({ids:s.ids,names:[pa.name,pb.name],duels:s.duels,reasons});
+ }
+ for(const [wid,list] of byWinner){
+  const pw=players.get(wid);if(!pw)continue;
+  const easy=list.filter(x=>x.easy),fast=list.filter(x=>x.fast),rivals=l=>[...new Set(l.map(x=>x.other))].filter(id=>players.has(id));
+  const reasons=[],ea=rivals(easy),fa=rivals(fast);
+  if(easy.length>=3&&ea.length>=2)reasons.push(`${pw.name} a gagné ${easy.length} duels contre ${ea.length} rivaux différents qui ont marqué ${EASY_LOSS} points ou moins`);
+  if(fast.length>=2&&fa.length>=2)reasons.push(`${pw.name} a pris le relais de ${fa.length} rivaux différents à moins de 2 s d'écart`);
+  if(!reasons.length)continue;
+  const ids=[wid,...new Set([...ea,...fa])];
+  out.push({ids,names:ids.map(id=>players.get(id).name),duels:[...new Set([...easy,...fast].map(x=>x.id))],reasons});
+ }
+ return out.sort((x,y)=>y.reasons.length-x.reasons.length||y.duels.length-x.duels.length);
+}
+// Once a minute from the sweep: old activity and mini-game rows, closed duels past a month, the names of deleted
+// accounts past a week, and backups the admin interface did not take away.
 function chores(now){
- q.purgeActivity.run(activityCut(now));
+ q.purgeActivity.run(activityCut(now));q.purgeMini.run(activityCut(now));
+ q.purgeDuels.run(now-30*864e5);q.purgeTombstones.run(now-7*864e5);
  if(!ADMIN_SOCKET)return;
  const dir=dirname(ADMIN_SOCKET);
  for(const f of readdirSync(dir)){
@@ -936,15 +1254,37 @@ function voidDuel(d,now){
  if(!q.duelClose.run("void",now,dayNow(now),d.id,d.status).changes)return false;
  duelEvent(d,"void",[d.challenger,d.defender]);return true;
 }
+// An admin's annulment of a finished duel: what it did to each side (recorded at resolution) is taken back, and it
+// no longer counts in anyone's daily wins. A level the duel's XP brought is taken back too.
+function annulDuel(d,now){
+ if(!q.duelAnnul.run(d.id).changes)throw new HttpError(404,"Duel introuvable ou pas terminé.");
+ let fx={};try{fx=JSON.parse(d.fx||"{}")||{};}catch{}
+ const reversed=[];
+ for(const [side,id] of [["c",d.challenger],["d",d.defender]]){
+  const f=fx[side],pl=players.get(id);if(!f||!pl)continue;
+  try{
+   update(pl,S=>{
+    if(!pl.suspended)R.advance(S,now,SPEED,rand);   // a suspended clock stays frozen: resync skips the gap on unsuspend
+    S.lvl=Math.max(1,S.lvl-Math.max(0,f.lvl||0));S.xp=Math.max(R.xpFloor(S.lvl),S.xp-(f.xp||0));while(S.lvl<100&&S.xp>=R.xpFloor(S.lvl+1))S.lvl++;
+    S.moral=R.clamp(S.moral-(f.moral||0));S.energy=R.clamp(S.energy-(f.energy||0));
+    S.jn++;S.journal.unshift({n:S.jn,t:S.vclock,k:"duel",text:`Duel contre ${nameOf(side==="c"?d.defender:d.challenger)} annulé par l'organisation : ses effets sont retirés.`,d:{res:"annulled"}});
+    if(S.journal.length>40)S.journal.length=40;
+   });
+   reversed.push(pl.name);
+  }catch(e){console.error(`duel ${d.id}: effects NOT reversed for player ${id}`,e);}
+ }
+ duelEvent(d,"annulled",[d.challenger,d.defender]);
+ return {id:d.id,status:"annulled",reversed};
+}
 function suspend(p,on){
  const now=Date.now();
  if(on===p.suspended)return;
  if(on){
   // The time until now is played, then the clock stops where it is.
-  try{update(p,S=>R.advance(S,now,SPEED,Math.random));}catch(e){console.error(`suspend, player ${p.id}:`,e);}
+  try{update(p,S=>R.advance(S,now,SPEED,rand));}catch(e){console.error(`suspend, player ${p.id}:`,e);}
   q.setSuspended.run(1,p.id);p.suspended=true;q.deleteSessionsOf.run(p.id);closeStreamsOf(p.id);deferred.delete(p.id);
   for(const d of q.openDuelsOf.all(p.id,p.id)){try{voidDuel(d,now);}catch(e){console.error(`suspend, duel ${d.id}:`,e);}}
-  publishBoard();
+  publishBoard(true);
  }else{
   // Back on the real hour: the suspension is skipped, not played.
   q.setSuspended.run(0,p.id);p.suspended=false;
@@ -956,8 +1296,8 @@ function playerDetail(p){
  return {id:p.id,name:p.name,camp:S.camp,candidate:R.person(S).name,lvl:S.lvl,xp:Math.floor(S.xp),score:R.score(S),form:S.form,sat:S.sat,moral:S.moral,energy:S.energy,hyg:S.hyg,
   fm:S.fm,deaths:S.deaths,created:p.created,updated:q.updatedOf.get(p.id)?.updated??null,online:isOnline(p.id),sessions:q.sessionsOf.get(p.id,now).n,pushSubs:q.countSubsOf.get(p.id).n,
   suspended:!!p.suspended,chatMutedUntil:mutedUntil(p.id),
-  duels:q.lastDuelsOf.all(p.id,p.id).map(d=>{const v=duelView(d,p.id);return {id:v.id,status:v.status,vs:v.vs,role:v.role,created:v.created,res:v.res};}),
-  activity:botReport(p,q.activityOf.all(p.id,activityCut(now)))};
+  duels:q.lastDuelsOf.all(p.id,p.id).map(d=>{const v=duelView(d,p.id);return {id:v.id,status:v.status,vs:v.vs,role:v.role,created:v.created,res:v.res,flags:flagsOf(d)};}),
+  activity:botReport(p,q.activityOf.all(p.id,activityCut(now)),q.miniOf.all(p.id,activityCut(now))),suspects:duelSuspects(now).filter(x=>x.ids.includes(p.id))};
 }
 function mutedUntil(id){try{return chat.admin.mutedUntil(id)??null;}catch{return null;}}
 function renamePlayer(p,raw){
@@ -1052,12 +1392,19 @@ async function adminCommand(b){
   broadcast("feedInit",q.recentFeed.all(40));audit(via,cmd,`#${b.id}`,"Ligne du fil supprimée");
   return {};
  }
- if(cmd==="duels-list")return {items:q.openDuels.all().map(d=>({id:d.id,status:d.status,challenger:nameOf(d.challenger),defender:nameOf(d.defender),created:d.created,expires:d.expires??null}))};
+ if(cmd==="duels-list")return {items:q.openDuels.all().map(d=>({id:d.id,status:d.status,challenger:nameOf(d.challenger),defender:nameOf(d.defender),created:d.created,expires:d.expires??null,flags:flagsOf(d)}))};
  if(cmd==="duel-cancel"){
   const d=Number.isSafeInteger(b.id)&&q.duel.get(b.id);
   if(!d||!OPEN_DUEL.has(d.status)||!voidDuel(d,now))throw new HttpError(404,"Duel introuvable ou déjà terminé.");
   audit(via,cmd,`#${d.id}`,`${nameOf(d.challenger)} contre ${nameOf(d.defender)}`);
   return {};
+ }
+ if(cmd==="duel-annul"){
+  const d=Number.isSafeInteger(b.id)&&q.duel.get(b.id);
+  if(!d||d.status!=="done")throw new HttpError(404,"Duel introuvable ou pas terminé.");
+  const r=annulDuel(d,now);
+  audit(via,cmd,`#${d.id}`,`${nameOf(d.challenger)} contre ${nameOf(d.defender)} : effets annulés${r.reversed.length?" ("+r.reversed.join(", ")+")":""}`);
+  return r;
  }
  if(cmd==="invite-get")return {invite:INVITE,source:INVITE_SOURCE,open:regOpen()};
  if(cmd==="invite-regenerate"){
@@ -1079,7 +1426,8 @@ async function adminCommand(b){
   return {event:{mode:EVENT_MODE,current:eventNow()}};
  }
  if(cmd==="backup"){const r=backup(b);audit(via,cmd,"",`${r.bytes} octets${r.vapid?", avec vapid.json":""}`);return r;}
- if(cmd==="bots")return {items:botsAll(now)};
+ if(cmd==="bots")return {items:botsAll(now),suspects:duelSuspects(now)};
+ if(cmd==="duels-suspects")return {suspects:duelSuspects(now)};
  if(cmd==="chat-reports")return {items:chat.admin.reports()};
  if(cmd==="chat-delete"){
   if(!Number.isSafeInteger(b.id)||!chat.admin.deleteMessage(b.id))throw new HttpError(404,"Message introuvable.");
@@ -1151,8 +1499,9 @@ function startAdmin(){
 }
 function stopAdmin(){if(!admin)return;try{admin.close();}catch{}try{unlinkSync(ADMIN_SOCKET);}catch{}admin=null;}
 startAdmin();
-// Logged on every start, so log rotation never loses it.
-if(INVITE_GENERATED)console.log(`Invite code: ${INVITE} (generated, kept in ${INVITE_FILE}; delete that file and restart for a new one)`);
+// Logged once, when it is made: logs are read by more people (and tools) than the data volume.
+if(INVITE_GENERATED&&INVITE_NEW)console.log(`Invite code: ${INVITE} (generated, kept in ${INVITE_FILE}; delete that file and restart for a new one)`);
+else if(INVITE_GENERATED)console.log(`Code d'invitation : voir ${INVITE_FILE} ou la console d'admin.`);
 server.listen(PORT,()=>console.log(`PolitiGo API ${VERSION} on :${PORT} (speed x${SPEED}, ${players.size} players, registrations ${regOpen()?"open with invite":"closed"})`));
 // A bug that escapes every handler is logged with its stack, then the container restarts the process cleanly.
 // Every clock is written as it stands before leaving, so a restart never sets anyone's game time back.

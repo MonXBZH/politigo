@@ -64,7 +64,7 @@ test("announce --to: only that player, nothing in the public feed; a player in a
  await subscribe(d,"destinataire");
  const so=stream(o),sd=stream(d);t.after(()=>{so.close();sd.close();});
  await until(()=>got(so,"me").length&&got(sd,"me").length);
- assert.equal((await d.call("POST","/api/action",{type:"pongStart"})).status,200);
+ const pg=await d.call("POST","/api/action",{type:"pongStart"});assert.equal(pg.status,200);
  const r=await admin("announce","Bravo pour ton mandat","--to","destinataire");   // found like a login: case does not matter
  assert.equal(r.code,0,r.stderr);
  assert.match(r.stdout,/Annonce envoyée à Destinataire : à l'écran maintenant, notification envoyée/);
@@ -74,7 +74,7 @@ test("announce --to: only that player, nothing in the public feed; a player in a
  assert.ok(!got(so,"feed").flat().some(e=>e.kind==="announce"),"a private message stays out of the feed");
  assert.equal(pushes("destinataire"),0,"held during the Pong");
  await sleep(2000);   // the Pong minimum length
- assert.equal((await d.call("POST","/api/action",{type:"pongEnd",score:1})).status,200);
+ assert.equal((await d.call("POST","/api/action",{type:"pongEnd",score:1,id:pg.json.game.id})).status,200);
  assert.ok(await until(()=>pushes("destinataire")===1),"pushed once the Pong is over");
 });
 

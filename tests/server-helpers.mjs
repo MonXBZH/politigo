@@ -1,5 +1,6 @@
 // Shared plumbing for the tests that drive a real server over HTTP (the pattern of duel.test.mjs): boot a server
-// on a temporary database, a cookie-keeping client per player from its own address, the debate picks a browser sends.
+// on a temporary database, a cookie-keeping client per player from its own address, a debate played the way a browser
+// plays it (one question at a time, through /api/debate).
 import assert from "node:assert/strict";
 import {spawn} from "node:child_process";
 import crypto from "node:crypto";
@@ -18,7 +19,7 @@ export const yesterday=(now=Date.now())=>R.dayKey(Math.floor(now/R.H)-24);
 export const DUEL_TURN_MS=R.MINI.debate.ms+R.DEBATE.intro+R.MINI_RULES.graceSeconds*1000;
 
 export function boot(port,dir,extra={},db="t.db"){
- const env={...process.env,PORT:String(port),DB_PATH:join(dir,db),POLITIGO_INVITE:INVITE,COOKIE_SECURE:"0",PROXY_HOPS:"1",SWEEP_MS:"200",PRESENCE_MS:"50",
+ const env={...process.env,PORT:String(port),DB_PATH:join(dir,db),POLITIGO_INVITE:INVITE,COOKIE_SECURE:"0",PROXY_HOPS:"1",SWEEP_MS:"200",PRESENCE_MS:"50",BOARD_MS:"50",POLITIGO_DEBATE_MS:"3000",
   POLITIGO_SPEED:"1",POLITIGO_TZ:DAY_TZ,POLITIGO_ADMIN_SOCKET:"off",POLITIGO_DUEL_MIN_LEVEL:"1",POLITIGO_DUEL_MIN_AGE_H:"0",MAX_PLAYERS:"500",...extra};
  for(const k of Object.keys(env))if(env[k]===undefined)delete env[k];
  const p=spawn("node",[process.env.SERVER||"/app/server.mjs"],{env,stdio:["ignore","pipe","pipe"]});
@@ -47,9 +48,20 @@ export async function login(port,name){
  const c=client(port),r=await c.call("POST","/api/login",{name,password:PW});
  assert.equal(r.status,200,JSON.stringify(r.json));c.name=name;return c;
 }
-// Picks as the browser records them: [answer shown, ms since play started], the right answer for the camp unless wrong.
-export function picksFor(seed,camp,{n=3,wrong=[],gap=300}={}){
- return R.debateRounds(R.seeded(seed),n).map((r,k)=>[r.order.indexOf(R.ANSWER_KINDS.indexOf(wrong.includes(k)?"decoy":camp)),k*gap]);
+// The answer of a given kind ("left", "right", "decoy") among those shown: what anyone (or a script) reading the
+// public questions can work out. The server's pace and cap are what keep that honest.
+export function answerOf(q,kind){
+ const row=[...R.QUESTIONS,...R.HALLOWEEN.questions].find(x=>x[0]===q.text);
+ return q.answers.indexOf(row[1+R.ANSWER_KINDS.indexOf(kind)]);
+}
+// A debate turn ("solo" or a duel id): n answers, right for the camp unless listed in wrong, gap ms apart (a human
+// takes more than the 600 ms the server requires), then the clock runs out. Returns the last reply.
+export async function debateTurn(c,ref,{n=3,wrong=[],gap=620,camp=c.camp}={}){
+ const next=body=>c.call("POST","/api/debate",{op:"next",ref,...body});
+ let r=await next({});
+ for(let k=0;k<n&&r.status===200&&!r.json.done;k++){await sleep(gap);r=await next({choice:answerOf(r.json.q,wrong.includes(k)?"decoy":camp)});}
+ while(r.status===200&&!r.json.done){await sleep(Math.min(3000,r.json.leftMs+30));const t=Date.now();r=await next({});r.ms=Date.now()-t;}
+ return r;
 }
 export async function until(fn,ms=3000){const end=Date.now()+ms;while(Date.now()<end){const v=await fn();if(v)return v;await sleep(50);}return null;}
 // Valid browser keys, made the way a browser makes them.

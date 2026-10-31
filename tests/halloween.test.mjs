@@ -270,7 +270,9 @@ test("act debate during Halloween: the same game, only the journal line may chan
   const ra=R.act(a,{type:"debate"},{now:DAY,random:R.seeded(3),event:""});
   const rb=R.act(b,{type:"debate"},{now:DAY,random:R.seeded(3),event:"halloween"});
   assert.equal(ra.ok,true,ra.error);assert.deepEqual(rb,ra);
-  assert.deepEqual(b.mini,a.mini);assert.deepEqual(b.mini,{k:"debate",t:DAY});
+  assert.deepEqual(b.mini,a.mini);assert.deepEqual(b.mini,{k:"debate",t:DAY,id:ra.game.id});
+  // The referee's deck is the only difference: the event's questions join a solo debate in costume.
+  assert.deepEqual({...rb.turn,count:0},{...ra.turn,count:0});assert.equal(rb.turn.count,R.debateCount("halloween"));assert.equal(ra.turn.count,R.QUESTIONS.length);
   assert.equal(b.rematchT,a.rematchT);assert.equal(b.pong,null);
   for(const k of ["xp","lvl","moral","energy","sat","hyg","fm","actsToday","visitsToday","actsVisit"])assert.equal(b[k],a[k],k);
   assert.equal(b.journal[0].k,"act");assert.equal(b.journal[0].text,a.journal[0].text);
