@@ -206,9 +206,13 @@ compose ; supprimer le bloc `admin` et ses volumes pour s'en passer, le jeu n'en
   forcé), chat pour tous et chat de camp (fermés par défaut), à chaud. Ces réglages sont gardés dans la base et l'emportent ensuite sur `.env`.
 - **Sauvegarde** : télécharge une copie cohérente de la base (`VACUUM INTO`), et à part `vapid.json`. Fichiers sensibles
   (empreintes des mots de passe, clé des notifications) : à garder hors d'Internet.
-- **Détection de bots** : sur 14 jours, pour chaque joueur, ses actions heure par heure, la part faite sans le jeu ouvert,
-  depuis autre chose qu'un navigateur, la nuit, et la régularité de son rythme, résumées en un score et des raisons.
-  Aucune adresse IP n'est enregistrée.
+- **Détection de bots** : sur 14 jours, pour chaque joueur, ses résultats aux mini-jeux (part des parties au bonus maximum,
+  régularité suspecte des scores, parties finies au plus tôt permis, signalements du serveur), puis ses actions heure par heure,
+  la part faite sans le jeu ouvert, depuis autre chose qu'un navigateur et la nuit, résumés en un score et des raisons.
+  **Duels suspects** : paires de comptes créés ensemble qui se défient, rafales de comptes différents à quelques secondes
+  d'intervalle, même perdant face au même gagnant, et joueur qui bat l'un après l'autre plusieurs rivaux qui ne jouent
+  presque pas (une ferme de comptes). Chaque tour de duel compte aussi dans la détection de bots. Un duel terminé peut être **annulé** : XP, niveau, moral et énergie des deux
+  joueurs reviennent à leur valeur d'avant le duel. Aucune adresse IP n'est enregistrée.
 - **Journal d'admin** : chaque action d'administration (web, ligne de commande, annonce planifiée), sans mot de passe.
 
 **Plusieurs parties sur le même hôte Docker** : chaque pile a son propre socket d'administration. Monter le volume du socket
@@ -239,12 +243,14 @@ réseau local, ou derrière Nginx Proxy Manager en HTTPS (`POLITIGO_ADMIN_BIND=1
 ### Duels et notifications
 
 - **Duels** (Débat chrono, en différé) : le joueur qui défie joue d'abord ; l'adversaire a 24 h pour relever le défi
-  sur le même débat, ou le refuser. Le serveur rejoue les réponses des deux joueurs : aucun score n'est cru sur parole
-  (un score impossible annule le défi, ou fait perdre l'adversaire qui l'envoie). Limites : niveau 5 et compte d'au moins
-  12 h pour les deux joueurs, 3 défis envoyés par jour, un seul duel ouvert par paire, et pas de nouveau duel entre deux
-  joueurs moins de 24 h après le précédent. Une victoire rapporte de l'XP 3 fois par jour au plus ; une défaite ne fait
-  jamais perdre de niveau ni descendre le moral ou l'énergie sous 25. Un tour non fini (plus de 91 s) ou un défi sans
-  réponse en 24 h est clos tout seul.
+  sur le même débat, ou le refuser. Comme en solo, c'est le serveur qui pose les questions une à une et chronomètre les
+  réponses : le navigateur ne connaît jamais le tirage, une réponse en moins de 0,6 s n'est pas comptée, un débat rapporte
+  20 points au plus, et un tour anormal (zéro erreur, rythme de machine, réflexes plus rapides qu'un humain) est signalé dans l'administration. Limites : niveau 5
+  et compte d'au moins 12 h pour les deux joueurs, 3 défis envoyés par jour, un seul duel ouvert par paire, et pas de nouveau
+  duel entre deux joueurs moins de 24 h après le précédent. Une victoire rapporte 3 fois par jour au plus, et 3 fois par jour
+  au plus pour le défié ; au-delà elle ne rapporte rien. Une défaite ne fait jamais perdre de niveau ni descendre le moral ou
+  l'énergie sous 25. Un tour non fini ou un défi sans réponse en 24 h est clos tout seul ; un redémarrage du serveur reprend
+  un tour de duel là où il en était, sans permettre de le rejouer.
 - **Notifications** (Web Push, standard des navigateurs, sans compte tiers) : un joueur défié reçoit « Défi reçu ! »
   sur les appareils où il les a acceptées (5 au plus). La clé du serveur est créée au premier démarrage dans
   `/data/vapid.json` (mode 0600) : la sauvegarder avec la base. Si le volume n'est pas inscriptible, le serveur démarre
@@ -267,15 +273,21 @@ réseau local, ou derrière Nginx Proxy Manager en HTTPS (`POLITIGO_ADMIN_BIND=1
   Pseudos en alphabet latin uniquement, et unicité sans tenir compte des majuscules ni des accents : personne ne peut se faire passer pour un autre avec un « о » cyrillique.
 - **Sessions** : cookie `__Host-` `HttpOnly` + `SameSite=Lax` + `Secure`, 10 appareils au plus par joueur, supprimées côté serveur à la déconnexion et à la suppression du compte.
 - **Requêtes** : écritures refusées hors JSON et hors origine du site ; limitation des tentatives par adresse, par adresse et pseudo,
-  et par pseudo, si bien qu'un inconnu ne peut pas bloquer le compte d'un ami ; 5 essais de suppression de compte par quart d'heure ;
-  3 flux en direct par joueur ; une démission par heure.
+  et par pseudo, si bien qu'un inconnu ne peut pas bloquer le compte d'un ami ; 3 inscriptions par heure et par adresse ;
+  un pseudo supprimé ne peut être repris qu'après 24 h ; 5 essais de suppression de compte par quart d'heure ; 3 flux en direct
+  par joueur et 12 par adresse ; une démission par heure. Les vérifications de mot de passe passent par une file d'attente
+  bornée (4 à la fois, une par adresse) : une rafale de tentatives ralentit, mais ne bloque plus les vraies connexions.
+  nginx limite en plus le débit des requêtes et le nombre de flux ouverts par adresse (limites larges, car le reverse proxy
+  partage une même adresse pour tous les joueurs).
 - **Administration** : aucune route web dans l'API. `admin.mjs` et le conteneur `admin` passent par un socket Unix
   (`/run/politigo/admin.sock` dans le volume partagé `politigo-admin-sock`, mode 0600, utilisateur `node`) : il faut déjà pouvoir
   lancer une commande dans un de ces conteneurs, ou ouvrir l'interface avec son mot de passe, pour s'en servir.
   Le serveur fait lui-même le travail (hachage, révocation des sessions, effacement des compteurs), avec une requête bornée en taille
   et en durée. `POLITIGO_ADMIN_SOCKET=off` le désactive.
-- **Jeu** : le serveur fait foi ; score des quatre mini-jeux vérifié (durée, cadence, pas de rejeu, bonus plafonné) ;
-  duels rejoués par le serveur sur son propre tirage ; notifications envoyées aux seuls services des navigateurs (pas de requête vers une adresse choisie par un joueur) ; états relus et bornés au démarrage.
+- **Jeu** : le serveur fait foi. Le Débat chrono (solo et duels) est arbitré par le serveur, question par question. Les trois
+  autres mini-jeux tirent leur hasard d'une graine imposée par le serveur, doivent renvoyer l'identifiant de la partie, et leur
+  score est borné par la durée réellement jouée et par un plafond tiré de la physique du jeu ; chaque résultat est gardé 14 jours
+  pour la détection de bots. Hasard du serveur tiré de `crypto` ; notifications envoyées aux seuls services des navigateurs (pas de requête vers une adresse choisie par un joueur) ; états relus et bornés au démarrage.
 - **Robustesse** :
   - un joueur ou une connexion en erreur est ignoré sans arrêter le serveur ;
   - une écriture ratée (disque plein) annule l'action au lieu de désynchroniser mémoire et base ;
@@ -320,7 +332,7 @@ interdire la suppression et le force push, exiger une pull request (0 approbatio
 ## 6. Tests
 
 ```bash
-bash tests/run-server.sh                       # 300 tests : règles (dont l'équilibrage J15) + mini-jeux + test politique + changelog + API + duels + notifications + chat + migrations + outils et interface d'admin, dans l'image Node de production
+bash tests/run-server.sh                       # 338 tests : règles (dont l'équilibrage J15) + mini-jeux + test politique + changelog + API + duels + notifications + chat + migrations + outils et interface d'admin, dans l'image Node de production
 bash tests/run-server.sh tests/chat.test.mjs   # un seul fichier
 docker compose restart api                     # remet à zéro les limites d'inscription avant l'e2e
 powershell -ExecutionPolicy Bypass -File tests\e2e.ps1   # parcours complet dans Chrome (crée deux joueurs de test)
