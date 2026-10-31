@@ -6,6 +6,7 @@ services:
     image: politigo-web
     ports:
       # Bind to the server's internal address and allow only the reverse proxy to reach it.
+      # Host port: POLITIGO_PORT (8080 by default; only the left side changes, the container keeps 8080).
       - "${POLITIGO_BIND:-127.0.0.1}:${POLITIGO_PORT:-8080}:8080"
     depends_on:
       api:
@@ -92,6 +93,7 @@ services:
       dockerfile: admin/Dockerfile
     image: politigo-admin
     ports:
+      # Host port: POLITIGO_ADMIN_PORT (8090 by default), e.g. 8095 if 8090 is taken; the container keeps 8090.
       - "${POLITIGO_ADMIN_BIND:-0.0.0.0}:${POLITIGO_ADMIN_PORT:-8090}:8090"
     environment:
       POLITIGO_ADMIN_PASSWORD: ${POLITIGO_ADMIN_PASSWORD:-}
