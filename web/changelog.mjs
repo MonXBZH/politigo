@@ -1,19 +1,22 @@
 // What's new, shown once to every player after an update (and on demand from Dossier → Compte).
 // One entry per release, newest first, written in French for the players (added, changed, fixed, and admin: what the organiser can now do). Add the entry on dev before tagging:
-// the version must match the tag without its "v" (tag v1.3.0 → "1.3.0").
+// the version must match the tag without its "v" (tag v1.3.0 → "1.3.0"). help (optional): ids of web/help.mjs sections,
+// offered as « En savoir plus » under the entry.
 import {cmpRelease} from "./rules.mjs";
 
 export const CHANGELOG=[
- {version:"1.6.1",date:"2026-11-01",
+ {version:"1.6.1",date:"2026-11-01",help:["demarrer","flamme","duels"],
   added:[
-   "La Flamme s'affiche maintenant sur l'écran principal, sous les quatre jauges : tu vois ton assiduité grandir sans ouvrir la Garde-robe."
+   "La Flamme s'affiche maintenant sur l'écran principal, sous les quatre jauges : tu vois ton assiduité grandir sans ouvrir la Garde-robe.",
+   "Une aide en jeu (Dossier → Aide) : les jauges, l'XP, les mini-jeux, les duels, les missions, la Flamme, la Tombola… Chaque fiche a son « ? » en haut, qui ouvre directement la bonne rubrique.",
+   "L'historique des versions (Dossier → Compte) : toutes les nouveautés depuis la première version, la plus récente dépliée, les autres à un toucher. Et un « En savoir plus » renvoie vers l'aide."
   ],
   fixed:[
    "Duels : la liste des adversaires grise de nouveau ceux que tu ne peux pas défier, avec la raison à côté du pseudo, et un toucher sur un adversaire disponible lance le défi directement. La fiche d'un joueur s'ouvre toujours depuis le classement."
   ],
   admin:[]
  },
- {version:"1.6.0",date:"2026-11-01",
+ {version:"1.6.0",date:"2026-11-01",help:["activites","flamme","tombola"],
   added:[
    "Des missions pour ton élu, entre deux visites : une à la fois, 4 par jour, de 30 minutes à une nuit entière. Tractage au marché ou serrage de mains, gîte coopératif ou thalasso à La Baule, Nuit debout ou soirée au Fouquet's… Elles jouent seulement sur les jauges, jamais sur l'XP, et une notification te prévient quand le rapport t'attend.",
    "Le courrier des électeurs : une lettre toutes les 30 à 60 minutes, de 7 h à minuit. À toi de choisir la réponse, chacune a ses effets.",
@@ -129,4 +132,6 @@ export function missedEntries(seen,release){
  return CHANGELOG.filter(e=>cmpRelease(e.version,release)<=0&&(seen?cmpRelease(e.version,seen)>0:e.version===release));
 }
 // The entry the "Nouveautés" button shows: this release's, or the newest one known.
+// Every release up to this server's (an entry written ahead of its tag waits for it), newest first: the history.
+export const releasesUpTo=release=>CHANGELOG.filter(e=>!release||cmpRelease(e.version,release)<=0);
 export const latestEntry=release=>CHANGELOG.find(e=>release&&e.version===release)||CHANGELOG.find(e=>!release||cmpRelease(e.version,release)<=0)||CHANGELOG[0];

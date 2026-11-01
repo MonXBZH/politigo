@@ -44,7 +44,7 @@
     <li><b>Missions</b>, <b>courrier</b> des électeurs et <b>objectifs du jour</b> (dans Jouer) : des jauges en plus et des bulletins pour la tombola de ton camp.</li>
     <li><b>Dossier → Garde-robe</b> : tenues et objets gagnés à la tombola, un tirage gratuit par jour. Purement cosmétique, jamais d'argent réel.</li>
    </ul>
-   <button class="btn" type="button" id="tips-close">Compris !</button>
+   <div class="btn-row"><button class="btn" type="button" id="tips-close">Compris !</button><button class="btn" type="button" id="tips-help">Ouvrir l'aide</button></div>
   </section>
   <section class="card" aria-labelledby="pname">
    <div class="stat-head"><h2 id="pname">…</h2><span class="lvl" id="plvl"></span></div>
@@ -90,7 +90,7 @@
 <div class="sheet" id="sheet" hidden>
  <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="sheet-title" tabindex="-1">
   <div class="grabber" aria-hidden="true"></div>
-  <div class="sheet-head"><div><h2 id="sheet-title"></h2><p class="sheet-sub" id="sheet-sub"></p></div><button class="icon-btn" type="button" id="sheet-close" aria-label="Fermer">×</button></div>
+  <div class="sheet-head"><div><h2 id="sheet-title"></h2><p class="sheet-sub" id="sheet-sub"></p></div><div class="sheet-btns"><button class="icon-btn" type="button" id="sheet-help" aria-label="Aide sur cette fiche" title="Aide" hidden>?</button><button class="icon-btn" type="button" id="sheet-close" aria-label="Fermer">×</button></div></div>
   <div id="sheet-body"></div>
  </div>
 </div>

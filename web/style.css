@@ -163,6 +163,13 @@ select option{background:#1d1a2a}
 .news-head{font-weight:700;margin:16px 0 4px}
 .news{margin:0;padding-left:20px;line-height:1.5}
 .news li{margin:6px 0}
+.sheet-btns{display:flex;gap:8px;align-items:flex-start}
+.fold{border:1px solid var(--line);border-radius:14px;background:var(--glass);padding:0 14px;margin:10px 0}
+.fold>summary{cursor:pointer;padding:12px 0;font-weight:700;list-style-position:inside}
+.fold[open]>summary{border-bottom:1px solid var(--line);margin-bottom:6px}
+.fold>.btn-row,.fold>.news:last-child,.fold>.help-p:last-child{margin-bottom:12px}
+.help-p{margin:8px 0;line-height:1.5}
+.help-links{flex-wrap:wrap}
 /* Duels */
 .duel{padding:12px 14px;border-radius:14px;background:var(--glass);border:1px solid var(--line);margin-top:8px;font-size:13px}
 .duel b{display:block;font-size:15px}

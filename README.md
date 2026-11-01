@@ -7,7 +7,7 @@
   <img alt="Node 24" src="https://img.shields.io/badge/node-24%20LTS-5fa04e">
   <img alt="Aucune dépendance" src="https://img.shields.io/badge/d%C3%A9pendances-0-success">
   <img alt="Docker" src="https://img.shields.io/badge/docker-compose%20%7C%20Portainer-2496ed">
-  <img alt="410 tests" src="https://img.shields.io/badge/tests-410-brightgreen">
+  <img alt="412 tests" src="https://img.shields.io/badge/tests-412-brightgreen">
   <img alt="Satire" src="https://img.shields.io/badge/genre-satire-ff9db0">
 </p>
 
@@ -81,6 +81,9 @@ Ton élu traverse ensuite sa collection, une nouvelle figure tous les 10 niveaux
 ---
 
 ## 🎮 Comment ça marche
+
+> 💡 Tout est aussi expliqué **dans le jeu** : Dossier → Aide, et un « ? » en haut de chaque fiche ouvre directement la bonne
+> rubrique. L'historique des versions est dans Dossier → Compte.
 
 ### Quatre jauges à surveiller
 

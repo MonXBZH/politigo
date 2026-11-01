@@ -1,7 +1,8 @@
 // What's new (web/changelog.mjs): which entries a player sees after an update, and the entries themselves (node --test).
 import {test} from "node:test";
 import assert from "node:assert/strict";
-import {CHANGELOG,missedEntries,latestEntry} from "../web/changelog.mjs";
+import {CHANGELOG,missedEntries,latestEntry,releasesUpTo} from "../web/changelog.mjs";
+import {HELP,helpOf,SHEET_HELP} from "../web/help.mjs";
 import {releaseOf,cmpRelease} from "../web/rules.mjs";
 
 const fake=[{version:"1.5.0"},{version:"1.4.1"},{version:"1.4.0"},{version:"1.3.0"}];
@@ -44,3 +45,21 @@ test("the on-demand button shows this release's entry, or the newest one it know
  assert.equal(latestEntry(null).version,"1.5.0","dev server: the newest");
  assert.equal(latestEntry("1.0.0").version,"1.5.0","older than everything: still something to show");
 }));
+
+test("the history: every release up to the server's, newest first; none written ahead of its tag",()=>withLog(fake,()=>{
+ assert.deepEqual(releasesUpTo("1.4.1").map(e=>e.version),["1.4.1","1.4.0","1.3.0"]);
+ assert.deepEqual(releasesUpTo("1.4.5").map(e=>e.version),["1.4.1","1.4.0","1.3.0"]);
+ assert.deepEqual(releasesUpTo(null).map(e=>e.version),["1.5.0","1.4.1","1.4.0","1.3.0"],"dev server: all");
+}));
+
+test("the guide: sections well formed, numbers filled in, every link from the news and the sheets leads somewhere",()=>{
+ const ids=HELP.map(h=>h.id);assert.equal(new Set(ids).size,ids.length);
+ for(const h of HELP){
+  assert.ok(h.title.length>3&&h.parts.length>0,h.id);
+  for(const p of h.parts.flat()){assert.ok(typeof p==="string"&&p.length>10,h.id);assert.doesNotMatch(p,/undefined|NaN|\[object/,`${h.id}: ${p}`);}
+ }
+ for(const e of CHANGELOG)for(const id of e.help??[])assert.ok(helpOf(id),`${e.version}: help « ${id} »`);
+ for(const [k,id] of Object.entries(SHEET_HELP))assert.ok(helpOf(id),`sheet ${k}: help « ${id} »`);
+ // no spoiler: the guide never names what the Flamme attracts
+ assert.doesNotMatch(JSON.stringify(HELP),/b[âa]ton|mythique|apprix/i);
+});
