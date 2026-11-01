@@ -2,7 +2,8 @@
 // player's actions, and plays the animations announced by the journal entries the server writes.
 import * as R from "./rules.mjs";
 import {createMini,manifLabel} from "./minigames.mjs";
-import {missedEntries,latestEntry} from "./changelog.mjs";
+import {missedEntries,releasesUpTo} from "./changelog.mjs";
+import {HELP,helpOf,SHEET_HELP} from "./help.mjs";
 import {drawTest,verdict,randomCamp} from "./politest.mjs";
 import {createChat} from "./chat.mjs";
 import * as A from "./activities.mjs";
@@ -1056,6 +1057,7 @@ function liveSheet(force=false){
  if(!S||!sheetKind||$("#sheet").hidden||(!force&&sheetSig()===shownSig))return;
  if(sheetKind==="test")return;                       // a test under way owes nothing to the state: never redrawn under the finger
  if(sheetKind==="chat")return;                       // built once and updated in place (chat.mjs): the composer keeps focus and text
+ if(sheetKind==="help"||sheetKind==="history")return;   // text only: a redraw would fold back what the player unfolded
  // Never under the player's fingers: an armed "tap again" button or a half-typed password survives updates.
  if($("#sheet-body .armed, #sheet-body form"))return;
  const card=$(".sheet-card"),top=card.scrollTop,f=[...card.querySelectorAll("button,select,input")],i=f.indexOf(document.activeElement);
@@ -1064,6 +1066,7 @@ function liveSheet(force=false){
 }
 function renderSheet(kind,opener){
  sheetKind=kind;if(opener)sheetOpener=opener;shownSig=sheetSig();
+ $("#sheet-help").hidden=!SHEET_HELP[kind];
  const body=$("#sheet-body"),p=person();body.replaceChildren();
  const set=(t,s)=>{$("#sheet-title").textContent=t;$("#sheet-sub").textContent=s;};
  if(sheetKind!=="chat")chat.hide();
@@ -1116,17 +1119,36 @@ function renderSheet(kind,opener){
   set(one?`Quoi de neuf dans PolitiGo ${newsList[0].version}`:"Quoi de neuf dans PolitiGo",one?`Mise à jour du ${newsDate(newsList[0].date)}`:`${newsList.length} mises à jour depuis ta dernière visite`);
   for(const e of newsList){
    if(!one)body.append(blockTitle(`Version ${e.version} · ${newsDate(e.date)}`));
-   for(const [title,items] of [["Nouveautés",e.added],["Changements",e.changed],["Corrections",e.fixed],["Administration",e.admin]]){
-    if(!items?.length)continue;
-    const h=document.createElement("p");h.className="news-head";h.textContent=title;
-    const ul=document.createElement("ul");ul.className="news";
-    for(const t of items){const li=document.createElement("li");li.textContent=t;ul.append(li);}
-    body.append(h,ul);
-   }
+   body.append(...newsEntry(e));
   }
   const row=document.createElement("div");row.className="btn-row";
   const ok=Object.assign(document.createElement("button"),{type:"button",className:"btn",textContent:"C'est noté"});ok.addEventListener("click",()=>closeSheet());
-  row.append(ok);body.append(row);
+  row.append(ok,smallButton("Historique des versions","",()=>openSheet("history")));body.append(row);
+ }
+ // Every release, newest first: the latest unfolded, the others one tap away.
+ if(kind==="history"){
+  const all=releasesUpTo(RELEASE);
+  set("Historique des versions",`${all.length} versions de PolitiGo, de la plus récente à la plus ancienne`);
+  all.forEach((e,i)=>{
+   const d=document.createElement("details"),sm=document.createElement("summary");d.className="fold";d.open=i===0;
+   sm.textContent=`Version ${e.version} · ${newsDate(e.date)}`;d.append(sm,...newsEntry(e));body.append(d);
+  });
+ }
+ // The guide: one section per theme, folded; the one asked for (a sheet's « ? », a news link) open and in view.
+ if(kind==="help"){
+  set("Aide","Tout ce qu'il faut savoir pour élever ton élu.");
+  let target=null;
+  for(const h of HELP){
+   const d=document.createElement("details"),sm=document.createElement("summary");d.className="fold";d.id=`help-${h.id}`;d.open=h.id===helpSel;
+   sm.textContent=h.title;d.append(sm);
+   for(const p of h.parts){
+    if(Array.isArray(p)){const ul=document.createElement("ul");ul.className="news";for(const t of p){const li=document.createElement("li");li.textContent=t;ul.append(li);}d.append(ul);}
+    else{const x=document.createElement("p");x.className="help-p";x.textContent=p;d.append(x);}
+   }
+   body.append(d);if(h.id===helpSel)target=d;
+  }
+  if(helpFrom){const row=document.createElement("div");row.className="btn-row";row.append(smallButton("‹ Retour","",()=>{const k=helpFrom;helpFrom=null;openSheet(k);}));body.append(row);}
+  if(target)requestAnimationFrame(()=>target.scrollIntoView({block:"start"}));
  }
  if(kind==="more"){
   set(p.name,`Niveau ${S.lvl}/100 · ${p.detail}`);
@@ -1168,6 +1190,7 @@ function renderSheet(kind,opener){
   undecided.append(diceButton(()=>{const c=randomCamp();armRestart(c,`Le hasard a choisi la ${campWord(c)}.`);}),smallButton("Passer mon test politique","restart-test",openQuiz));
   const note=fine("");note.id="restart-note";note.setAttribute("aria-live","polite");
   body.append(warn,row,undecided,note);
+  body.append(blockTitle("Aide"),list(itemButton("Aide du jeu","Les jauges, l'XP, les mini-jeux, les duels, les missions, la Flamme, la Tombola… tout expliqué.","Ouvrir",false,()=>openHelp(null))));
   body.append(blockTitle("Compte"));
   const who=document.createElement("p");who.className="fine";
   who.textContent=`Connecté en tant que ${me}.${SPEED>1?` Serveur de test : le temps y passe ${SPEED} fois plus vite.`:""}`;
@@ -1194,9 +1217,9 @@ function renderSheet(kind,opener){
   // The version the server was built from (git describe), without the tag's leading "v".
   const ver=document.createElement("p");ver.className="fine";
   ver.textContent=VERSION==="dev"?"PolitiGo, version de développement":`PolitiGo ${VERSION.replace(/^v(?=\d)/,"")}`;
-  const news=Object.assign(document.createElement("button"),{type:"button",className:"btn",textContent:"Nouveautés de la version"});
-  news.addEventListener("click",()=>showNews([latestEntry(RELEASE)],false));
-  const nrow=document.createElement("div");nrow.className="btn-row";nrow.append(news);
+  const news=Object.assign(document.createElement("button"),{type:"button",className:"btn",textContent:"Historique des versions"});
+  news.addEventListener("click",()=>openSheet("history"));
+  const nrow=document.createElement("div");nrow.className="btn-row";nrow.append(news,smallButton("Aide","",()=>openHelp(null)));
   body.append(ver,nrow);
   const about=document.createElement("p");about.className="fine";
   about.textContent="PolitiGo est une satire. Personnages caricaturés et répliques inventées ; les faits rappelés sont publics, avec le stade de chaque procédure, et la présomption d'innocence s'applique. Aucun achat réel : la seule monnaie est le frais de mandat, gagné en restant en vie. Seuls ton pseudo et ta partie sont enregistrés.";
@@ -1555,7 +1578,26 @@ function renderBatonBlock(body){
 // ---------- what's new ----------
 // After an update, each player sees what changed once (on any device: the server keeps the last release read);
 // closing the sheet, however it is closed, marks it read. The Dossier button shows it again on demand.
-let newsList=[],newsAuto=false,newsPending=false;
+let newsList=[],newsAuto=false,newsPending=false,helpSel=null,helpFrom=null;
+// One release's lines, by kind, and its « En savoir plus » links to the guide.
+function newsEntry(e){
+ const out=[];
+ for(const [title,items] of [["Nouveautés",e.added],["Changements",e.changed],["Corrections",e.fixed],["Administration",e.admin]]){
+  if(!items?.length)continue;
+  const h=document.createElement("p");h.className="news-head";h.textContent=title;
+  const ul=document.createElement("ul");ul.className="news";
+  for(const t of items){const li=document.createElement("li");li.textContent=t;ul.append(li);}
+  out.push(h,ul);
+ }
+ const links=(e.help||[]).map(helpOf).filter(Boolean);
+ if(links.length){const row=document.createElement("div");row.className="btn-row help-links";row.append(...links.map(h=>smallButton(`En savoir plus : ${h.title}`,"",()=>openHelp(h.id))));out.push(row);}
+ return out;
+}
+// The guide, open on one section (or all folded); from an open sheet, « Retour » goes back to it.
+function openHelp(id){
+ helpSel=id;helpFrom=sheetKind&&sheetKind!=="help"&&!$("#sheet").hidden?sheetKind:null;
+ if(sheetKind==="help"&&!$("#sheet").hidden)renderSheet("help");else openSheet("help",document.activeElement);
+}
 const newsDate=d=>{const t=Date.parse(d+"T12:00:00Z");return Number.isFinite(t)?new Date(t).toLocaleDateString("fr-FR",{day:"numeric",month:"long",year:"numeric"}):d;};
 function showNews(list,auto){
  if(!list.length||!list[0])return;
@@ -1587,6 +1629,8 @@ document.querySelectorAll("[data-sheet]").forEach(b=>b.addEventListener("click",
  skipScene();openSheet(b.dataset.sheet,b);
 }));
 $("#sheet-close").addEventListener("click",()=>closeSheet());
+$("#sheet-help").addEventListener("click",()=>openHelp(SHEET_HELP[sheetKind]));
+$("#tips-help").addEventListener("click",()=>openHelp("demarrer"));
 // ---------- chat ----------
 // The unread count sits on the "Chat" button like the challenges on "Jouer": a badge, nothing that pops up.
 const chat=createChat({api,sheet:$("#sheet"),getCamp:()=>S?.camp||"left",getTz:()=>R.timeZone(),reduced:()=>reduced,onBadge(n){
