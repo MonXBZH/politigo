@@ -4,6 +4,15 @@
 import {cmpRelease} from "./rules.mjs";
 
 export const CHANGELOG=[
+ {version:"1.6.1",date:"2026-11-01",
+  added:[
+   "La Flamme s'affiche maintenant sur l'écran principal, sous les quatre jauges : tu vois ton assiduité grandir sans ouvrir la Garde-robe."
+  ],
+  fixed:[
+   "Duels : la liste des adversaires grise de nouveau ceux que tu ne peux pas défier, avec la raison à côté du pseudo, et un toucher sur un adversaire disponible lance le défi directement. La fiche d'un joueur s'ouvre toujours depuis le classement."
+  ],
+  admin:[]
+ },
  {version:"1.6.0",date:"2026-11-01",
   added:[
    "Des missions pour ton élu, entre deux visites : une à la fois, 4 par jour, de 30 minutes à une nuit entière. Tractage au marché ou serrage de mains, gîte coopératif ou thalasso à La Baule, Nuit debout ou soirée au Fouquet's… Elles jouent seulement sur les jauges, jamais sur l'XP, et une notification te prévient quand le rapport t'attend.",
