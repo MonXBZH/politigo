@@ -828,6 +828,12 @@ for(const g of GAUGES){
  fill.style.background=g.c;                         // CSSOM, not a style attribute: allowed by the strict CSP
  head.append(b,em);bar.append(fill);el.append(head,bar);$("#gauges").append(el);gaugeEls[g.k]={el,em,fill};
 }
+// The Flamme under the four gauges, the whole width: the Garde-robe's scale (full at 300), and nothing more said.
+const flameEl=(()=>{
+ const el=document.createElement("div"),head=document.createElement("span"),b=document.createElement("b"),em=document.createElement("em"),bar=document.createElement("div"),fill=document.createElement("i");
+ el.className="gauge flame-gauge";el.title="Elle grandit avec ton assiduité, jour après jour.";bar.className="bar";b.textContent="🔥 Flamme";
+ head.append(b,em);bar.append(fill);el.append(head,bar);$("#gauges").append(el);return {em,fill};
+})();
 function pill(t,c=""){const s=document.createElement("span");s.className=`pill ${c}`;s.textContent=t;return s;}
 function refresh(){
  if(!S)return;
@@ -841,6 +847,7 @@ function refresh(){
  const nextForm=S.lvl<90?` · forme suivante au niveau ${(stage(S.lvl)+1)*10}`:"";
  $("#xptext").textContent=S.lvl<100?`${Math.floor(into)} / ${Math.round(xpCost(S.lvl))} XP${nextForm}`:"Légende de la collection";
  for(const g of GAUGES){const ge=gaugeEls[g.k],v=Math.round(S[g.k]);ge.el.classList.toggle("low",v<25);ge.em.textContent=v;ge.fill.style.width=`${v}%`;}
+ {const pts=A.flameOf(S);flameEl.em.textContent=pts;flameEl.fill.style.width=`${Math.min(100,Math.round(pts/3))}%`;}
  const pills=[pill(`Forme ${S.form.toLowerCase()} ×${String(S.mult).replace(".",",")}`,S.form==="Excellente"?"good":S.form==="Correcte"?"":"warn")];
  if(S.streak)pills.push(pill(`Série ${S.streak} h (+${Math.round(100*Math.min(XP.streakCap,XP.streakStep*S.streak))} %)`,"good"));
  pills.push(pill(`Visites ${R.visitsToday(S)}/${XP.visitsPerDay}`),pill(`Activités ${R.actsToday(S)}/${XP.actsPerDay}`));
