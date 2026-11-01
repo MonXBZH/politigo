@@ -208,8 +208,10 @@ test("moderators: chosen among a server's players, only their panels and actions
  assert.equal((await m.req("/api/servers",{full:true})).json.servers.some(s=>"invite" in s),false,"no invite code without the right");
  assert.equal((await m.call("prod","stats")).status,200);
  assert.equal((await m.call("prod","chat-reports")).status,200);
- for(const [c,a] of [["bots",{}],["invite-get",{}],["suspend",{name:"Cible Modo",on:true}],["chat-set",{global:true}],["registrations-set",{open:false}],["audit",{}]])
+ for(const [c,a] of [["bots",{}],["invite-get",{}],["suspend",{name:"Cible Modo",on:true}],["chat-set",{global:true}],["registrations-set",{open:false}],["audit",{}],["mythic-reset",{}]])
   assert.equal((await m.call("prod",c,a)).status,403,c);
+ // The staff's reset is the owner's alone: it reaches the game (which finds nothing to take back here).
+ assert.equal((await b.call("prod","mythic-reset")).json.error,"Le Bâton de feu est déjà dans l'urne.");
  assert.equal((await m.req("/api/s/prod/reset-password",{name:"Cible Modo"})).status,403);
  assert.equal((await m.req("/api/s/prod/backup")).status,403);
  assert.equal((await m.req("/api/mods")).status,403);

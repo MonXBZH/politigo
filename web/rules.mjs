@@ -1,5 +1,9 @@
 // PolitiGo game rules and data, shared by the browser (web/app.js) and the server (server/server.mjs).
 // One source of truth: the balance validated by simulation lives here and nowhere else.
+// Missions, mail, goals and the Flamme live in activities.mjs, the wardrobe in wardrobe.mjs: they import this module
+// back, so neither side touches the other's bindings before both are evaluated (only inside functions).
+import * as ACT from "./activities.mjs";
+import * as WR from "./wardrobe.mjs";
 
 // ===================================================================== DATA
 export const people={
@@ -290,10 +294,11 @@ export const fxText=fx=>Object.entries(fx).map(([k,v])=>`${fxNames[k]} ${v>0?"+"
 export const score=S=>Math.max(0,Math.round(S.xp+2*S.bestStreak-150*S.deaths));
 
 export function freshState(camp,now){
- return {v:2,camp,vclock:now,lastReal:now,hourIdx:Math.floor(now/H),born:now,
+ const S={v:2,camp,vclock:now,lastReal:now,hourIdx:Math.floor(now/H),born:now,
   fm:10,sat:80,moral:80,energy:80,hyg:80,xp:0,lvl:1,best:1,streak:0,bestStreak:0,neg:0,zero:0,form:"Excellente",mult:1.25,
   lastVisit:-99,visitDay:-1,visitsToday:0,actsToday:0,actsVisit:0,actWindow:-99,breadIdx:-1,coffeeDay:-1,coffees:0,petIdx:-1,
   sleeping:false,equipped:{},deaths:0,jn:0,journal:[],pong:null,mini:null,rematchT:-1,diedAt:-1,treatDay:-1};
+ return Object.assign(S,ACT.freshActivities(S,now),{wardrobe:WR.freshWardrobe()});
 }
 export function newGame(camp,now){
  const S=freshState(camp,now);
@@ -328,6 +333,8 @@ export function sanitize(s,now){
  o.rematchT=num(s.rematchT,-1,o.vclock,-1);
  // States saved before diedAt existed take it from their journal.
  o.diedAt=num(s.diedAt??o.journal.find(j=>j.k==="death")?.t,-1,o.vclock,-1);
+ // 1.6.0: missions, mail, goals, Flamme, wardrobe (absent from older states: fresh ones).
+ ACT.sanitizeActivities(s,o);o.wardrobe=WR.sanitizeWardrobe(s.wardrobe);
  return o;
 }
 function gameKeys(o,s){
@@ -335,6 +342,8 @@ function gameKeys(o,s){
  if(typeof s.id==="string"&&/^[0-9a-z]{1,16}$/.test(s.id))o.id=s.id;
  return o;
 }
+// Exported for activities.mjs and wardrobe.mjs (a hoisted declaration: usable across the import cycle).
+export {log as logEntry};
 function log(S,k,text,d){
  S.jn++;const e={n:S.jn,t:S.vclock,k,text};if(d!==undefined)e.d=d;
  S.journal.unshift(e);if(S.journal.length>40)S.journal.length=40;
@@ -395,7 +404,7 @@ function addXp(S,v){
 function registerVisit(S){
  ensureDay(S);
  if(isAsleep(S)||curIdx(S)-S.lastVisit<XP.visitGap||S.visitsToday>=XP.visitsPerDay)return false;
- S.visitsToday++;S.lastVisit=curIdx(S);S.actsVisit=0;S.actWindow=curIdx(S);addXp(S,XP.visit);return true;
+ S.visitsToday++;S.lastVisit=curIdx(S);S.actsVisit=0;S.actWindow=curIdx(S);addXp(S,XP.visit);ACT.onVisit(S);return true;
 }
 function spendActivity(S){ensureDay(S);ensureWindow(S);S.energy=clamp(S.energy-8);S.moral=clamp(S.moral+10);S.actsVisit++;S.actsToday++;addXp(S,XP.activity);}
 function applyItem(S,it){
@@ -415,7 +424,7 @@ function tickHour(S,idx,random){
  else if(m>=XP.correct){S.form="Correcte";S.mult=1;S.streak=0;S.neg=0;}
  else if(m>0){S.form="Négligée";S.streak=0;S.neg++;S.mult=Math.max(0,0.5-0.05*(S.neg-1));}
  else{S.form="Abandonnée";S.streak=0;S.neg++;S.mult=-0.5;}
- S.zero=m===0?S.zero+1:0;
+ S.zero=m===0?S.zero+1:0;ACT.trackMin(S);
  // A daytime nap rests the body, not the career: passive XP is halved, so sleeping all day never pays.
  addXp(S,XP.base*S.mult*(1+Math.min(XP.streakCap,XP.streakStep*S.streak))*(S.sleeping&&!nightHour?XP.napFactor:1));
  if(S.sleeping&&S.energy>=100){S.sleeping=false;log(S,"wake",`${person(S).name} se réveille de sa sieste, en pleine forme.`);}
@@ -427,14 +436,20 @@ function stressHit(S,random,factor=1){
  log(S,"stress",`${factor>1?`Quitte ou double perdu ! Stress ×${factor}`:"Stress"} de ${p.name} : ${s.trigger}. « ${s.line} » (moral −${hit})`,{name:p.name,i,factor});
 }
 // A death (or a resignation) restarts at level 1 in place: the object identity is kept for the server cache.
-function die(S,reason,camp=S.camp){
- const name=person(S).name,keep={journal:S.journal,jn:S.jn,deaths:S.deaths+1,best:S.best,bestStreak:S.bestStreak,equipped:S.equipped,treatDay:S.treatDay};
+// Cosmetics survive whole; the Flamme loses a quarter. The day's goals and its counters (missions started, letters
+// answered) are kept: a resignation must not deal a fresh set of goals, nor more missions, hence more bulletins.
+function die(S,reason,camp=S.camp,random=Math.random){
+ const day={goals:S.goals,mDay:S.missions.day,mN:S.missions.n,lDay:S.mail.day,lN:S.mail.n};
+ const name=person(S).name,keep={journal:S.journal,jn:S.jn,deaths:S.deaths+1,best:S.best,bestStreak:S.bestStreak,equipped:S.equipped,treatDay:S.treatDay,
+  wardrobe:S.wardrobe,flame:{...S.flame,pts:Math.round(S.flame.pts*ACT.FLAME.death*100)/100}};
  const fresh=Object.assign(freshState(camp,S.vclock),keep,{lastReal:S.lastReal,diedAt:S.vclock});
  for(const k of Object.keys(S))delete S[k];
  Object.assign(S,fresh);
  log(S,"death",reason==="resign"
   ?`Démission de ${name}. Nouveau départ au niveau 1 avec ${person(S).name}.`
   :`Mort politique de ${name} : ${XP.deathHours} h avec une jauge à zéro. Nouveau départ au niveau 1.`,{name,reason,camp});
+ S.goals=day.goals;S.missions.day=day.mDay;S.missions.n=day.mN;S.mail.day=day.lDay;S.mail.n=day.lN;
+ ACT.rollDay(S,dayKey(curIdx(S)),random);
 }
 // Brings a state up to real time (speed > 1 only on a test server). Returns true when an hour ticked.
 export function advance(S,realNow,speed=1,random=Math.random){
@@ -444,8 +459,10 @@ export function advance(S,realNow,speed=1,random=Math.random){
  const h0=S.hourIdx;
  while(Math.floor(S.vclock/H)>S.hourIdx){
   tickHour(S,S.hourIdx,random);S.hourIdx++;
-  if(S.zero>=XP.deathHours){die(S,"neglect");break;}
+  if(S.zero>=XP.deathHours){die(S,"neglect",S.camp,random);break;}
+  ACT.rollDay(S,dayKey(S.hourIdx),random);   // the hour that starts may open a new calendar day
  }
+ ACT.rollDay(S,dayKey(curIdx(S)),random);ACT.mailCheck(S,random);   // a fresh state draws its goals here
  if(S.pong&&realNow-S.pong.t>PONG_RULES.timeoutSeconds*1000)S.pong=null;
  if(miniExpired(S,realNow))S.mini=null;
  return S.hourIdx!==h0;
@@ -485,15 +502,17 @@ function judge(game,cfg,{sc,secs,idOk,minSeconds,expiry}){
 }
 const refused=audit=>hidden(fail("Score refusé."),"audit",audit);
 // Every player action goes through here, on the server, after bringing the state up to date. event: the seasonal
-// event running now on the server's clock (eventAt), "" outside one.
-export function act(S,a,{now,speed=1,random=Math.random,event=""}){
+// event running now on the server's clock (eventAt), "" outside one. mythic: the server's {available, ageDays, clean,
+// claim} for a draw (absent: the mythic roll is off). The lowest gauge of the day is tracked after every action.
+export function act(S,a,opts){const r=actOn(S,a,opts);ACT.trackMin(S);return r;}
+function actOn(S,a,{now,speed=1,random=Math.random,event="",mythic=null}){
  advance(S,now,speed,random);
  const type=a&&typeof a.type==="string"?a.type:"";
  switch(type){
  case "buy":{
   const it=shop.find(i=>i.key===a.key);if(!it)return fail("Article inconnu.");
   const e=itemBlock(S,it);if(e)return fail(e+".");
-  applyItem(S,it);const visit=registerVisit(S);
+  applyItem(S,it);const visit=registerVisit(S);ACT.progress(S,"buys");
   log(S,"buy",`${itemName(it,S.camp,event)} : ${it.price?"−"+it.price+" FM":"gratuit"}, ${fxText(it.fx)}${visit?`, visite +${XP.visit} XP`:""}.`,{key:it.key,visit});
   return done({visit});
  }
@@ -527,7 +546,7 @@ export function act(S,a,{now,speed=1,random=Math.random,event=""}){
   if(k==="debate")return refused({game:k,score:Number.isInteger(sc)?sc:null,secs:Math.round(secs*10)/10,flags:["hors_arbitre"]});
   const j=judge(k,cfg,{sc,secs,idOk,minSeconds:MINI_RULES.minSeconds,expiry:cfg.ms/1000+MINI_RULES.graceSeconds});
   if(j.refused)return refused(j.audit);
-  const bonus=Math.min(cfg.bonusCap,Math.floor(sc*cfg.bonusRate));addXp(S,bonus);
+  const bonus=Math.min(cfg.bonusCap,Math.floor(sc*cfg.bonusRate));addXp(S,bonus);ACT.progress(S,"minis");
   const text=k==="cortege"?`Le Cortège : score ${sc}, bonus de terrain +${bonus} XP.`:`L'Épervier : ${sc} point${sc>1?"s":""}, bonus d'ordre public +${bonus} XP.`;
   log(S,"mini",text,{game:k,score:sc,bonus,great:sc>=cfg.great&&!j.flags.length&&!greatAnnounced(S)});
   return hidden(done({bonus,game:k}),"audit",j.audit);
@@ -549,7 +568,7 @@ export function act(S,a,{now,speed=1,random=Math.random,event=""}){
   const P=PONG_RULES,secs=(now-S.pong.t)/1000,sc=a.score,idOk=typeof S.pong.id==="string"&&a.id===S.pong.id;S.pong=null;
   const j=judge("pong",{...P,perSecond:P.returnsPerSecond},{sc,secs,idOk,minSeconds:P.minSeconds,expiry:P.timeoutSeconds});
   if(j.refused)return refused(j.audit);
-  const bonus=Math.min(P.bonusCap,sc*P.bonusPerReturn);addXp(S,bonus);
+  const bonus=Math.min(P.bonusCap,sc*P.bonusPerReturn);addXp(S,bonus);ACT.progress(S,"minis");
   log(S,"pong",`Fin du débat : ${sc} renvoi${sc>1?"s":""}, bonus d'éloquence +${bonus} XP.`,{score:sc,bonus});
   return hidden(done({bonus}),"audit",j.audit);
  }
@@ -564,12 +583,13 @@ export function act(S,a,{now,speed=1,random=Math.random,event=""}){
  case "equip":{
   const p=person(S);if(a.i!==0&&a.i!==1)return fail("Objet inconnu.");
   if(a.i===1)S.equipped[p.name]=1;else delete S.equipped[p.name];
+  S.wardrobe.worn.object=null;   // a personal item takes the hand back from a wardrobe object
   log(S,"equip",`${personalItems[p.name][a.i].name} équipé.`);return done();
  }
  case "pet":{
   if(isNight(S))return fail("Zzz… il dort. Revenez après 6 h.");
   if(S.sleeping)return fail("Zzz… il fait la sieste. Rallume la lumière dans Soins.");
-  const petted=S.petIdx!==curIdx(S);if(petted){S.petIdx=curIdx(S);S.moral=clamp(S.moral+2);}
+  const petted=S.petIdx!==curIdx(S);if(petted){S.petIdx=curIdx(S);S.moral=clamp(S.moral+2);ACT.progress(S,"pets");}
   return done({petted});
  }
  case "restart":{
@@ -578,7 +598,7 @@ export function act(S,a,{now,speed=1,random=Math.random,event=""}){
   // One resignation an hour: the live feed cannot be flooded with deaths. The date is kept in the state, not
   // looked up in the journal, which forty quick actions would scroll past.
   if(S.diedAt>=0&&S.vclock-S.diedAt<H)return fail("Une démission par heure, pas plus : laisse-lui le temps de faire campagne.");
-  die(S,"resign",a.camp);return done();
+  die(S,"resign",a.camp,random);return done();
  }
  case "treat":{
   // The day is kept across a resignation (die keeps treatDay): one treat a day, whatever happens.
@@ -588,6 +608,13 @@ export function act(S,a,{now,speed=1,random=Math.random,event=""}){
   log(S,"treat",`Des bonbons ou un amendement ? ${line} Moral +${HALLOWEEN.treat.moral}.`,{line});
   return done();
  }
+ // ---------- 1.6.0: missions, voter mail, Tombola / Loterie, wardrobe (activities.mjs, wardrobe.mjs)
+ case "missionStart":return ACT.missionStart(S,a.id);
+ case "missionReport":return ACT.missionReport(S,random);
+ case "mailAnswer":return ACT.mailAnswer(S,a.id,a.choice,random);
+ case "draw":return WR.draw(S,a.pay,{random,mythic});
+ case "exchange":return WR.exchange(S,a.id);
+ case "wear":return WR.wear(S,a.kind,a.id);
  default:return fail("Action inconnue.");
  }
 }
@@ -688,7 +715,7 @@ export function debateFinish(S,st,{now,speed=1,random=Math.random}={}){
  advance(S,now,speed,random);
  if(!S.mini||S.mini.k!=="debate"||!st||typeof S.mini.id!=="string"||S.mini.id!==st.id)return fail("Aucune partie en cours.");
  const cfg=MINI.debate,secs=(now-S.mini.t)/1000,{points:sc,errors,flags}=debateResult(st);S.mini=null;
- const bonus=Math.min(cfg.bonusCap,Math.floor(sc*cfg.bonusRate));addXp(S,bonus);
+ const bonus=Math.min(cfg.bonusCap,Math.floor(sc*cfg.bonusRate));addXp(S,bonus);ACT.progress(S,"minis");ACT.trackMin(S);
  log(S,"mini",`Débat chrono : ${sc} argument${sc>1?"s":""} dans la ligne, bonus d'éloquence +${bonus} XP.`,
   {game:"debate",score:sc,bonus,great:sc>=cfg.great&&!flags.length&&!greatAnnounced(S)});
  return hidden(done({bonus,game:"debate",score:sc,errors}),"audit",{game:"debate",score:sc,secs:Math.round(secs*10)/10,errors,flags});
@@ -717,7 +744,7 @@ export function duelApply(S,res,{vs="?",mine=0,theirs=0,paid=true}={}){
   :res==="loss"?`Duel perdu contre ${vs} au Débat chrono, ${mine} à ${theirs} : ${parts}.`
   :res==="tie"?`Match nul contre ${vs} au Débat chrono, ${mine} partout : ${parts}.`
   :`${vs} a esquivé ton défi : ${parts}.`;
- log(S,"duel",text,{res,vs,mine,theirs});
+ log(S,"duel",text,{res,vs,mine,theirs});ACT.trackMin(S);
  return true;
 }
 

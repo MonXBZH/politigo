@@ -194,7 +194,7 @@ test("parallel actions cannot beat the per-visit allowance; parallel sign-ups of
 test("board rows and feed entries expose only public fields, and need a session",async()=>{
  assert.equal((await client("10.0.1.12").call("GET","/api/board")).status,401);
  const c=client("10.0.1.13");await reg(c,"Uma");const b=(await c.call("GET","/api/board")).json;
- const pub=["name","camp","candidate","lvl","score","form","streak","bestStreak","deaths","asleep","online"].sort();
+ const pub=["name","camp","candidate","lvl","score","form","streak","bestStreak","deaths","asleep","online","outfit","object","dw","dl"].sort();   // 1.6.0: the portraits and the duel record
  for(const r of b.board)assert.deepEqual(Object.keys(r).sort(),pub);
  for(const f of b.feed)assert.deepEqual(Object.keys(f).sort(),["id","kind","player","t","text"]);   // id: the admin deletes a line by it
 });

@@ -108,6 +108,7 @@ h2.sub{margin-top:16px;font-size:15px}
 .badge.bad{background:#ff6b7a33;border-color:#ff6b7a88;color:#ffd4d9}
 .badge.warn{background:#ffd59a26;border-color:#ffd59a77;color:var(--accent-2)}
 .badge.good{background:#7ee0a81f;border-color:#7ee0a866;color:var(--ok)}
+.badge.mythic{background:#ff6a1a2e;border-color:#ff6a1a99;color:#ffc59e}   /* the mythic rarity's colour (web/wardrobe.mjs) */
 .camp-left{color:var(--left)}.camp-right{color:var(--right)}
 
 /* announcement: preview styled like the in-game banner */

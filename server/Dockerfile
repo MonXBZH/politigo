@@ -5,7 +5,7 @@ FROM node:24-alpine@sha256:8a32c8cf649a49915a66e81e7a609223c708d0adabf288ee3f407
 RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /opt/yarn*  /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/yarn /usr/local/bin/yarnpkg
 ENV NODE_ENV=production NODE_NO_WARNINGS=1 TZ=Europe/Paris PORT=3000 DB_PATH=/data/politigo.db
 WORKDIR /app
-COPY web/rules.mjs server/server.mjs server/admin.mjs server/push.mjs server/chat.mjs ./
+COPY web/rules.mjs web/activities.mjs web/wardrobe.mjs web/duel.mjs server/server.mjs server/admin.mjs server/push.mjs server/chat.mjs ./
 # The volumes inherit this ownership the first time they are created (/run/politigo: the admin socket, shared with
 # the optional admin container).
 RUN mkdir -p /data /run/politigo && chown node:node /data /run/politigo

@@ -92,7 +92,7 @@ const PANELS=[["tableau","Tableau de bord"],["traiter","À traiter"],["joueurs",
 const ACTIONS=[["chat-delete","Supprimer un message du chat"],["chat-mute","Couper le chat d'un joueur"],["signout","Déconnecter un joueur"],
  ["rename","Renommer un joueur"],["suspend","Suspendre ou réactiver un compte"],["unlock","Débloquer la connexion d'un joueur"],
  ["reset-password","Réinitialiser le mot de passe d'un joueur"],["announce","Envoyer et planifier des annonces"],["feed-delete","Supprimer une ligne du fil"],
- ["duel-cancel","Annuler un duel en cours"],["duel-annul","Annuler un duel terminé (rendre les gains)"],["alerts-ack","Marquer une alerte comme vue"],
+ ["duel-cancel","Annuler un duel en cours"],["duel-annul","Annuler un duel terminé (rendre les gains), arbitrer un duel du Bâton"],["alerts-ack","Marquer une alerte comme vue"],
  ["invite","Voir et copier le code d'invitation"]];
 const PANEL_IDS=PANELS.map(x=>x[0]),ACTION_IDS=ACTIONS.map(x=>x[0]);
 const PRESETS=[{id:"chat",label:"Modo chat",panels:["traiter","chat"],actions:["chat-delete","chat-mute","alerts-ack"]},
@@ -103,7 +103,7 @@ const NEEDS={stats:PANEL_IDS.map(p=>"p:"+p),list:["p:tableau","p:joueurs","p:ann
  bots:["p:bots"],"chat-reports":["p:chat"],"chat-feed":["p:chat"],"chat-media":["p:chat"],alerts:["p:traiter"],audit:["p:journal"],"invite-get":["a:invite"],
  signout:["a:signout"],rename:["a:rename"],suspend:["a:suspend"],unlock:["a:unlock"],announce:["a:announce"],"schedule-add":["a:announce"],
  "schedule-delete":["a:announce"],"schedule-toggle":["a:announce"],"feed-delete":["a:feed-delete"],"duel-cancel":["a:duel-cancel"],
- "duel-annul":["a:duel-annul"],"chat-delete":["a:chat-delete"],"chat-mute":["a:chat-mute"],"alerts-ack":["a:alerts-ack"],"reset-password":["a:reset-password"]};
+ "duel-annul":["a:duel-annul"],"baton-judge":["a:duel-annul"],"chat-delete":["a:chat-delete"],"chat-mute":["a:chat-mute"],"alerts-ack":["a:alerts-ack"],"reset-password":["a:reset-password"]};
 const may=(mod,cmd)=>!mod||(NEEDS[cmd]||[]).some(n=>n.startsWith("p:")?mod.panels.includes(n.slice(2)):mod.actions.includes(n.slice(2)));
 const modKey=s=>String(s).normalize("NFC").trim().toLowerCase();
 const MODS_FILE=join(DATA,"moderators.json"),MODS_MAX=50;
@@ -174,8 +174,9 @@ const CMDS={
  stats:[],list:[],player:WHO,signout:WHO,rename:[...WHO,"newName"],suspend:[...WHO,"on"],unlock:WHO,
  announce:["text","to","camp"],"schedule-list":[],"schedule-add":["text","target","kind","at","time","days","until"],
  "schedule-delete":["id"],"schedule-toggle":["id","enabled"],"announce-history":[],"feed-list":["limit"],"feed-delete":["id"],
- "duels-list":[],"duel-cancel":["id"],"duels-suspects":[],"duel-annul":["id"],alerts:[],"alerts-ack":["keys"],"invite-get":[],"invite-regenerate":[],"registrations-set":["open"],"event-set":["mode"],
+ "duels-list":[],"duel-cancel":["id"],"duels-suspects":[],"duel-annul":["id"],"baton-judge":["id","accept"],alerts:[],"alerts-ack":["keys"],"invite-get":[],"invite-regenerate":[],"registrations-set":["open"],"event-set":["mode"],
  bots:[],"chat-reports":[],"chat-feed":["before","limit","room"],"chat-media":["id"],"chat-delete":["id"],"chat-mute":[...WHO,"hours"],"chat-set":["global","camp"],audit:["limit"],
+ "mythic-reset":[],   // the owner's alone: not in NEEDS, so no moderator profile can ever grant it
 };
 const pick=(b,keys)=>Object.fromEntries(keys.filter(k=>b[k]!==undefined).map(k=>[k,b[k]]));
 

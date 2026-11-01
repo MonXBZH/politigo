@@ -11,6 +11,8 @@ import {dirname,join} from "node:path";
 import * as R from "./rules.mjs";
 import * as P from "./push.mjs";
 import {createChat} from "./chat.mjs";
+import * as W from "./wardrobe.mjs";
+import * as D from "./duel.mjs";
 
 const env=process.env;
 process.umask(0o077);
@@ -64,6 +66,11 @@ const knob=(v,def)=>{const n=Number(v);return v!==undefined&&v!==""&&Number.isFi
 const DUEL_MIN_LEVEL=knob(env.POLITIGO_DUEL_MIN_LEVEL,R.DUEL.minLevel),DUEL_MIN_AGE=knob(env.POLITIGO_DUEL_MIN_AGE_H,R.DUEL.minAgeMs/R.H)*R.H;
 // Said at every start: a test setting left on a real server opens duels to fresh accounts (and to alts).
 if(DUEL_MIN_LEVEL!==R.DUEL.minLevel||DUEL_MIN_AGE!==R.DUEL.minAgeMs)console.warn(`Duel test settings active: level ${DUEL_MIN_LEVEL}+, accounts ${DUEL_MIN_AGE/R.H} h old+ (normal: ${R.DUEL.minLevel}, ${R.DUEL.minAgeMs/R.H} h).`);
+// The Duel du Bâton on a test server: its rounds' clock runs this many times faster, and a deferred duel is replayed this
+// long after the bearer's part instead of at the next 21:00. Never set on a real server (said at start).
+const BATON_K=Math.max(1,Math.min(20,Math.floor(Number(env.POLITIGO_BATON_SPEED))||1));
+const BATON_REPLAY_MS=env.POLITIGO_BATON_REPLAY_MS?Math.max(0,Number(env.POLITIGO_BATON_REPLAY_MS)||0):null;
+if(BATON_K!==1||BATON_REPLAY_MS!==null)console.warn(`Bâton duel test settings active: clock x${BATON_K}, replay ${BATON_REPLAY_MS===null?"at 21:00":`${BATON_REPLAY_MS} ms after the bearer's part`}.`);
 // A turn is void past the debate, its countdown and the same grace as the solo mini-games.
 const DUEL_TURN_MS=R.MINI.debate.ms+R.DEBATE.intro+R.MINI_RULES.graceSeconds*1000;
 // The server-paced debate's length. The knob exists for tests (a turn in 2 s) and can only SHORTEN it.
@@ -112,7 +119,12 @@ CREATE TABLE IF NOT EXISTS mini_scores(id INTEGER PRIMARY KEY,player_id INTEGER 
 CREATE INDEX IF NOT EXISTS mini_scores_player ON mini_scores(player_id,t);
 CREATE INDEX IF NOT EXISTS mini_scores_t ON mini_scores(t);
 CREATE TABLE IF NOT EXISTS tombstones(name_key TEXT PRIMARY KEY,created INTEGER NOT NULL,deleted INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS admin_acks(key TEXT PRIMARY KEY,t INTEGER NOT NULL);`);
+CREATE TABLE IF NOT EXISTS admin_acks(key TEXT PRIMARY KEY,t INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS mythics(item TEXT PRIMARY KEY,player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,t INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS baton_duels(id INTEGER PRIMARY KEY,challenger INTEGER REFERENCES players(id) ON DELETE CASCADE,bearer INTEGER REFERENCES players(id) ON DELETE CASCADE,
+ seed INTEGER NOT NULL,mode TEXT NOT NULL,status TEXT NOT NULL,created INTEGER NOT NULL,expires INTEGER,data TEXT NOT NULL DEFAULT '{}',replay_at INTEGER,ends_at INTEGER,
+ resolved INTEGER,winner INTEGER,flags TEXT);
+CREATE INDEX IF NOT EXISTS baton_duels_status ON baton_duels(status);`);
 // Duels from before the server-paced debate: its turn state, the per-turn flags, what the result changed (to annul
 // it) and when each side first answered and finished (the multi-account signals).
 for(const [col,type] of [["turn","TEXT"],["flags","TEXT"],["fx","TEXT"],["c_first","INTEGER"],["d_first","INTEGER"],["c_done","INTEGER"]]){
@@ -128,6 +140,11 @@ if(!db.prepare("PRAGMA table_info(admin_log)").all().some(c=>c.name==="actor")){
 for(const [col,type] of [["seen_version","TEXT"],["suspended","INTEGER NOT NULL DEFAULT 0"]]){
  if(db.prepare("PRAGMA table_info(players)").all().some(c=>c.name===col))continue;
  try{db.exec(`ALTER TABLE players ADD COLUMN ${col} ${type}`);}catch(e){if(!/duplicate column/i.test(e.message))throw e;}
+}
+// The staff's bearer: their death count when they got it (a death sends it back to the urn) and the low-Flamme warning.
+for(const col of ["deaths","warned"]){
+ if(db.prepare("PRAGMA table_info(mythics)").all().some(c=>c.name===col))continue;
+ try{db.exec(`ALTER TABLE mythics ADD COLUMN ${col} INTEGER`);}catch(e){if(!/duplicate column/i.test(e.message))throw e;}
 }
 // Settings changed from the admin interface win over the environment and the files, from then on.
 const getSetting=k=>db.prepare("SELECT value FROM settings WHERE key=?").get(k)?.value??null;
@@ -238,6 +255,16 @@ const q={
  // The player whose own duel turn is running (not yet closed by the clock).
  playingDuel:db.prepare("SELECT 1 FROM duels WHERE (challenger=? AND status='c_play' AND c_started>=?) OR (defender=? AND status='d_play' AND d_started>=?) LIMIT 1"),
  subsOf:db.prepare("SELECT id,endpoint,p256dh,auth FROM push_subs WHERE player_id=?"),
+ subbedIds:db.prepare("SELECT DISTINCT player_id AS id FROM push_subs"),
+ // One unique row per mythic item: the INSERT that changes a row is the one and only win, however many draws race.
+ mythicOf:db.prepare("SELECT player_id,t,deaths,warned FROM mythics WHERE item=?"),
+ mythics:db.prepare("SELECT item,player_id,t FROM mythics"),
+ claimMythic:db.prepare("INSERT OR IGNORE INTO mythics(item,player_id,t,deaths,warned) VALUES(?,?,?,?,0)"),
+ freeMythic:db.prepare("DELETE FROM mythics WHERE item=? AND player_id=?"),
+ freeMythicsOf:db.prepare("DELETE FROM mythics WHERE player_id=?"),
+ // Duels won and lost per player (finished, not annulled, a winner), for the board: one grouped pass per board.
+ duelTally:db.prepare(`SELECT id,SUM(w) AS dw,SUM(l) AS dl FROM (SELECT challenger AS id,winner=challenger AS w,winner=defender AS l FROM duels WHERE status='done' AND winner IS NOT NULL
+  UNION ALL SELECT defender,winner=defender,winner=challenger FROM duels WHERE status='done' AND winner IS NOT NULL) GROUP BY id`),
 };
 
 // Players live in memory (a group of friends, not a nation); every change is written through.
@@ -293,6 +320,7 @@ function update(p,fn){
  }catch(e){p.state=before;throw e;}
  try{const feed=newFeedEntries(p,jn);if(feed.length)broadcast("feed",feed);pushMe(p);publishBoard();}
  catch(e){console.error(`player ${p.id}: announce failed`,e);}
+ try{batonCheck(p);}catch(e){console.error(`player ${p.id}: Bâton check failed`,e);}   // a death, a dying Flamme: back to the urn
  return out;
 }
 
@@ -438,10 +466,12 @@ function newFeedEntries(p,jnBefore){
 const onlineIds=()=>new Set([...clients].map(c=>c.playerId));
 const isOnline=id=>[...clients].some(c=>c.playerId===id);
 function boardRows(){
- const on=onlineIds();
- return [...players.values()].filter(p=>!p.suspended).map(p=>{const S=p.state;return {
+ const on=onlineIds(),tally=new Map(q.duelTally.all().map(r=>[r.id,r]));
+ return [...players.values()].filter(p=>!p.suspended).map(p=>{const S=p.state,worn=S.wardrobe?.worn,t=tally.get(p.id);return {
   name:p.name,camp:S.camp,candidate:R.person(S).name,lvl:S.lvl,score:R.score(S),form:S.form,
-  streak:S.streak,bestStreak:S.bestStreak,deaths:S.deaths,asleep:R.isAsleep(S),online:on.has(p.id)};})
+  streak:S.streak,bestStreak:S.bestStreak,deaths:S.deaths,asleep:R.isAsleep(S),online:on.has(p.id),
+  // What the portraits wear, and the duel record of the last month (closed duels are purged after 30 days).
+  outfit:worn?.outfit??null,object:worn?.object??null,dw:Number(t?.dw??0),dl:Number(t?.dl??0)};})
  .sort((a,b)=>b.score-a.score||b.lvl-a.lvl||a.name.localeCompare(b.name,"fr"));
 }
 const clients=new Set();         // live SSE connections: {res, playerId}
@@ -464,7 +494,7 @@ function presenceChanged(){
  presenceTimer.unref?.();
 }
 function broadcast(event,data){for(const c of clients)sse(c.res,event,data);}
-function pushMe(p){const data=mePayload(p);for(const c of clients)if(c.playerId===p.id)sse(c.res,"me",data);}
+function pushMe(p){if(![...clients].some(c=>c.playerId===p.id))return;const data=mePayload(p);for(const c of clients)if(c.playerId===p.id)sse(c.res,"me",data);}
 // A change only marks the board dirty: one board goes out per BOARD_MS whatever the number of actions, so forty
 // quick actions no longer cost forty boards to every stream. force: now (a player removed, suspended).
 let boardTimer=null;
@@ -482,14 +512,14 @@ function flushBoard(){
 }
 // The debate's seed deals its answers: it never leaves the server (the other games' seeds only shape what is drawn).
 const publicState=S=>S.mini?.k==="debate"&&"seed" in S.mini?{...S,mini:Object.fromEntries(Object.entries(S.mini).filter(([k])=>k!=="seed"))}:S;
-function mePayload(p){return {name:p.name,state:publicState(p.state),speed:SPEED,tz:R.timeZone(),serverNow:Date.now(),event:EVENT_MODE,version:VERSION,release:RELEASE,seenVersion:p.seen??null,chat:chatRooms()};}
+function mePayload(p){return {name:p.name,state:publicState(p.state),speed:SPEED,tz:R.timeZone(),serverNow:Date.now(),event:EVENT_MODE,version:VERSION,release:RELEASE,seenVersion:p.seen??null,chat:chatRooms(),urnHint:urnHintOf(p),baton:batonWon?batonView(p):null};}
 // The clock runs for everyone, connected or not: needs drain and deaths happen while the page is closed.
 setInterval(()=>{
- const now=Date.now();
+ const now=Date.now(),hold=q.mythicOf.get(MYTHIC)?.player_id;
  for(const p of players.values()){
   // One broken player (or a full disk) is logged and skipped; it must not stop everyone else's clock.
   if(p.suspended)continue;   // frozen: their companion neither lives nor dies until the suspension is lifted
-  try{update(p,S=>R.advance(S,now,SPEED,rand));}
+  try{update(p,S=>R.advance(S,now,SPEED,rand));missionDue(p);if(p.id===hold)batonCheck(p,now);}
   catch(e){console.error(`sweep, player ${p.id}:`,e);}
  }
  try{sweepSchedules(now);}catch(e){console.error("sweep, schedules:",e);}
@@ -546,11 +576,12 @@ const nameOf=id=>players.get(id)?.name??"?";
 function duelEvent(d,kind,to){
  for(const id of to){const mine=id===d.challenger,data={id:d.id,kind,role:mine?"challenger":"defender",vs:nameOf(mine?d.defender:d.challenger)};for(const c of clients)if(c.playerId===id)sse(c.res,"duel",data);}
 }
-// Duel news goes straight to the public feed (the journal's "duel" entries are private: they show the gauges).
-function duelFeed(player,text){
- try{const e={t:Date.now(),player,kind:"duel",text};q.insertFeed.run(e.t,e.player,e.kind,e.text);q.trimFeed.run(FEED_KEEP);broadcast("feed",[e]);}
- catch(e){console.error("duel feed:",e);}
+// Duel and wardrobe news go straight to the public feed (the journal's entries are private: they show the gauges).
+function feedLine(player,kind,text){
+ try{const e={t:Date.now(),player,kind,text};q.insertFeed.run(e.t,e.player,e.kind,e.text);q.trimFeed.run(FEED_KEEP);broadcast("feed",[e]);}
+ catch(e){console.error(`${kind} feed:`,e);}
 }
+const duelFeed=(player,text)=>feedLine(player,"duel",text);
 // An outcome lands like any other change: clock brought up to date, written, pushed to the player's screens.
 // A player who deleted their account in the meantime is simply skipped.
 // Returns what really changed ({xp,lvl,moral,energy}, after the floors), kept with the duel so the admin can annul it.
@@ -801,6 +832,417 @@ async function pushRoute(req,res,path){
  return send(res,200,{ok:true});
 }
 
+// ===================================================================== THE BÂTON DE FEU (one mythic item, one bearer)
+// The rules roll for it (web/wardrobe.mjs); the server says whether it is still in the urn and whether this player
+// deserves a chance, and owns the one row that makes a win real. No await between the roll and that row.
+const MYTHIC="baton",CLEAN_MS=60e3,cleanCache=new Map();   // playerId -> {t,clean,bot}: the bot report is costly, draws come in bursts
+// Clean: a bot score under BOT_ALERT and none of their duel turns flagged by the anti-cheat within 14 days.
+function mythicClean(p,now){
+ const c=cleanCache.get(p.id);if(c&&now-c.t<CLEAN_MS)return c.clean;
+ const bot=botReport(p,q.activityOf.all(p.id,activityCut(now)),q.miniOf.all(p.id,activityCut(now))).score;
+ const flagged=q.flaggedDuels.all(now-14*864e5).some(d=>flagsOf(d).some(x=>(x.side==="d"?d.defender:d.challenger)===p.id));
+ const clean=bot<BOT_ALERT&&!flagged;cleanCache.set(p.id,{t:now,clean,bot});return clean;
+}
+// opts.mythic for the rules. clean is a getter, worked out only for an otherwise eligible player. won.v: a claim landed.
+function mythicOpts(p,now,won={}){
+ const available=!q.mythicOf.get(MYTHIC),ageDays=(now-p.created)/864e5;
+ return {available,ageDays,get clean(){return available&&ageDays>=W.MYTHIC.minDays&&(p.state.flame?.pts||0)>=W.MYTHIC.minFlame&&mythicClean(p,now);},
+  claim:()=>{const ok=q.claimMythic.run(MYTHIC,p.id,now,p.state.deaths??0).changes===1;if(ok)won.v=true;return ok;}};
+}
+// The merguez smell over the urn (eligible right now), for the player's own screen only.
+function urnHintOf(p){try{return typeof W.urnHint==="function"&&!p.suspended?!!W.urnHint(p.state,{now:Date.now(),mythic:mythicOpts(p,Date.now())}):false;}catch{return false;}}
+// The staff found its bearer: the feed, every open screen, every other subscribed player, the admin's alerts and log.
+function mythicWon(p,now){
+ const pts=Math.floor(p.state.flame?.pts??0),days=Math.floor((now-p.created)/864e5),bot=cleanCache.get(p.id)?.bot??null;
+ markWon();
+ feedLine(p.name,"mythic","🔥 brandit désormais le Bâton de feu des Apprix.");
+ broadcast("mythic",{name:p.name,camp:p.state.camp});batonChanged(null);
+ const body=`🔥 Le Bâton de feu des Apprix a trouvé son maître : ${p.name} !`;
+ for(const {id} of q.subbedIds.all()){const o=players.get(id);if(o&&id!==p.id&&!o.suspended)notify(id,{title:"PolitiGo",body,tag:"mythic",url:"/"});}
+ audit("server","mythic",p.name,`Bâton de feu gagné : Flamme ${pts} · compte de ${days} jours · score de bot ${bot??"?"}/100`);
+ console.log(`player ${p.id} won the Bâton de feu`);
+}
+// What a draw says in the public feed: the mythic above, the camp's ultra rare outfit, the other party's card.
+function drawNews(p,r,won,now){
+ if(r.mythic&&won)return mythicWon(p,now);
+ const left=p.state.camp==="left";
+ if(r.item?.rarity==="ultra")feedLine(p.name,"ultra",left?`☭ ${p.name} a rejoint le Soviet suprême !`:`👑 ${p.name} s'est fait sacrer à Reims !`);
+ if(r.transfuge)feedLine(p.name,"transfuge",`🃏 ${p.name} a pioché la carte du parti d'en face : transfuge en vue ?`);
+}
+// A finished mission is announced once (held during a game, like the duel pushes); notified is written first, so a
+// failed write retries at the next sweep instead of pushing twice.
+function missionDue(p){
+ const m=p.state.missions?.cur;
+ if(!m||m.notified||!(m.end<=p.state.vclock))return;
+ update(p,S=>{if(S.missions?.cur)S.missions.cur.notified=true;});
+ notify(p.id,{title:"PolitiGo",body:"Mission terminée : son rapport t'attend.",tag:"mission",url:"/"});
+}
+
+// ===================================================================== THE DUEL DU BÂTON (the staff changes hands)
+// Anyone with a bright Flamme may challenge the bearer: live when she is online and accepts, else deferred (the
+// challenger plays his three rounds now, she plays hers within 48 h against his ghost, then everyone watches the replay
+// at 21:00 and the staff moves at its end). web/duel.mjs deals the charts and referees; this side only keeps the clock,
+// takes the presses in small batches (never ahead of time, never rewriting the past) and reveals the chart a few
+// seconds ahead. A round's times are ms from its start; BATON_K speeds the clock on a test server only.
+const BD=D.BD,BATON_OPEN=["invited","live","c_play","b_wait","b_play","scheduled","held"],PLAYING=new Set(["live","c_play","b_play"]);
+const SILENT_MS=2000,BATON_TICK=500;   // a side silent for 2 s is taken as pressing nothing; the referee's own pace
+const bq={
+ insert:db.prepare("INSERT INTO baton_duels(challenger,bearer,seed,mode,status,created,expires,data) VALUES(?,?,?,?,?,?,?,?)"),
+ get:db.prepare("SELECT * FROM baton_duels WHERE id=?"),
+ open:db.prepare(`SELECT * FROM baton_duels WHERE status IN (${BATON_OPEN.map(s=>`'${s}'`).join(",")}) ORDER BY id`),
+ latest:db.prepare("SELECT * FROM baton_duels ORDER BY id DESC LIMIT 1"),
+ save:db.prepare("UPDATE baton_duels SET mode=?,status=?,expires=?,data=?,replay_at=?,ends_at=?,resolved=?,winner=?,flags=? WHERE id=?"),
+ // The week between two challenges counts from the player's last Bâton duel, in either seat, whatever its end.
+ lastOf:db.prepare("SELECT created FROM baton_duels WHERE challenger=? OR bearer=? ORDER BY id DESC LIMIT 1"),
+ defended:db.prepare("SELECT resolved FROM baton_duels WHERE bearer=? AND winner=? AND status='done' ORDER BY resolved DESC LIMIT 1"),
+ of:db.prepare("SELECT * FROM baton_duels WHERE challenger=? OR bearer=? ORDER BY id DESC LIMIT 5"),
+ held:db.prepare("SELECT * FROM baton_duels WHERE status='held' ORDER BY id DESC LIMIT 50"),
+ move:db.prepare("UPDATE mythics SET player_id=?,t=?,deaths=?,warned=0 WHERE item=? AND player_id=?"),
+ setDeaths:db.prepare("UPDATE mythics SET deaths=? WHERE item=?"),
+ setWarned:db.prepare("UPDATE mythics SET warned=? WHERE item=?"),
+};
+// Nothing of the duel shows before the staff was won once (no spoiler); public through the feed from then on.
+let batonWon=getSetting("baton_won")==="1"||!!q.mythicOf.get(MYTHIC);
+function markWon(){if(batonWon)return;batonWon=true;try{setSetting("baton_won","1");}catch(e){console.error("baton_won:",e);}}
+const bLoad=row=>{
+ if(!row)return null;let data={},fl=[];
+ try{data=JSON.parse(row.data||"{}")||{};}catch{}try{fl=JSON.parse(row.flags||"[]");if(!Array.isArray(fl))fl=[];}catch{}
+ return {...row,data,fl};
+};
+const bSave=d=>bq.save.run(d.mode,d.status,d.expires??null,JSON.stringify(d.data),d.replay_at??null,d.ends_at??null,d.resolved??null,d.winner??null,d.fl.length?JSON.stringify(d.fl):null,d.id);
+const chartCache=new Map();
+function notesOf(d,n){const k=`${d.seed}:${n}`;let c=chartCache.get(k);if(!c){if(chartCache.size>12)chartCache.clear();c=D.chart(D.roundSeed(d.seed,n)).notes;chartCache.set(k,c);}return c;}
+const newRound=()=>({c:[],b:[],cUp:0,bUp:0,start:null,over:null,k:0});
+const rtOf=(r,now)=>(now-r.start)*BATON_K;
+const byT=l=>[...l].sort((a,b)=>a[0]-b[0]);
+const winsOf=data=>{const w=[0,0];for(const r of data.rounds||[])if(r.over?.w===0||r.over?.w===1)w[r.over.w]++;return w;};
+const roundsOf=data=>(data.rounds||[]).map(r=>({c:byT(r.c||[]),b:byT(r.b||[])}));
+const verdictOf=d=>D.verdict(d.seed,roundsOf(d.data));
+const playersOf=d=>d.status==="c_play"?[d.challenger]:d.status==="b_play"?[d.bearer]:[d.challenger,d.bearer];
+const sideKey=(d,n,side)=>`${d.id}:${n}:${side}`;
+// In memory only: when each side last sent a batch, and what each reply already gave (a reload asks again with from:0).
+const bSeen=new Map(),bCursor=new Map(),bLive={id:null,n:-1,notes:-Infinity,up:-1};
+const stripBaton=S=>{const w=S.wardrobe;if(!w)return;if(Array.isArray(w.own))w.own=w.own.filter(x=>x!==MYTHIC);if(w.worn?.object===MYTHIC)w.worn.object=null;};
+function batonTo(ids,data){const want=new Set(ids);for(const c of clients)if(want.has(c.playerId))sse(c.res,"baton",data);}
+function pushOthers(except,body,tag){for(const {id} of q.subbedIds.all()){const o=players.get(id);if(o&&!except.includes(id)&&!o.suspended)notify(id,{title:"PolitiGo",body,tag,url:"/"});}}
+// Every change: the two players and the bearer get their own view, every other screen the public one.
+function batonChanged(d){
+ if(!batonWon)return;
+ const pub={kind:"state",baton:batonView(null)},own=new Map(),hold=q.mythicOf.get(MYTHIC)?.player_id;
+ for(const id of [d?.challenger,d?.bearer,hold]){const p=id!=null&&players.get(id);if(p)own.set(id,{kind:"state",baton:batonView(p)});}
+ for(const c of clients)sse(c.res,"baton",own.get(c.playerId)??pub);
+}
+// Why p cannot challenge the bearer right now ("" when he can).
+function batonWhy(p,now=Date.now()){
+ const h=players.get(q.mythicOf.get(MYTHIC)?.player_id);
+ if(!h)return "Le Bâton de feu est dans l'urne.";
+ if(h.id===p.id)return "Tu portes déjà le Bâton.";
+ if(p.state.lvl<DUEL_MIN_LEVEL)return `Les duels s'ouvrent au niveau ${DUEL_MIN_LEVEL}.`;
+ if(now-p.created<DUEL_MIN_AGE)return "Ton compte est trop récent pour les duels.";
+ if((p.state.flame?.pts??0)<BD.minFlame)return `Ta Flamme doit atteindre ${BD.minFlame} pour défier le porteur.`;
+ if(h.suspended)return "Le porteur ne peut pas être défié pour l'instant.";
+ if(bq.open.all().length)return "Un duel pour le Bâton est déjà en cours.";
+ const last=bq.lastOf.get(p.id,p.id)?.created;
+ if(last!=null&&now-last<BD.weekMs){const n=Math.ceil((last+BD.weekMs-now)/864e5);return `Un défi pour le Bâton par semaine : reviens dans ${n} jour${n>1?"s":""}.`;}
+ const def=bq.defended.get(h.id,h.id)?.resolved;
+ if(def!=null&&now-def<BD.respiteMs)return `Le porteur a ${BD.respiteMs/864e5} jours de répit après sa défense.`;
+ return "";
+}
+// The duel as p sees it (p null: every other screen). A deferred duel's outcome is the replay's: until its end only the
+// bearer, who played last, knows it.
+function duelPublic(d,p,now){
+ if(!d||!(BATON_OPEN.includes(d.status)||(d.resolved&&now-d.resolved<864e5)))return null;
+ const role=!p?null:p.id===d.challenger?"challenger":p.id===d.bearer?"bearer":"spectator";
+ const pub=d.mode==="live"||d.status==="forfeit"||(d.ends_at!=null&&now>=d.ends_at),hers=role==="bearer"&&["b_play","scheduled","done","held"].includes(d.status);
+ let result=null;
+ if((d.status==="done"||d.status==="forfeit")&&d.winner!=null&&(pub||hers))result={winner:d.winner===d.challenger?"c":"b",how:d.status==="forfeit"?"forfeit":"duel"};
+ else if(hers&&d.status==="scheduled")result={winner:verdictOf(d).winner===0?"c":"b",how:"duel"};
+ return {id:d.id,mode:d.mode,status:d.status,...(role?{role}:{}),c:nameOf(d.challenger),b:nameOf(d.bearer),expires:d.expires??null,
+  replayAt:d.replay_at??null,endsAt:d.ends_at??null,n:d.data.n??0,wins:pub||hers?winsOf(d.data):null,result};
+}
+function batonView(p,now=Date.now()){
+ const row=q.mythicOf.get(MYTHIC),h=row&&players.get(row.player_id),mine=!!p&&!!h&&h.id===p.id;
+ const out={holder:h?{name:h.name,camp:h.state.camp}:null,mine};
+ if(mine){out.flame=Math.floor(p.state.flame?.pts??0);out.warn=out.flame<BD.warnFlame;}
+ else if(p&&h)out.can=batonWhy(p,now);
+ out.duel=duelPublic(bLoad(bq.latest.get()),p,now);
+ return out;
+}
+function batonFlag(d,side,n,flags){
+ const name=nameOf(side==="c"?d.challenger:d.bearer),have=d.fl.find(x=>x.side===side&&x.n===n),fresh=flags.filter(f=>!have?.flags.includes(f));
+ if(!fresh.length)return;
+ if(have)have.flags.push(...fresh);else d.fl.push({side,name,n,flags:[...fresh]});
+ audit("server","baton-flag",`#${d.id}`,`duel du Bâton #${d.id} signalé : ${name}, manche ${n+1} (${fresh.join(", ")})`);
+}
+function startRound(d,now){
+ const r=d.data.rounds[d.data.n];r.start=now+Math.round(BD.countdown/BATON_K);d.data.ready={c:false,b:false};
+ if(d.status==="live")d.expires=null;
+ batonTo(playersOf(d),{kind:"round",n:d.data.n,start:r.start,now});
+}
+// The round in play, refereed as far as both sides are known: the flame reached somebody, or the whistle (solo: the
+// whistle only). What is judged is frozen: a press arriving later for that stretch is dropped, so the recordings
+// replay exactly as it was refereed. Returns true when the round just ended.
+function batonReferee(d,now){
+ const data=d.data,n=data.n,r=data.rounds?.[n];
+ if(!PLAYING.has(d.status)||!r||r.start==null||r.over||now<r.start)return false;
+ const rt=rtOf(r,now),solo=d.status==="c_play";
+ const eff=s=>{const up=r[s+"Up"]??0,seen=bSeen.get(sideKey(d,n,s))??r.start;return now-seen>SILENT_MS?Math.max(up,rt-SILENT_MS*BATON_K):up;};
+ const known=d.status==="live"?Math.min(eff("c"),eff("b")):eff(solo?"c":"b");
+ const k=Math.floor(rt>=BD.round+3000?BD.round:Math.min(BD.round,known-50));
+ if(k<=r.k)return false;
+ r.k=k;
+ const notes=notesOf(d,n),s=D.sim(notes,[byT(r.c),byT(r.b)],{upTo:k,solo});
+ const over=solo?(k>=BD.round?{w:null,t:BD.round,how:"time"}:null):s.over;
+ if(!over){bSave(d);return false;}
+ r.over=over;r.c=byT(r.c);r.b=byT(r.b);
+ for(const side of solo?["c"]:d.status==="live"?["c","b"]:["b"]){const f=D.flagsOf(s.stats[side==="c"?0:1],r[side],notes);if(f.length)batonFlag(d,side,n,f);}
+ const wins=winsOf(data),decided=!solo&&(wins[0]>=BD.wins||wins[1]>=BD.wins);
+ batonTo(playersOf(d),solo?{kind:"over",n}:{kind:"over",n,w:over.w,wins});
+ if(solo){if(n<BD.rounds-1)data.n++;else{d.status="b_wait";d.expires=now+BD.answerMs;}}
+ else if(!decided){data.n++;if(d.status==="live"){data.ready={c:false,b:false};d.expires=now+BD.inviteMs;}}
+ if(d.status==="b_wait"){
+  bSave(d);batonChanged(d);
+  notify(d.bearer,{title:"PolitiGo",body:`⚔️ ${nameOf(d.challenger)} a joué sa partie pour le Bâton de feu : à toi de défendre, tu as ${BD.answerMs/36e5} h.`,tag:"baton",url:"/"});
+ }else if(decided){if(d.status==="live")batonResolve(d,now);else batonSchedule(d,now);}
+ else bSave(d);
+ return true;
+}
+// The next 21:00 (the game's time zone) at least half an hour ahead.
+function nextReplay(now){
+ const w=wall(now);let t=wallToUtc(w.year,w.month,w.day,BD.replayHour,0);
+ if(t<now+BD.replayLead){const x=wall(t+864e5);t=wallToUtc(x.year,x.month,x.day,BD.replayHour,0);}
+ return t;
+}
+// The bearer's part is over (played, or her 20 minutes ran out: what she did not play counts as nothing).
+function batonSchedule(d,now){
+ const total=D.timeline(verdictOf(d)).total;
+ d.status="scheduled";d.expires=null;d.replay_at=BATON_REPLAY_MS!==null?now+BATON_REPLAY_MS:nextReplay(now);d.ends_at=d.replay_at+Math.ceil(total/BATON_K);
+ bSave(d);
+ const when=wall(d.replay_at).day===wall(now).day?"ce soir":"demain soir",cn=nameOf(d.challenger),text=`📺 Le duel pour le Bâton de feu sera rediffusé ${when} à ${BD.replayHour} h : ${cn} contre ${nameOf(d.bearer)}.`;
+ feedLine(cn,"baton",text);pushOthers([],text,"baton");batonChanged(d);
+}
+// The end of a duel: any anti-cheat flag holds it for an admin (judged: applied as it stands); otherwise the staff
+// moves, or the bearer has defended it (and gets her respite).
+function batonResolve(d,now,judged=false){
+ if(d.fl.length&&!judged){
+  d.status="held";d.resolved=now;d.expires=null;bSave(d);
+  audit("server","baton-held",`#${d.id}`,`${nameOf(d.challenger)} contre ${nameOf(d.bearer)} : en attente d'un arbitrage`);
+  return batonChanged(d);
+ }
+ const forfeit=!!d.data.forfeit,cWins=forfeit||verdictOf(d).winner===0;
+ d.status=forfeit?"forfeit":"done";d.winner=cWins?d.challenger:d.bearer;d.resolved=now;d.expires=null;bSave(d);
+ const cn=nameOf(d.challenger),bn=nameOf(d.bearer);
+ if(cWins){try{transferBaton(d.bearer,d.challenger,now);}catch(e){console.error(`baton duel ${d.id}: the staff did NOT move`,e);}}
+ else{feedLine(bn,"baton",`🛡️ ${bn} a défendu le Bâton de feu face à ${cn}.`);notify(d.challenger,{title:"PolitiGo",body:`🛡️ ${bn} a défendu le Bâton de feu face à toi.`,tag:"baton",url:"/"});}
+ batonChanged(d);
+}
+function voidBaton(d,now,feed){
+ d.status="void";d.resolved=now;d.expires=null;bSave(d);
+ if(feed)feedLine(nameOf(d.challenger),"baton",feed);
+ batonChanged(d);
+}
+// The winner takes the staff from the loser, in one transaction (the row and both wardrobes); he chooses to wear it.
+let batonBusy=false;
+function transferBaton(from,to,now){
+ const f=players.get(from),t=players.get(to);if(!t)throw new Error(`player ${to} is gone`);
+ const keep=[f?.state,t.state];batonBusy=true;
+ db.exec("BEGIN");
+ try{
+  if(!bq.move.run(to,now,t.state.deaths??0,MYTHIC,from).changes)throw new Error("the staff is not with the loser any more");
+  if(f)update(f,stripBaton);
+  update(t,S=>{const w=S.wardrobe;if(!w)return;if(!Array.isArray(w.own))w.own=[];if(!w.own.includes(MYTHIC))w.own.push(MYTHIC);});
+  db.exec("COMMIT");
+ }catch(e){try{db.exec("ROLLBACK");}catch{}if(f)f.state=keep[0];t.state=keep[1];throw e;}
+ finally{batonBusy=false;}
+ cleanCache.delete(from);
+ const fn=f?.name??"?";
+ feedLine(t.name,"mythic",`⚔️ ${t.name} a arraché le Bâton de feu des Apprix à ${fn} !`);
+ broadcast("mythic",{name:t.name,camp:t.state.camp,from:fn});
+ pushOthers([to],`⚔️ Le Bâton de feu a changé de mains : ${t.name} l'a arraché à ${fn} !`,"mythic");
+ audit("server","mythic-transfer",t.name,`Bâton de feu arraché à ${fn} : Flamme ${Math.floor(t.state.flame?.pts??0)} · compte de ${Math.floor((now-t.created)/864e5)} jours`);
+ console.log(`player ${to} took the Bâton de feu from player ${from}`);
+ batonCheck(t,now);
+}
+// Back in the urn (death, Flamme under 150, the owner's reset, the bearer's account deleted): any open duel is void.
+const RELEASE_WHY={death:"mort politique du porteur",flame:`Flamme du porteur sous ${BD.keepFlame}`,reset:"remis dans l'urne par l'organisation",deleted:"compte du porteur supprimé"};
+function releaseBaton(pid,why,via="server"){
+ const row=q.mythicOf.get(MYTHIC);if(!row||row.player_id!==pid)return false;
+ const p=players.get(pid),now=Date.now(),name=p?.name??`#${pid}`;
+ // The row and the wardrobe together: never a bearer-less staff still worn.
+ const keep=p?.state;batonBusy=true;db.exec("BEGIN");
+ try{q.freeMythic.run(MYTHIC,pid);if(p&&why!=="deleted")update(p,stripBaton);db.exec("COMMIT");}
+ catch(e){try{db.exec("ROLLBACK");}catch{}if(p)p.state=keep;console.error(`player ${pid}: the staff NOT put back in the urn`,e);return false;}
+ finally{batonBusy=false;}
+ cleanCache.delete(pid);
+ for(const r of bq.open.all()){try{voidBaton(bLoad(r),now);}catch(e){console.error(`baton duel ${r.id}:`,e);}}
+ // A deleted account's lines leave the feed with it: this one does not name them.
+ feedLine(why==="deleted"?"PolitiGo":name,"mythic","🔥 La flamme s'est éteinte : le Bâton de feu retourne dans l'urne…");
+ pushOthers([pid],"🔥 Le Bâton de feu attend un nouveau maître…","mythic");
+ broadcast("baton",{kind:"freed"});batonChanged(null);
+ audit(via,why==="reset"?"mythic-reset":"mythic-release",name,`Bâton de feu remis dans l'urne : ${RELEASE_WHY[why]}`);
+ console.log(`Bâton de feu back in the urn (${why}, player ${pid})`);
+ return true;
+}
+// After every change of the bearer's game, and at every sweep: a death or a dying Flamme sends the staff back; under
+// warnFlame she is warned once (again only after climbing back).
+function batonCheck(p,now=Date.now()){
+ if(batonBusy)return;
+ const row=q.mythicOf.get(MYTHIC);if(!row||row.player_id!==p.id)return;
+ const deaths=p.state.deaths??0,pts=p.state.flame?.pts??0;
+ if(row.deaths==null){bq.setDeaths.run(deaths,MYTHIC);row.deaths=deaths;}   // a win from before the column
+ if(deaths>row.deaths)return releaseBaton(p.id,"death");
+ if(pts<BD.keepFlame)return releaseBaton(p.id,"flame");
+ if(pts<BD.warnFlame&&!row.warned){
+  bq.setWarned.run(1,MYTHIC);batonTo([p.id],{kind:"warn",flame:Math.floor(pts)});
+  notify(p.id,{title:"PolitiGo",body:`🔥 La flamme du Bâton vacille : sous ${BD.keepFlame} de Flamme, il retourne dans l'urne.`,tag:"baton",url:"/"});
+ }else if(pts>=BD.warnFlame&&row.warned)bq.setWarned.run(0,MYTHIC);
+}
+function batonReady(p,d,now){
+ const side=p.id===d.challenger?"c":"b",data=d.data;
+ // The bearer's first ready opens her part: the challenger's rounds stay, hers start afresh, 20 minutes for all.
+ if(d.status==="b_wait"&&side==="b"){
+  d.status="b_play";d.expires=now+BD.playMs;data.n=0;data.ready={c:false,b:false};
+  for(const r of data.rounds){r.start=null;r.over=null;r.k=0;r.b=[];r.bUp=0;r.cUp=BD.round;}
+  bSave(d);batonChanged(d);
+ }
+ if(!(d.status==="live"||(d.status==="c_play"&&side==="c")||(d.status==="b_play"&&side==="b")))
+  throw new HttpError(422,d.status==="invited"?"Le porteur n'a pas encore répondu.":BATON_OPEN.includes(d.status)?"Ce n'est pas ton tour de jouer.":"Ce duel est terminé.");
+ const r=data.rounds[data.n];
+ if(r.start==null){
+  if(d.status!=="live")startRound(d,now);
+  else{data.ready[side]=true;if(data.ready.c&&data.ready.b)startRound(d,now);else d.expires=Math.min(d.expires??Infinity,now+Math.round(60e3/BATON_K));}
+  bSave(d);
+ }
+ return {n:data.n,start:r.start,now};
+}
+// One batch: the sender's presses since the last one and how far into the round they have played (up).
+function batonPlay(p,d,b,now,req){
+ const side=p.id===d.challenger?"c":"b",other=side==="c"?"b":"c",data=d.data,n=b.n;
+ if(!Number.isInteger(n)||n<0||n>=BD.rounds)throw new HttpError(400,"Manche inconnue.");
+ const r=data.rounds?.[n],key=sideKey(d,n,side);
+ // A deferred duel keeps each side to its own part: the challenger never hears how the bearer did before the replay.
+ if(!r||(d.mode==="deferred"&&(side==="c"?!["c_play","b_wait"].includes(d.status):["invited","c_play","b_wait"].includes(d.status))))throw new HttpError(422,"Cette manche n'est pas en jeu.");
+ const playing=d.status==="live"||(d.status==="c_play"&&side==="c")||(d.status==="b_play"&&side==="b");
+ if(!r.over){
+  if(!playing||n!==data.n)throw new HttpError(422,"Cette manche n'est pas en jeu.");
+  if(r.start==null)throw new HttpError(422,"La manche n'a pas commencé.");
+  const rt=rtOf(r,now),up=b.up,list=D.cleanPresses(b.presses);
+  if(!Number.isFinite(up)||up<0||up>BD.round+5000||!list)throw new HttpError(400,"Touches illisibles.");
+  const prev=r[side+"Up"]??0;
+  // No future (ahead of the server's clock): flagged. Going back on what was declared played is refused, and presses
+  // older than that are dropped without a flag: the page resends a batch whose reply it never got (a flaky network).
+  if(up>Math.max(0,rt)+400||list.some(([t])=>t>up)){batonFlag(d,side,n,["horloge"]);bSave(d);throw new HttpError(422,"Rythme incohérent.");}
+  if(up<prev)throw new HttpError(422,"Rythme incohérent.");
+  if(r[side].length+list.length>BD.maxPresses)throw new HttpError(422,"Trop de touches.");
+  if(b.from===0||!bCursor.has(key)){if(!bCursor.has(key))logActivity(p,req,"baton:play");bCursor.set(key,{notes:0,opp:0});}   // one line per round, not per batch
+  for(const x of list)if(x[0]>r.k&&x[0]>=prev-50)r[side].push(x);
+  r[side+"Up"]=Math.round(up);bSeen.set(key,now);
+  if(!batonReferee(d,now))bSave(d);
+ }else if(b.from===0||!bCursor.has(key))bCursor.set(key,{notes:0,opp:0});
+ const cur=bCursor.get(key),rt=r.start==null?0:Math.round(rtOf(r,now)),notes=notesOf(d,n),out=[],opp=[];
+ while(cur.notes<notes.length&&notes[cur.notes][0]<=rt+BD.lookahead)out.push(notes[cur.notes++]);
+ if(d.mode==="live"){const l=r[other];while(cur.opp<l.length)opp.push(l[cur.opp++]);}
+ else if(side==="b"){const l=r.c;while(cur.opp<l.length&&l[cur.opp][0]<=rt+300)opp.push(l[cur.opp++]);}   // the ghost, played at its time
+ let over=null;
+ if(r.over){
+  const solo=r.over.w==null,next=PLAYING.has(d.status)&&data.n>n;
+  over={...r.over,wins:solo?null:winsOf(data),next};
+ }
+ return {now,rt,notes:out,opp,over};
+}
+// The spectators' stream of a live round, BD.spectatorDelay behind (never anything the players do not have yet).
+function batonSpectate(d,now){
+ let m=d.data.n,r=d.data.rounds[m];
+ if((r.start==null||now<r.start)&&m>0){m--;r=d.data.rounds[m];}
+ if(!r||r.start==null||now<r.start)return;
+ if(bLive.id!==d.id||bLive.n!==m)Object.assign(bLive,{id:d.id,n:m,notes:-Infinity,up:-1});
+ const up=Math.min(r.over?r.over.t:BD.round,Math.floor(rtOf(r,now)-BD.spectatorDelay));
+ if(up<0||up<=bLive.up)return;
+ const notes=notesOf(d,m).filter(([t])=>t>bLive.notes&&t<=up+BD.lookahead),pick=l=>l.filter(([t])=>t>bLive.up&&t<=up);
+ broadcast("batonLive",{id:d.id,n:m,start:r.start,up,notes,c:pick(r.c),b:pick(r.b)});
+ bLive.notes=up+BD.lookahead;bLive.up=up;
+}
+// GET /api/baton/watch: the live round so far (delayed), or a replay once it has started; never a seed before that.
+function batonWatch(now){
+ const d=bLoad(bq.latest.get());if(!d)return null;
+ const who={id:d.id,c:nameOf(d.challenger),b:nameOf(d.bearer)};
+ if(d.status==="live"){
+  // The round the stream is on: the one just over keeps going, BD.spectatorDelay late, until the next one starts.
+  let n=d.data.n,r=d.data.rounds[n];if((r.start==null||now<r.start)&&n>0){n--;r=d.data.rounds[n];}
+  const on=r.start!=null&&now>=r.start,up=on?Math.min(r.over?r.over.t:BD.round,Math.floor(rtOf(r,now)-BD.spectatorDelay)):-1;
+  return {kind:"live",...who,n,start:r.start,now,wins:winsOf(d.data),delay:BD.spectatorDelay,up,
+   notes:on?notesOf(d,n).filter(([t])=>t<=up+BD.lookahead):[],presses:{c:byT(r.c).filter(([t])=>t<=up),b:byT(r.b).filter(([t])=>t<=up)}};
+ }
+ if((d.status==="scheduled"&&now>=d.replay_at)||(["done","held"].includes(d.status)&&(d.mode==="live"||(d.ends_at!=null&&now>=d.ends_at))))
+  return {kind:"replay",...who,status:d.status,seed:d.seed,rounds:roundsOf(d.data),replayAt:d.replay_at??null,endsAt:d.ends_at??null,now};
+ if(d.status==="scheduled")return {kind:"scheduled",...who,replayAt:d.replay_at,endsAt:d.ends_at,now};
+ return null;
+}
+// The clock of the open duel: expiries, the rounds nobody is sending to any more, the spectators, the replay.
+function batonStep(d,now){
+ const data=d.data,r=data.rounds?.[data.n];
+ if(d.status==="invited"&&now>=d.expires){d.status="c_play";d.mode="deferred";d.expires=now+BD.soloMs;bSave(d);return batonChanged(d);}
+ if(d.status==="c_play"&&now>=d.expires)return voidBaton(d,now,`${nameOf(d.challenger)} a abandonné son défi.`);
+ if(d.status==="b_wait"&&now>=d.expires){d.data.forfeit=true;return batonResolve(d,now);}
+ if(d.status==="b_play"&&now>=d.expires)return batonSchedule(d,now);
+ if(d.status==="live"&&r&&r.start==null&&d.expires!=null&&now>=d.expires){startRound(d,now);bSave(d);return;}
+ if(PLAYING.has(d.status)){batonReferee(d,now);if(d.status==="live")batonSpectate(d,now);return;}
+ if(d.status==="scheduled"){
+  if(now>=d.replay_at&&!data.replayed){data.replayed=true;bSave(d);broadcast("baton",{kind:"replay",id:d.id});batonChanged(d);}
+  if(now>=d.ends_at)batonResolve(d,now);
+ }
+}
+function batonTick(now){
+ for(const row of bq.open.all()){try{batonStep(bLoad(row),now);}catch(e){console.error(`baton duel ${row.id}:`,e);}}
+ // Cursors of duels no longer open are dropped.
+ if(bCursor.size>64){const open=new Set(bq.open.all().map(r=>r.id));for(const m of [bCursor,bSeen])for(const k of m.keys())if(!open.has(Number(k.split(":")[0])))m.delete(k);}
+}
+setInterval(()=>{try{batonTick(Date.now());}catch(e){console.error("baton tick:",e);}},BATON_TICK).unref();
+// POST /api/baton {op,...}: challenge, answer, ready, play, cheer. Every reply carries the player's view.
+async function batonRoute(req,res){
+ const p=auth(req);
+ if(!batonWon)throw new HttpError(400,"Opération inconnue.");   // no spoiler, even through the APIif(limited("batonall:"+p.id,20,1000))throw new HttpError(429,"Doucement : trop de requêtes.");
+ const b=await readJson(req);
+ if(!players.has(p.id))throw new HttpError(401,"Connexion requise.");   // deleted while the body was arriving
+ const op=typeof b.op==="string"?b.op:"?",now=Date.now(),refuse=m=>new HttpError(422,m.endsWith(".")?m:m+".");
+ if(op==="play"?limited("batonplay:"+p.id,12,1000):op==="cheer"?limited("batoncheer:"+p.id,3,1000):limited("baton:"+p.id,30,60e3))
+  throw new HttpError(429,op==="cheer"?"Doucement : trois encouragements par seconde.":"Doucement : réessaie dans un instant.");
+ // A batch every 250 ms would drown the activity log (and look like a bot): play is logged once per round, cheers once per 10 s.
+ if(op!=="play"&&(op!=="cheer"||!limited("batoncheerlog:"+p.id,1,10e3)))logActivity(p,req,"baton:"+op);
+ const done=extra=>send(res,200,{ok:true,...extra,baton:batonView(p,Date.now())});
+ if(op==="challenge"){
+  update(p,S=>R.advance(S,now,SPEED,rand));
+  const why=batonWhy(p,now);if(why)throw refuse(why);
+  const h=players.get(q.mythicOf.get(MYTHIC).player_id),live=onlineIds().has(h.id);
+  const data={rounds:Array.from({length:BD.rounds},newRound),n:0,ready:{c:false,b:false}};
+  const {lastInsertRowid}=bq.insert.run(p.id,h.id,crypto.randomInt(0,2**32),live?"live":"deferred",live?"invited":"c_play",now,now+(live?BD.inviteMs:BD.soloMs),JSON.stringify(data));
+  const d=bLoad(bq.get.get(Number(lastInsertRowid)));
+  feedLine(p.name,"baton",`⚔️ ${p.name} défie ${h.name} pour le Bâton de feu.`);
+  if(live){batonTo([h.id],{kind:"invite",id:d.id,c:p.name});notify(h.id,{title:"PolitiGo",body:`⚔️ ${p.name} te défie pour le Bâton de feu !`,tag:"baton",url:"/"});}
+  batonChanged(d);
+  return done({duel:{id:d.id}});
+ }
+ if(op==="cheer"){
+  if(!BD.cheers.includes(b.e)||(b.side!==0&&b.side!==1))throw new HttpError(400,"Encouragement inconnu.");
+  const d=bq.latest.get(),on=d&&(d.status==="live"||(d.status==="scheduled"&&now>=d.replay_at&&now<d.ends_at));
+  if(!on)throw refuse("Aucun duel à encourager pour l'instant.");
+  broadcast("batonCheer",{e:b.e,side:b.side});
+  return done({});
+ }
+ if(!["answer","ready","play"].includes(op))throw new HttpError(400,"Opération inconnue.");
+ const d=Number.isSafeInteger(b.id)&&bLoad(bq.get.get(b.id));
+ if(!d||(d.challenger!==p.id&&d.bearer!==p.id))throw refuse("Duel introuvable.");
+ if(op==="answer"){
+  if(typeof b.live!=="boolean")throw new HttpError(400,"live : true ou false.");
+  if(d.bearer!==p.id||d.status!=="invited")throw refuse("Ce défi n'attend pas ta réponse.");
+  if(b.live){d.status="live";d.mode="live";d.expires=now+BD.inviteMs;}else{d.status="c_play";d.mode="deferred";d.expires=now+BD.soloMs;}
+  bSave(d);batonChanged(d);
+  return done({});
+ }
+ if(op==="ready")return done({round:batonReady(p,d,now)});
+ return done(batonPlay(p,d,b,now,req));
+}
+
 // ===================================================================== CHAT (server/chat.mjs)
 const chat=createChat({db,dataDir:dirname(DB_PATH),players,clients,sse,auth,limited,HttpError,send,readJson,checkOrigin,clientIp,rooms:chatRooms});
 
@@ -885,8 +1327,14 @@ async function route(req,res){
   const now=Date.now(),ev=eventNow();
   // The debate's end is the server's (POST /api/debate): a score sent for it is not even looked at.
   if(b.type==="miniEnd"&&p.state.mini?.k==="debate")throw new HttpError(422,"Le Débat chrono se joue question par question.");
-  const r=update(p,S=>R.act(S,b,{now,speed:SPEED,random:rand,event:ev}));
+  const opts={now,speed:SPEED,random:rand,event:ev},won={v:false};
+  if(b.type==="draw")opts.mythic=mythicOpts(p,now,won);
+  let r;
+  // A claimed staff that did not end up in the saved game (a failed write, a refused draw) goes back to the urn.
+  try{r=update(p,S=>R.act(S,b,opts));}
+  finally{if(won.v&&!p.state.wardrobe?.own?.includes(MYTHIC)){won.v=false;q.freeMythic.run(MYTHIC,p.id);}}
   if(r.audit){recordMini(p,r.audit,now);delete r.audit;}   // for the admin, not for the player's script
+  if(r.ok&&b.type==="draw")drawNews(p,r,won.v,now);
   // The rules hand the turn (its seed included) to the server only, out of the reply.
   if(r.ok&&b.type==="debate"&&r.turn&&p.state.mini?.k==="debate")soloTurns.set(p.id,{t:miniKey(p.state.mini),st:r.turn,q:null});
   if(deferred.size)flushDeferred();
@@ -899,6 +1347,11 @@ async function route(req,res){
    sent:q.sentOn.get(p.id,dayNow(now)).n,perDay:R.DUEL.perDay,minLevel:DUEL_MIN_LEVEL,pushKey:VAPID?.publicKey??null});
  }
  if(path==="/api/duel"&&method==="POST")return duelRoute(req,res).finally(()=>{if(deferred.size)flushDeferred();});
+ if(path==="/api/baton"&&method==="POST")return batonRoute(req,res).finally(()=>{if(deferred.size)flushDeferred();});
+ if(path==="/api/baton/watch"&&method==="GET"){
+  const p=auth(req);if(limited("batonwatch:"+p.id,20,10e3))throw new HttpError(429,"Doucement : réessaie dans un instant.");
+  return send(res,200,{ok:true,watch:batonWon?batonWatch(Date.now()):null});
+ }
  if((path==="/api/push/subscribe"||path==="/api/push/unsubscribe")&&method==="POST")return pushRoute(req,res,path);
  if(path==="/api/board"&&method==="GET"){
   auth(req);return send(res,200,{board:boardRows(),feed:q.recentFeed.all(40)});
@@ -913,9 +1366,11 @@ async function route(req,res){
   let after=null;try{after=chat.beforePlayerDelete?.(p.id);}catch(e){console.error("chat, before deleting a player:",e);}
   // The name is kept a day (see the sign-up), and the player's lines leave the public feed with them.
   const now=Date.now();
+  // The staff goes back to the urn and their open Bâton duel is void before the rows go (cascade): everyone is told.
+  try{if(!releaseBaton(p.id,"deleted"))for(const r of bq.open.all())if(r.challenger===p.id||r.bearer===p.id)voidBaton(bLoad(r),now);}catch(e){console.error("Bâton, deleting a player:",e);}
   db.exec("BEGIN");
-  try{q.deletePlayer.run(p.id);q.tombstone.run(nameKey(p.name),p.created,now);q.deleteFeedOf.run(p.name);db.exec("COMMIT");}catch(e){db.exec("ROLLBACK");throw e;}
-  players.delete(p.id);deferred.delete(p.id);soloTurns.delete(p.id);
+  try{q.freeMythicsOf.run(p.id);q.deletePlayer.run(p.id);q.tombstone.run(nameKey(p.name),p.created,now);q.deleteFeedOf.run(p.name);db.exec("COMMIT");}catch(e){db.exec("ROLLBACK");throw e;}
+  players.delete(p.id);deferred.delete(p.id);soloTurns.delete(p.id);cleanCache.delete(p.id);   // a staff they held is back in the urn
   try{broadcast("feedInit",q.recentFeed.all(40));}catch(e){console.error("feed after deleting a player:",e);}
   try{after?.();}catch(e){console.error("chat, after deleting a player:",e);}
   try{chat.playerDeleted(p.id);}catch(e){console.error("chat, deleted player:",e);}
@@ -1297,6 +1752,7 @@ function suspend(p,on){
   try{update(p,S=>R.advance(S,now,SPEED,rand));}catch(e){console.error(`suspend, player ${p.id}:`,e);}
   q.setSuspended.run(1,p.id);p.suspended=true;q.deleteSessionsOf.run(p.id);closeStreamsOf(p.id);deferred.delete(p.id);
   for(const d of q.openDuelsOf.all(p.id,p.id)){try{voidDuel(d,now);}catch(e){console.error(`suspend, duel ${d.id}:`,e);}}
+  for(const r of bq.open.all())if(r.challenger===p.id||r.bearer===p.id){try{voidBaton(bLoad(r),now);}catch(e){console.error(`suspend, baton duel ${r.id}:`,e);}}
   publishBoard(true);
  }else{
   // Back on the real hour: the suspension is skipped, not played.
@@ -1308,9 +1764,18 @@ function playerDetail(p){
  const S=p.state,now=Date.now();
  return {id:p.id,name:p.name,camp:S.camp,candidate:R.person(S).name,lvl:S.lvl,xp:Math.floor(S.xp),score:R.score(S),form:S.form,sat:S.sat,moral:S.moral,energy:S.energy,hyg:S.hyg,
   fm:S.fm,deaths:S.deaths,created:p.created,updated:q.updatedOf.get(p.id)?.updated??null,online:isOnline(p.id),sessions:q.sessionsOf.get(p.id,now).n,pushSubs:q.countSubsOf.get(p.id).n,
-  suspended:!!p.suspended,chatMutedUntil:mutedUntil(p.id),
+  suspended:!!p.suspended,chatMutedUntil:mutedUntil(p.id),wardrobe:wardrobeOf(p),batonDuels:bq.of.all(p.id,p.id).map(r=>{const d=bLoad(r);
+   return {id:d.id,mode:d.mode,status:d.status,role:d.challenger===p.id?"challenger":"bearer",vs:nameOf(d.challenger===p.id?d.bearer:d.challenger),created:d.created,
+    resolved:d.resolved??null,replayAt:d.replay_at??null,res:d.winner==null?null:d.winner===p.id?"win":"loss",flags:d.fl};}),
   duels:q.lastDuelsOf.all(p.id,p.id).map(d=>{const v=duelView(d,p.id);return {id:v.id,status:v.status,vs:v.vs,role:v.role,created:v.created,res:v.res,flags:flagsOf(d)};}),
   activity:botReport(p,q.activityOf.all(p.id,activityCut(now)),q.miniOf.all(p.id,activityCut(now))),suspects:duelSuspects(now).filter(x=>x.ids.includes(p.id))};
+}
+// The admin's summary of a player's cosmetics: the Flamme, the tickets, what they own and wear (names from the catalogue).
+function wardrobeOf(p){
+ const S=p.state,w=S.wardrobe??{},item=id=>{const it=W.ITEMS?.[id];return {id,name:it?.name??id,kind:it?.kind??null,rarity:it?.rarity??null};};
+ return {flame:Math.floor(S.flame?.pts??0),bulletins:w.bulletins??0,confetti:w.confetti??0,draws:w.draws??0,
+  own:(Array.isArray(w.own)?w.own:[]).map(item),worn:{outfit:w.worn?.outfit?item(w.worn.outfit):null,object:w.worn?.object?item(w.worn.object):null},
+  baton:q.mythicOf.get(MYTHIC)?.player_id===p.id};
 }
 function mutedUntil(id){try{return chat.admin.mutedUntil(id)??null;}catch{return null;}}
 function renamePlayer(p,raw){
@@ -1339,7 +1804,7 @@ const regOpen=()=>REG_OPEN&&!!INVITE;
 // flagged, players whose bot score reaches BOT_ALERT, suspect duel groups. Each has a stable key; alerts-ack files keys
 // away (for ALERT_DAYS, on every device) so they stop counting. The bot report is the costly part: computed at most
 // every 30 s, however many consoles ask.
-const BOT_ALERT=50,ALERT_DAYS=30,ALERT_KEY=/^(chat|duel|bot|suspect):[0-9][0-9-]{0,60}$/;
+const BOT_ALERT=50,ALERT_DAYS=30,ALERT_KEY=/^(?:(?:chat|duel|bot|suspect|baton):[0-9][0-9-]{0,60}|mythic:[a-z]{1,20}:[0-9]{1,15})$/;
 let botsCache={t:0,bots:[],suspects:[]};
 function alertsAll(now,all=false){
  if(now-botsCache.t>30e3)botsCache={t:now,bots:botsAll(now),suspects:duelSuspects(now)};
@@ -1355,6 +1820,14 @@ function alertsAll(now,all=false){
   title:`${b.name} : score de bot ${b.score}/100`,detail:cut(b.reasons.slice(0,2).join(" · "))});
  for(const s of botsCache.suspects)items.push({key:`suspect:${[...s.ids].sort((x,y)=>x-y).join("-")}`.slice(0,68),kind:"suspect",t:null,ref:s.ids[0],ids:s.ids,
   title:`Duels suspects : ${s.names.join(" · ")}`,detail:cut(s.reasons[0])});
+ // A mythic win is rare enough to deserve a look (account age at the win, bot score as it stands).
+ for(const m of q.mythics.all()){const p=players.get(m.player_id);if(!p)continue;const b=botsCache.bots.find(x=>x.id===p.id);
+  items.push({key:`mythic:${m.item}:${p.id}`,kind:"mythic",t:m.t,ref:p.id,ids:[p.id],title:`${p.name} a gagné le Bâton de feu`,
+   detail:`Flamme ${Math.floor(p.state.flame?.pts??0)} · compte de ${Math.floor((m.t-p.created)/864e5)} jours · score de bot ${b?.score??"?"}/100`});}
+ // A Bâton duel the anti-cheat held: nothing moves until it is judged (baton-judge).
+ for(const r of bq.held.all()){const d=bLoad(r),f=d.fl[0];
+  items.push({key:`baton:${d.id}`,kind:"baton",t:d.resolved??d.created,ref:f?.side==="b"?d.bearer:d.challenger,baton:d.id,ids:[d.challenger,d.bearer],
+   title:`Duel du Bâton à valider : ${nameOf(d.challenger)} contre ${nameOf(d.bearer)}`,detail:cut(d.fl.map(x=>`${x.name}, manche ${x.n+1} (${(x.flags||[]).join(", ")})`).join(" · "))});}
  const acked=new Set(q.acks.all().map(r=>r.key));
  return {items:all?items:items.filter(x=>!acked.has(x.key)),acked:items.filter(x=>acked.has(x.key)).length};
 }
@@ -1509,6 +1982,32 @@ async function adminCommand(b){
   return {name:p.name,until};
  }
  if(cmd==="audit")return {items:q.audit.all(limitOf(b.limit,100,500))};
+ // The owner's alone (admin/server.mjs keeps it out of every moderator's reach; a signed request is refused here too):
+ // the staff goes back to the urn and leaves its bearer's wardrobe.
+ if(cmd==="mythic-reset"){
+  if(self!==null||adminActor.getStore()?.by)throw new HttpError(403,"Réservé à l'organisateur.");
+  const row=q.mythicOf.get(MYTHIC);if(!row)throw new HttpError(404,"Le Bâton de feu est déjà dans l'urne.");
+  const p=players.get(row.player_id);releaseBaton(row.player_id,"reset",via);
+  return {name:p?.name??null};
+ }
+ // A held Bâton duel (the anti-cheat flagged a part): accepted, its result applies as it stands; rejected, it is annulled.
+ if(cmd==="baton-judge"){
+  const d=Number.isSafeInteger(b.id)&&bLoad(bq.get.get(b.id));
+  if(d){notSelf(d.challenger);notSelf(d.bearer);}
+  if(!d||d.status!=="held")throw new HttpError(404,"Duel du Bâton introuvable ou pas en attente.");
+  if(typeof b.accept!=="boolean")throw new HttpError(400,"accept : true ou false.");
+  const label=`${nameOf(d.challenger)} contre ${nameOf(d.bearer)}`;
+  if(!b.accept){
+   d.status="annulled";d.resolved=now;bSave(d);batonChanged(d);
+   for(const id of [d.challenger,d.bearer])notify(id,{title:"PolitiGo",body:"Le duel pour le Bâton de feu a été annulé par l'organisation.",tag:"baton",url:"/"});
+   audit(via,cmd,`#${d.id}`,`${label} : annulé, rien ne bouge`);
+   return {id:d.id,status:d.status};
+  }
+  if(q.mythicOf.get(MYTHIC)?.player_id!==d.bearer)throw new HttpError(409,"Le Bâton n'est plus chez ce porteur.");
+  batonResolve(d,now,true);
+  audit(via,cmd,`#${d.id}`,`${label} : validé, ${d.winner===d.challenger?"le Bâton change de mains":"défense réussie"}`);
+  return {id:d.id,status:d.status,winner:nameOf(d.winner)};
+ }
  throw new HttpError(400,"Commande inconnue.");
 }
 let admin=null;

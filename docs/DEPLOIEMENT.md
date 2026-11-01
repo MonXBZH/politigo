@@ -255,6 +255,50 @@ réseau local, ou derrière Nginx Proxy Manager en HTTPS (`POLITIGO_ADMIN_BIND=1
 - Limites : 8 messages par 20 s, 20 images par heure, 3 images en attente par joueur, 300 Mo d'images en tout.
 - Pas de notification ni de son : une pastille compte les non-lus, et rien ne s'affiche pendant un mini-jeu.
 
+### Activités, Flamme, Tombola et Garde-robe
+
+- **Missions, courrier, objectifs du jour** : effets sur les jauges seulement (satiété, moral, énergie, hygiène, bornées
+  à 0-100), **jamais d'XP ni de FM**. Missions : une à la fois, 4 par jour, énergie 15 au moins, la nuit seulement de 20 h
+  à minuit (heure du jeu) ; une notification « Mission terminée » part au retour (différée pendant un mini-jeu). Courrier :
+  une lettre toutes les 30 à 60 minutes, de 7 h à minuit. Objectifs : 3 par jour, tirés au premier passage de la journée ;
+  une mort politique ne les retire pas, et ne redonne ni missions ni bulletins.
+- **Flamme** : 10 points par jour au plus (jauges toutes ≥ 50 toute la journée +3, les 3 objectifs +3, au moins 4 visites
+  étalées sur 8 h +2, 2 missions +1, 3 lettres +1) ; ×0,9 par journée sans visite, ×0,75 à une mort politique.
+- **Tombola (gauche) / Loterie (droite)**, purement cosmétique, **jamais d'argent réel** : un tirage gratuit par jour,
+  puis un bulletin par tirage ; bulletins gagnés uniquement en jouant (+1 par mission rapportée, au plus 4 par jour ; +1 par
+  objectif, 3 par jour ; +1 toutes les 3 lettres). Chances : commun 60 %, rare 28 %, épique 9,5 %, légendaire 2 %, ultra
+  rare 0,5 % ; tirages garantis : épique au 10ᵉ, légendaire au 50ᵉ, ultra rare au 80ᵉ. Doublons → confettis (5, 10, 25,
+  50, 100 selon la rareté) ; 100 confettis = une case commune, rare ou épique au choix. La fiche d'un joueur dans
+  l'administration montre sa Flamme, ses bulletins, ses confettis, ce qu'il possède et ce qu'il porte.
+
+<details>
+<summary><b>⚠️ Divulgâchage, réservé à l'organisateur :</b> l'objet mythique de la Tombola et son duel</summary>
+
+- **Le Bâton de feu des Apprix** : un seul exemplaire par partie, pour les deux camps, rareté « Mythique ». Il n'apparaît
+  nulle part (ni Garde-robe, ni nouveautés, ni README) tant que personne ne l'a gagné. Pour avoir une chance à chaque
+  tirage : compte de 30 jours, Flamme ≥ 300, aucun soupçon de bot ni duel signalé sur 14 jours ; alors 1 % par tirage,
+  +0,1 % par tranche de 10 de Flamme au-delà de 300, 3 % au plus (compter 6 à 8 semaines pour un joueur très assidu).
+  Le gagnant voit la légende en 14 tableaux ; tous les autres reçoivent une notification, et la console une alerte « Mythique ».
+- **Il retourne dans l'urne** à la mort politique de son porteur, quand sa Flamme passe sous 150 (avertissement unique
+  sous 200), quand son compte est supprimé, ou par « Remettre le Bâton dans l'urne » (fiche du joueur, organisateur seul).
+- **Le Duel du Bâton** (« le Bras de fer des Cendres », jeu de rythme, 2 manches gagnantes de 45 s) : tout joueur
+  de niveau suffisant, au compte assez ancien et à la Flamme ≥ 200 peut défier le porteur. Un seul duel du Bâton à la fois,
+  un défi par joueur et par semaine, 3 jours de répit au porteur après une défense réussie. **En direct** si le porteur est
+  en ligne et accepte (invitation de 5 minutes) ; sinon **en différé** : le challengeur joue ses 3 manches tout de suite
+  (20 minutes, sinon le défi est abandonné), le porteur a 48 h pour jouer les siennes contre son fantôme (sinon il perd le
+  Bâton), puis le duel est **rediffusé** à tous au prochain 21 h (au moins 30 minutes plus tard) et le Bâton ne change de
+  mains qu'à la fin de la rediffusion. Les spectateurs suivent un duel en direct avec 3 s de retard et l'encouragent par
+  emojis, sans effet sur le jeu. Aucun XP, aucun FM, aucune jauge en jeu.
+- **Anti-triche** : les frappes arrivent en temps réel par paquets, la partition n'est dévoilée que 3 s à l'avance, et le
+  serveur arbitre lui-même. Une frappe « dans le futur » ou qui réécrit le passé, un jeu de métronome, une manche sans
+  faute ou une rafale de frappes signalent le duel : à la fin il reste **en attente** (« À traiter », type « Duel du
+  Bâton ») jusqu'à l'arbitrage, « Valider » (le résultat s'applique) ou « Annuler » (rien ne bouge), commande
+  `baton-judge`, ouverte aussi aux modérateurs qui ont le droit d'annuler les duels.
+- **Réglages de test** (jamais en production) : `POLITIGO_BATON_SPEED` (1 à 20) accélère les manches ;
+  `POLITIGO_BATON_REPLAY_MS` lance la rediffusion ce délai après la partie du porteur au lieu de 21 h.
+
+</details>
+
 ### Duels et notifications
 
 - **Duels** (Débat chrono, en différé) : le joueur qui défie joue d'abord ; l'adversaire a 24 h pour relever le défi
@@ -347,7 +391,7 @@ interdire la suppression et le force push, exiger une pull request (0 approbatio
 ## 6. Tests
 
 ```bash
-bash tests/run-server.sh                       # 343 tests : règles (dont l'équilibrage J15) + mini-jeux + test politique + changelog + API + duels + notifications + chat + migrations + outils et interface d'admin, dans l'image Node de production
+bash tests/run-server.sh                       # 410 tests : règles (dont l'équilibrage J15) + mini-jeux + activités + Tombola et Garde-robe + test politique + changelog + API + duels + notifications + chat + migrations + outils et interface d'admin, dans l'image Node de production
 bash tests/run-server.sh tests/chat.test.mjs   # un seul fichier
 docker compose restart api                     # remet à zéro les limites d'inscription avant l'e2e
 powershell -ExecutionPolicy Bypass -File tests\e2e.ps1   # parcours complet dans Chrome (crée deux joueurs de test)
@@ -365,5 +409,7 @@ powershell -ExecutionPolicy Bypass -File tools\screenshots.ps1 -AdminUrl http://
 docker run --rm -v "$PWD:/w" -w /w node:24-alpine node tools/make-sources.mjs
 ```
 
-Le script de captures crée cinq joueurs de démonstration, puis les supprime. Il refuse de tourner sur une base qui contient
+Le script de captures crée cinq joueurs de démonstration, puis les supprime. Leur Garde-robe ne contient que la première
+pièce de chaque rareté (rien d'autre ne doit apparaître dans le README) ; la capture d'un tirage, tiré au hasard, n'est
+gardée que s'il donne une de ces pièces, sinon l'ancienne image reste. Il refuse de tourner sur une base qui contient
 déjà des joueurs (`-Force` seulement sur une pile jetable) : ne jamais le lancer sur le serveur de production.

@@ -7,7 +7,7 @@
   <img alt="Node 24" src="https://img.shields.io/badge/node-24%20LTS-5fa04e">
   <img alt="Aucune dépendance" src="https://img.shields.io/badge/d%C3%A9pendances-0-success">
   <img alt="Docker" src="https://img.shields.io/badge/docker-compose%20%7C%20Portainer-2496ed">
-  <img alt="343 tests" src="https://img.shields.io/badge/tests-343-brightgreen">
+  <img alt="410 tests" src="https://img.shields.io/badge/tests-410-brightgreen">
   <img alt="Satire" src="https://img.shields.io/badge/genre-satire-ff9db0">
 </p>
 
@@ -120,9 +120,57 @@ Chaque personnage traîne **deux casseroles** : des stress qui tombent au hasard
 Chacune fait un clin d'œil à un **fait public** (un score électoral, une petite phrase, une procédure, avec son stade exact),
 et toutes sont recensées, avec leurs références, dans **[docs/SOURCES.md](docs/SOURCES.md)**.
 
+### Entre deux visites
+
+De quoi s'occuper entre deux passages obligés, sans jamais toucher à l'équilibre de l'XP : ces activités ne jouent que
+sur les **jauges** (et rapportent des bulletins pour la Tombola).
+
+- 🚩 **Missions** : envoie ton élu sur le terrain, une mission à la fois et 4 par jour, de 30 minutes à une nuit entière.
+  Mêmes effets dans les deux camps, mais pas le même agenda : *Tractage au marché* ou *Serrage de mains au marché*,
+  *Retraite en gîte coopératif* ou *Thalasso à La Baule*, *Nuit debout* ou *Soirée au Fouquet's*… La mission risquée se
+  joue à pile ou face au moment du rapport. Une notification prévient quand le rapport t'attend.
+- ✉️ **Le courrier des électeurs** : une lettre toutes les 30 à 60 minutes, de 7 h à minuit, avec deux ou trois réponses
+  possibles, chacune avec ses effets.
+- 🎯 **Objectifs du jour** : trois défis tirés chaque matin (« Militant modèle », « Agenda de ministre »…), récompensés
+  en jauges.
+<p align="center">
+  <img src="docs/images/sheet-missions.png" width="240" alt="Les missions : une en cours, les autres au catalogue, avec leurs effets sur les jauges">
+</p>
+
+- 🔥 **La Flamme** : elle grandit avec ton assiduité, jour après jour. Des jauges tenues au-dessus de 50 toute la journée,
+  les objectifs remplis, des visites étalées, quelques missions et lettres : jusqu'à 10 points par jour. Une journée
+  sans visite la fait baisser, une mort politique aussi. On dit qu'elle attire quelque chose…
+
+### La Tombola, la Loterie et la Garde-robe
+
+À gauche **La Tombola de la Fête**, à droite **La Loterie du Gala** : de quoi habiller ton élu et lui mettre quelque chose
+dans la main. **Purement cosmétique** : aucun effet sur le jeu, et **jamais d'argent réel**.
+
+- 🎟️ **Un tirage gratuit par jour**, puis un **bulletin** par tirage. Les bulletins se gagnent seulement en jouant :
+  un par mission rapportée, un par objectif du jour atteint, un toutes les trois lettres répondues.
+- 🌈 **Cinq raretés** : commun (60 %), rare (28 %), épique (9,5 %), légendaire (2 %) et ultra rare (0,5 %). Un tirage
+  garanti épique au 10ᵉ sans en voir, légendaire au 50ᵉ, ultra rare au 80ᵉ.
+- 🎊 **Les doublons deviennent des confettis**. 100 confettis s'échangent contre la case commune, rare ou épique de ton choix.
+- 👔 **La Garde-robe** (Dossier) : une dizaine de tenues par camp, du *Bleu de travail* au *Front populaire, 1936*,
+  du *Pull sur les épaules* au *Général, 1958*, et une bonne trentaine d'objets à brandir. La tenue se superpose à
+  tous les personnages de la collection.
+
+| La Tombola de la Fête | Un tirage | La Garde-robe, à gauche | La Garde-robe, à droite | Les objets |
+|:---:|:---:|:---:|:---:|:---:|
+| <img src="docs/images/gacha-tombola.png" width="160" alt="La Tombola de la Fête : l'urne, les bulletins et les chances"> | <img src="docs/images/gacha-tirage.png" width="160" alt="Un tirage : la carte révélée dans la couleur de sa rareté"> | <img src="docs/images/garde-robe-gauche.png" width="160" alt="Les tenues de gauche : la première de chaque rareté, les autres à découvrir"> | <img src="docs/images/garde-robe-droite.png" width="160" alt="Les tenues de droite : la première de chaque rareté, les autres à découvrir"> | <img src="docs/images/garde-robe-objets.png" width="160" alt="Les objets à brandir : le premier de chaque rareté, les autres à découvrir"> |
+
+<sub>Pas de divulgâchage : seule la première pièce de chaque rareté est montrée ici, le reste se découvre en jeu.</sub>
+
 ### Entre amis
 
-- 🏆 **Classement en direct** : score, niveau, série record, survie.
+- 🏆 **Classement en direct** : score, niveau, série record, survie. Chaque ligne montre l'élu en petit, avec sa tenue et
+  son objet. Touche-le pour ouvrir sa **fiche** : l'élu en grand, son niveau, ses duels gagnés et perdus, et le bouton
+  pour le défier.
+
+| Le classement | La fiche d'un joueur |
+|:---:|:---:|
+| <img src="docs/images/classement-portraits.png" width="240" alt="Le classement avec les élus en petit, habillés"> | <img src="docs/images/fiche-joueur.png" width="240" alt="La fiche d'un joueur : l'élu en grand, son niveau et ses duels"> |
+
 - ⚔️ **Duels** : défie un autre élu au Débat chrono. Mêmes questions pour les deux, le meilleur score gagne.
   Tu joues d'abord, ton rival a 24 h pour relever le défi ou le refuser (sans rien perdre).
   Victoire : **+40 XP**, moral +10, énergie +5. Défaite : −15 XP, moral −10, énergie −5, sans jamais perdre de niveau
@@ -139,8 +187,11 @@ et toutes sont recensées, avec leurs références, dans **[docs/SOURCES.md](doc
 
 Une **interface d'administration** facultative, dans son propre conteneur, pour le réseau local : tableau de bord, fiches
 des joueurs (mot de passe, déblocage, renommage, suspension), **annonces** immédiates ou planifiées (à tous, à un camp, à un
-joueur), ouverture et modération du chat, modération du fil, duels, code d'invitation en un clic, inscriptions et événements à chaud, sauvegarde,
-**détection de bots**, journal des actions. Elle gère aussi plusieurs parties sur le même serveur.
+joueur), ouverture et modération du chat (avec le fil de tous les salons en direct), modération du fil, duels, code d'invitation en un clic,
+inscriptions et événements à chaud, sauvegarde, **détection de bots**, journal des actions. Les cas à traiter (signalements,
+duels suspects, comptes louches, événements rares) remontent en direct dans « À traiter », avec un son et une notification
+système. L'organisateur peut nommer des **modérateurs** parmi les joueurs, avec des droits choisis un par un. La fiche d'un
+joueur montre aussi sa Flamme, ses bulletins et sa Garde-robe. Elle gère plusieurs parties sur le même serveur.
 
 <p align="center">
   <img src="docs/images/admin-dashboard.png" width="92%" alt="L'interface d'administration : tableau de bord d'une partie">
@@ -156,7 +207,7 @@ flowchart LR
   RP -- HTTP --> W["web · nginx<br/>fichiers du jeu"]
   W -- "/api/*" --> A["api · Node 24<br/>server.mjs"]
   W -- "/events (SSE)" --> A
-  A --- R["rules.mjs<br/>règles partagées"]
+  A --- R["rules.mjs + modules<br/>règles partagées"]
   P -. "importe aussi" .-> R
   A --- DB[("SQLite<br/>volume Docker")]
   AD["admin · Node 24<br/>facultatif, LAN"] -- "socket Unix" --> A
@@ -164,7 +215,8 @@ flowchart LR
 
 - **Le serveur fait foi.** Il détient les parties, fait tourner l'horloge de chacun (même page fermée) et vérifie chaque
   action. Le navigateur affiche et anime, il ne décide rien.
-- **Les mêmes règles des deux côtés** : `web/rules.mjs` est importé par le navigateur et par le serveur.
+- **Les mêmes règles des deux côtés** : `web/rules.mjs` et ses modules (activités, Tombola et Garde-robe…) sont importés
+  par le navigateur et par le serveur. Les tirages, eux, n'ont lieu que sur le serveur.
 - **Temps réel** par Server-Sent Events : le classement, le fil et le chat se mettent à jour sans recharger la page.
 - **Administration sans port ouvert** : l'interface d'admin parle à l'API par un socket Unix partagé entre les deux
   conteneurs, jamais par le réseau.

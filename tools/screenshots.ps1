@@ -77,7 +77,7 @@ function put(n,o,extra=[]){
  const entries=[first,...extra.map(e=>({t:now-e.ago,k:e.k,text:e.text,d:e.d}))].sort((a,b)=>a.t-b.t);
  entries.forEach((e,i)=>{e.n=i+1;if(e.d===undefined)delete e.d;});
  s.journal=entries.reverse();s.jn=entries.length;
- db.prepare('UPDATE players SET state=?,score=?,updated=? WHERE id=?').run(JSON.stringify(s),R.score(s),now,r.id);
+ db.prepare('UPDATE players SET state=?,score=?,updated=?,created=? WHERE id=?').run(JSON.stringify(s),R.score(s),now,born,r.id);
  db.prepare("UPDATE feed SET t=? WHERE player=? AND kind='new'").run(born,n);
 }
 put(N.hugo,{days:26,lvl:47,best:100,sat:82,moral:74,energy:66,hyg:79,fm:52,streak:5,bestStreak:31,deaths:1,diedAt:now-9*D});
@@ -90,6 +90,19 @@ put(N.camille,{days:8,lvl:23,sat:86,moral:92,energy:78,hyg:84,fm:37,streak:9,bes
  {ago:3*H,k:'buy',text:'Couscous de la f\u00eate de quartier : \u22123 FM, sati\u00e9t\u00e9 +50, moral +5, visite +25 XP.'},
  {ago:80*60000,k:'buy',text:'Jardin partag\u00e9 : \u22124 FM, moral +30.'}]);
 put(N.malik,{days:2,lvl:9,xp:R.xpFloor(10)-27,sat:77,moral:70,energy:81,hyg:73,fm:15,streak:3,bestStreak:8});
+// The wardrobe: only the first piece of each rarity of each camp is ever owned here (the README shows nothing else).
+function dress(n,own,worn,o={}){
+ const r=row(n),s=JSON.parse(r.state);
+ s.wardrobe={...s.wardrobe,own,worn,bulletins:o.bulletins??0,confetti:o.confetti??0,freeDay:-1,draws:o.draws??0};
+ if(o.flame!==undefined)s.flame.pts=o.flame;
+ db.prepare('UPDATE players SET state=? WHERE id=?').run(JSON.stringify(s),r.id);
+}
+const OBJ=['megaphone','microtv','urne','cle'];
+dress(N.camille,['bleutravail','chasuble','frontpop',...OBJ],{outfit:'frontpop',object:'megaphone'},{bulletins:4,confetti:35,flame:86,draws:12});
+dress(N.hugo,['pullepaules','troispieces','general58',...OBJ],{outfit:'general58',object:'cle'},{bulletins:2,confetti:60,flame:143,draws:31});
+dress(N.ines,['bleutravail','urne'],{outfit:'bleutravail',object:'urne'},{flame:120});
+dress(N.zoe,['chasuble','microtv'],{outfit:'chasuble',object:'microtv'},{flame:40});
+dress(N.malik,['troispieces','megaphone'],{outfit:'troispieces',object:'megaphone'},{flame:12});
 const feed=db.prepare('INSERT INTO feed(t,player,kind,text) VALUES(?,?,?,?)');
 for(const [ago,p,k,t] of [
  [12*D,N.hugo,'legend','Niveau 100 : Marine Le Pen devient la l\u00e9gende de la collection !'],
@@ -159,6 +172,7 @@ try {
     if ($s -ne 200) { throw "login $n failed ($s)" }
     Go; [void](Eval "document.getElementById('tips-close').click(),1")
   }
+  function NoToast() { [void](Eval "(async()=>{for(let i=0;i<60&&document.getElementById('toast').classList.contains('show');i++)await new Promise(r=>setTimeout(r,200));document.getElementById('toast').classList.remove('show');document.activeElement.blur();return 1;})()") }
   function OpenSheet($kind) { [void](Eval "document.querySelector('[data-sheet=$kind]').click(),1"); Wait 500 }
   function CloseSheet() { [void](Eval "document.getElementById('sheet-close').click(),1"); Wait 300 }
   function ClickItem($re) {
@@ -179,7 +193,10 @@ try {
   Shot "auth" @{ x = 0; y = 0; w = 390; h = [Math]::Ceiling($b.y + $b.h + 16); s = 0.8 }; Mobile; Wait 400
 
   "2. demo players"
+  # Three sign-ups per address and per hour: the api is restarted (fresh limits) before the fourth.
+  $k = 0
   foreach ($p in @(@("hugo", "right"), @("ines", "left"), @("zoe", "left"), @("camille", "left"), @("malik", "right"))) {
+    if ($k++ -eq 3) { [void](Compose @("stop", "api")); [void](Compose @("start", "api")); WaitApi }
     $s = Eval "fetch('/api/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'$($names[$p[0]])',password:'$pw',invite:'$invite',camp:'$($p[1])'})}).then(r=>r.status)"
     if ($s -ne 201) { throw "register $($p[0]) failed ($s)" }
   }
@@ -202,6 +219,30 @@ try {
   [void](Eval "(async()=>{for(let i=0;i<60&&document.getElementById('toast').classList.contains('show');i++)await new Promise(r=>setTimeout(r,200));document.activeElement.blur();scrollTo(0,0);return 1;})()")
   Wait 1200; Shot "game-desktop"; Mobile; Wait 800
 
+  "3b. Camille: missions, leaderboard, a rival's sheet, wardrobe, urn, a draw"
+  [void](Eval "document.getElementById('toast').style.visibility='hidden',1")   # the debate left running above still has a word to say
+  OpenSheet "play"; ClickItem "Tractage au march"; Wait 1200
+  if (Eval "document.getElementById('sheet').hidden") { OpenSheet "play"; Wait 600 }   # the start may close the sheet
+  [void](Eval "(()=>{const h=[...document.querySelectorAll('#sheet-body h3, #sheet-body .block-title')].find(x=>/^missions$/i.test(x.textContent.trim()));h.scrollIntoView({block:'start'});document.activeElement.blur();return 1;})()"); Wait 500
+  NoToast; Shot "sheet-missions"; CloseSheet
+  [void](Eval "(async()=>{for(let i=0;i<60&&document.getElementById('toast').classList.contains('show');i++)await new Promise(r=>setTimeout(r,200));document.getElementById('board-card').scrollIntoView({block:'start'});return 1;})()"); Wait 1500
+  Shot "classement-portraits" (Box @("#board-card") 8)
+  [void](Eval "[...document.querySelectorAll('#board button')].find(b=>/Hugo/.test(b.textContent)).click(),1"); Wait 1500
+  NoToast; Shot "fiche-joueur"; CloseSheet
+  # The wardrobe and the urn: a tall screen, so the whole sheet fits.
+  [void](Cdp "Emulation.setDeviceMetricsOverride" @{ width = 390; height = 1900; deviceScaleFactor = 2; mobile = $true }); Wait 500
+  OpenSheet "more"; ClickItem "^Garde-robe"; Wait 1200; NoToast
+  Shot "garde-robe-gauche" (Box @("#sheet .sheet-card") 0)
+  [void](Eval "[...document.querySelectorAll('#sheet-body .ward-tabs button')].find(b=>/Objets/.test(b.textContent)).click(),1"); Wait 900; NoToast
+  Shot "garde-robe-objets" (Box @("#sheet .sheet-card") 0); CloseSheet
+  OpenSheet "more"; ClickItem "Tombola"; Wait 1200; NoToast
+  Shot "gacha-tombola" (Box @("#sheet .sheet-card") 0)
+  # The free draw is random: its card is kept only when it shows the first piece of a rarity (no spoiler).
+  [void](Eval "[...document.querySelectorAll('#sheet-body button')].find(b=>/^Tirage gratuit/.test(b.textContent)).click(),1"); Wait 4000
+  $drawn = Eval "document.getElementById('sheet-body').innerText"
+  if ($drawn -match "Bleu de travail|Chasuble syndicale|Front populaire|M.gaphone|Micro de plateau|Urne transparente|Cl. de l") { NoToast; Shot "gacha-tirage" (Box @("#sheet .sheet-card") 0) } else { "  gacha-tirage kept: the draw gave a piece the README must not show" }
+  CloseSheet; Mobile; Wait 600; [void](Eval "document.getElementById('toast').style.visibility='',1")
+
   "4. Ines (level 100): legend and left collection"
   Login $names.ines; Wait 1500; Shot "legend"
   OpenSheet "more"; [void](Eval "document.querySelector('#sheet-body .forms').scrollIntoView({block:'center'}),1"); Wait 400
@@ -217,19 +258,22 @@ try {
   [void](Eval "[...document.querySelectorAll('.pad-btn')].find(b=>/Chat/.test(b.textContent)).click(),1"); Wait 1500
   [void](Eval "document.activeElement.blur(),1"); Shot "chat-mobile"; CloseSheet
 
-  "5. Hugo: right collection, then a resignation to the right"
+  "5. Hugo: right wardrobe and collection, then a resignation to the right"
   Login $names.hugo
+  [void](Cdp "Emulation.setDeviceMetricsOverride" @{ width = 390; height = 1900; deviceScaleFactor = 2; mobile = $true }); Wait 500
+  OpenSheet "more"; ClickItem "^Garde-robe"; Wait 1200; NoToast
+  Shot "garde-robe-droite" (Box @("#sheet .sheet-card") 0); CloseSheet; Mobile; Wait 600
   OpenSheet "more"; [void](Eval "document.querySelector('#sheet-body .forms').scrollIntoView({block:'center'}),1"); Wait 400
   Shot "collection-right" (Box @("#sheet-body .forms", "#sheet-body h3:nth-of-type(3)") 10)
   ClickItem "^Repartir . droite$"; Wait 300; ClickItem "^Confirmer"; Wait 900
-  [void](Eval "document.getElementById('screen').click(),1"); Wait 2200      # skip the death, into the rebirth
-  Shot "rebirth-right" (Box @(".device") 8)
+  [void](Eval "document.getElementById('screen').click(),1"); Wait 3600      # skip the death, into the rebirth
+  [void](Eval "scrollTo(0,0),1"); Wait 200; Shot "rebirth-right" (Box @(".device") 8)
 
   "6. Zoe: a resignation to the left"
   Login $names.zoe
   OpenSheet "more"; ClickItem "^Repartir . gauche$"; Wait 300; ClickItem "^Confirmer"; Wait 900
-  [void](Eval "document.getElementById('screen').click(),1"); Wait 1300
-  Shot "rebirth-left" (Box @(".device") 8)
+  [void](Eval "document.getElementById('screen').click(),1"); Wait 2700
+  [void](Eval "scrollTo(0,0),1"); Wait 200; Shot "rebirth-left" (Box @(".device") 8)
 
   "7. Malik: level 9 to 10, the evolution scene"
   Login $names.malik; Wait 800

@@ -5,6 +5,11 @@ import {createMini,manifLabel} from "./minigames.mjs";
 import {missedEntries,latestEntry} from "./changelog.mjs";
 import {drawTest,verdict,randomCamp} from "./politest.mjs";
 import {createChat} from "./chat.mjs";
+import * as A from "./activities.mjs";
+import * as W from "./wardrobe.mjs";
+import {outfitLook,drawObject,dressColors} from "./looks.mjs";
+import {createLegend,volcanoRoom} from "./legend.mjs";
+import {createBatonDuel,screenOf} from "./batonduel.mjs";
 const {people,personalItems,stresses,shop,fxNames,XP,xpCost,xpFloor,stage}=R;
 const $=s=>document.querySelector(s);
 const motionQuery=matchMedia("(prefers-reduced-motion: reduce)");
@@ -13,9 +18,13 @@ let reduced=motionQuery.matches;motionQuery.addEventListener?.("change",e=>{redu
 // ===================================================================== STATE (a copy of the server's)
 let S=null,me=null,SPEED=1,syncReal=0,syncV=0,busy=false,VERSION="dev",RELEASE=null,SEEN=null;
 let anim=null,scene=null,pong=null,mini=null,miniClock=0,lvlFx=null;
-let board=[],feed=[],journalShown=-1,journalRendered=-1,boardTab="score";
+let board=[],feed=[],journalShown=-1,journalRendered=-1,boardTab="score",urnHint=false;
+// The Bâton de feu (me.baton): who holds it, whether this player may challenge, the duel under way. bd: its screen.
+let batonV=null,bd=null;
 const curIdx=()=>R.curIdx(S),hodOf=R.hodOf,isNight=()=>R.isNight(S),isAsleep=()=>R.isAsleep(S);
-const person=lvl=>R.person(S,lvl),look=()=>R.look(S),lookFor=(p,lvl)=>R.lookFor(S,p,lvl);
+// What the élu wears from the wardrobe (wardrobe.mjs): drawn over his own look by sprite().
+const worn=()=>S?.wardrobe?.worn||{outfit:null,object:null},dress=p=>({...p,outfit:worn().outfit,object:worn().object});
+const person=lvl=>R.person(S,lvl),look=()=>dress(R.look(S)),lookFor=(p,lvl)=>dress(R.lookFor(S,p,lvl));
 const itemBlock=it=>R.itemBlock(S,it),activityBlock=()=>R.activityBlock(S),rematchBlock=()=>R.rematchBlock(S);
 // The game clock as it is now: the server's last word, moved on by the time elapsed since.
 const vnow=()=>syncV+(Date.now()-syncReal)*SPEED;
@@ -51,6 +60,8 @@ function applyMe(m,{replay=false}={}){
  chatFlags(m.chat);
  me=m.name;SPEED=m.speed||1;VERSION=m.version||"dev";R.setTimeZone(m.tz||"Europe/Paris");
  if("release" in m){RELEASE=m.release||null;SEEN=m.seenVersion||null;}
+ if("urnHint" in m)urnHint=m.urnHint===true;
+ if("baton" in m)batonV=m.baton&&typeof m.baton==="object"?m.baton:null;      // the server's word (it alone knows whether the staff is in the urn)
  S=m.state;syncReal=Date.now();syncV=S.vclock;
  if(first){journalShown=replay?Math.min(readSeen()||S.jn,S.jn):S.jn;journalRendered=-1;}
  playJournal(first&&replay);
@@ -100,6 +111,9 @@ function playJournal(onlyMajor){
   else if(act.k==="sync")toast(act.text);              // back from a maintenance: said once, nothing to animate
   else if(act.k==="duel"){if(d.res==="win")playAnim("win",2500);toast(act.text);duelJournalT=Date.now();}
   else if(act.k==="treat"){playAnim("eat",2500,{food:"candy"});toast(act.text);}
+  // Reached on their own (a visit, a purchase…): said once. Missions, letters and draws answer the player's tap instead.
+  else if(act.k==="goal"){playAnim("win",1500);toast(act.text);}
+  else if(act.k==="flame")toast(`🔥 ${act.text}`);
   else if(level)toast(level.text);
  }else if(level)toast(level.text);
 }
@@ -121,7 +135,7 @@ function buy(it){closeSheet();send({type:"buy",key:it.key});}
 // the game, the browser plays it (minigames.mjs), the server checks the score.
 let miniEnding=false,miniStartReal=0,pongEnding=false;
 // "Playing": a game on screen, or its score on its way to the server. Toasts, news and scenes wait meanwhile.
-const quiet=()=>!!(pong||mini)||miniEnding||pongEnding;
+const quiet=()=>!!(pong||mini)||miniEnding||pongEnding||!!bd?.playing();
 const drawCand=(p,state,size,cx,ground,t)=>bigSprite(p,state,size,cx,ground,t);
 async function startMini(type){
  closeSheet();
@@ -133,7 +147,7 @@ async function startMini(type){
  // question (debateAsk).
  const key=type==="debate"?"debate":r.game?.k,id=r.game?.id;
  if(!R.MINI[key]){toast("Partie introuvable : réessaie dans un instant.",true);return;}
- mini=createMini(key,{p:key==="epervier"?{...look(),prop:"tonfa"}:look(),camp:S.camp,ctx,scale:()=>scale,now:miniClock,season:season(),
+ mini=createMini(key,{p:key==="epervier"?{...look(),prop:"tonfa",object:null}:look(),camp:S.camp,ctx,scale:()=>scale,now:miniClock,season:season(),
   drawCand,seed:r.game?.seed,ask:key==="debate"?debateAsk("solo"):null});
  mini.gameId=id;
  cv.focus();
@@ -226,26 +240,32 @@ async function pet(){
 // ===================================================================== SPRITES (64x64 logical grid)
 function rect(c,x,y,w,h,color){c.fillStyle=color;c.fillRect(Math.round(x),Math.round(y),w,h);}
 // costume: "vampire" or "hunter", the Halloween night skins (render() passes it in the sleep state only).
+// p.outfit / p.object: the wardrobe (looks.mjs), layered as sky, back, body recoloured, front, head, the object in
+// place of the prop, fx. A Halloween costume wins over the outfit (it is the night's skin).
 function sprite(c,p,t,state,legend=false,food="soup",costume=""){
  c.clearRect(0,0,64,64);
  const vamp=costume==="vampire",hunt=costume==="hunter";
  if(vamp)p={...p,coat:"#1c1824",tie:"#b3122e"};else if(hunt)p={...p,coat:"#4a3426",tie:null,glasses:false};
+ const O=costume?null:outfitLook(p.outfit);
+ O?.sky?.(c,t);
  const phase=Math.floor(t/300)%4,sulk=state==="debate"&&phase>=2,stomp=state==="debate"&&!sulk;
  const run=state==="run",bob=state==="sleep"?0:state==="win"?[0,-3,-5,-2][phase]:run?[0,-2,0,-2][phase]:[0,-1,0,0][phase];
  c.fillStyle="#0004";c.beginPath();c.ellipse(32,59,15,3,0,0,Math.PI*2);c.fill();
  if(legend){for(let i=0;i<8;i++){const a=i*Math.PI/4+t/1300;rect(c,31+Math.cos(a)*25,29+Math.sin(a)*26,2,2,"#fbd47b");}}
  c.save();c.translate(state==="stress"?(phase%2?1:-1):0,bob);
- const skin=vamp?"#e4e0ec":"#e9b38e",shade=vamp?"#c6bccf":"#c78e76",ink="#202330",body=37;
+ O?.back?.(c,t);
+ const skin=vamp?"#e4e0ec":"#e9b38e",shade=vamp?"#c6bccf":"#c78e76",ink="#202330",body=37,dc=dressColors(O,p,hunt?"#26262c":"#f1e9da");
  if(vamp){const k="#120e18",red="#b3122e";rect(c,16,30,32,27,k);rect(c,16,32,2,24,red);rect(c,46,32,2,24,red);rect(c,16,23,7,15,k);rect(c,41,23,7,15,k);rect(c,18,24,3,13,red);rect(c,43,24,3,13,red);}  // cape, high collar
  if(p.style==="long")rect(c,21,15,23,26,p.hair);
- rect(c,22,body,20,18,ink);rect(c,24,body,16,16,p.coat);
- rect(c,29,body,6,9,hunt?"#26262c":"#f1e9da");if(p.tie)rect(c,31,body+2,2,11,p.tie);
+ rect(c,22,body,20,18,ink);rect(c,24,body,16,16,dc.coat);
+ rect(c,29,body,6,9,dc.shirt);if(dc.tie)rect(c,31,body+2,2,11,dc.tie);
  rect(c,24,54-((stomp&&phase===0)||(run&&phase%2===0)?2:0),6,5,ink);rect(c,35,54-((stomp&&phase===1)||(run&&phase%2===1)?2:0),6,5,ink);
  if(hunt){const d="#2e2018";rect(c,22,50,9,6,"#3a281c");rect(c,33,50,9,6,"#3a281c");rect(c,22,50,1,6,d);rect(c,41,50,1,6,d);rect(c,27,body,2,11,d);rect(c,35,body,2,11,d);}   // long leather coat
  const lift=state==="debate"?(phase===0?9:5):state==="win"?5+phase%2*2:state==="eat"?3:0;
- if(sulk){rect(c,18,body+2,5,7,p.coat);rect(c,42,body+2,5,7,p.coat);rect(c,21,body+7,23,4,p.coat);rect(c,21,body+7,23,1,ink);rect(c,22,body+8,3,3,skin);rect(c,40,body+8,3,3,skin);}
- else{rect(c,18,body+2,5,12,p.coat);rect(c,19,body+13,4,4,skin);rect(c,42,body+2-lift,5,12,p.coat);rect(c,43,body+13-lift,4,4,skin);}
+ if(sulk){rect(c,18,body+2,5,7,dc.coat);rect(c,42,body+2,5,7,dc.coat);rect(c,21,body+7,23,4,dc.coat);rect(c,21,body+7,23,1,ink);rect(c,22,body+8,3,3,skin);rect(c,40,body+8,3,3,skin);}
+ else{rect(c,18,body+2,5,12,dc.coat);rect(c,19,body+13,4,4,skin);rect(c,42,body+2-lift,5,12,dc.coat);rect(c,43,body+13-lift,4,4,skin);}
  rect(c,29,31,7,8,shade);
+ O?.front?.(c,t);
  const face=state==="debate"?"#ee9f86":skin;
  rect(c,22,13,21,20,ink);rect(c,23,14,19,18,face);rect(c,21,22,2,6,face);rect(c,42,22,2,6,face);
  rect(c,23,12,19,5,p.style==="bald"||vamp?face:p.hair);
@@ -271,9 +291,11 @@ function sprite(c,p,t,state,legend=false,food="soup",costume=""){
  if(vamp){rect(c,30,30,1,2,"#fff");rect(c,35,30,1,2,"#fff");}   // fangs
  if(hunt){const g="#0d0d12";for(const x of [25,34]){rect(c,x,22,6,2,g);rect(c,x+1,21,4,4,g);rect(c,x+1,21,2,1,"#6c7fa8");}rect(c,31,22,3,1,g);rect(c,23,22,2,1,g);rect(c,40,22,2,1,g);   // sunglasses at night
   for(const [x,y] of [[24,33],[27,35],[30,36],[34,36],[37,35],[40,33]]){rect(c,x,y,3,3,"#f3eedd");rect(c,x+1,y-1,1,1,"#c9bf9c");}}   // garlic necklace
+ O?.head?.(c,t);
  if(state==="eat")drawFood(c,food,(p.side||S?.camp)==="left",28,31,t);
- else if(!sulk&&state!=="sleep")drawProp(c,p.prop,46,43-lift);
+ else if(!sulk&&state!=="sleep"&&!drawObject(c,p.object,46,43-lift,t))drawProp(c,p.prop,46,43-lift);
  c.restore();
+ O?.fx?.(c,t);
  if(state==="sleep"){c.fillStyle="#a8c9ff";c.font="bold 8px monospace";c.fillText("z",48,17-phase*2);c.fillText("Z",53,10-phase);}
  if(stomp){const red="#c23b4a";rect(c,44,2,18,10,"#ffd2a6");rect(c,46,12,3,3,"#ffd2a6");rect(c,46,4,1,6,red);rect(c,48,4,1,6,red);rect(c,45,5,5,1,red);rect(c,45,8,5,1,red);rect(c,52,4,4,6,ink);rect(c,53,5,2,4,"#ffd2a6");rect(c,54,6,1,2,ink);rect(c,59,4,1,4,red);rect(c,59,9,1,1,red);rect(c,17,10-phase*2,3,2,"#dfe6f0");rect(c,14,6-phase,2,2,"#dfe6f0");}
  if(sulk){rect(c,26,3,12,4,"#6d7385");rect(c,28,1,8,2,"#6d7385");rect(c,32,7,1,2,"#f4d57b");rect(c,31,9,1,2,"#f4d57b");}
@@ -514,8 +536,9 @@ function render(now){
  if(anim&&now>anim.until)anim=null;
  const state=anim?(anim.name==="bath"?"idle":anim.name):night?"sleep":"idle";
  const costume=spooky&&state==="sleep"?(S.camp==="left"?"hunter":"vampire"):"";
- room(isNight());
- if(spooky){hwRoom(t,now);hwProps(costume);}
+ // The Bâton de feu held: the hemicycle gives way to the erupting volcano (legend.mjs), Halloween's decor included.
+ if(worn().object==="baton")volcanoRoom(ctx,t);
+ else{room(isNight());if(spooky){hwRoom(t,now);hwProps(costume);}}
  if(S.sleeping&&!isNight()){ctx.fillStyle="rgba(6,8,22,.62)";ctx.fillRect(0,0,466,466);if(spooky)hwCandle(t);}   // light off during a nap
  gauges(now);
  const p=look();
@@ -782,10 +805,18 @@ function toast(text,now=false){
 // The organiser's announcements (admin.mjs announce): one banner at a time, kept until closed, never during a game or a scene.
 const announceQ=[];
 function showAnnounce(){
- if(!announceQ.length||quiet()||scene||!$("#announce").hidden)return;
+ if(!announceQ.length||quiet()||scene||legend.open()||bd.isOpen()||!$("#announce").hidden)return;
  if(!$("#push-ask").hidden){$("#push-ask").hidden=true;pushAsked=false;pushAskWanted=true;}   // same spot: the announcement first, the invitation after
- $("#announce").hidden=false;$("#announce-text").textContent=announceQ.shift();   // shown first: screen readers hear the text land
+ let a=announceQ.shift();while(a?.stale?.())a=announceQ.shift();if(!a)return;
+ $("#announce").classList.toggle("mythic",!!a.mythic);$("#announce-title").textContent=a.title||"📣 Annonce officielle";
+ $("#announce").hidden=false;$("#announce-text").textContent=a.text;   // shown first: screen readers hear the text land
+ const go=$("#announce-go");go.hidden=!a.go;go.textContent=a.go?.label||"";announceGo=a.go?.fn||null;
 }
+let announceGo=null;
+$("#announce-go").addEventListener("click",()=>{const fn=announceGo;$("#announce").hidden=true;announceGo=null;fn?.();showAnnounce();});
+// A banner of the game itself (the Bâton's news), queued like the organiser's; go: {label, fn}, a button on it.
+// stale(): checked when its turn comes; a banner overtaken by events meanwhile (an invite to a duel already over) is dropped.
+function banner(title,text,go=null,stale=null){announceQ.push({mythic:true,title,text,go,stale});if(announceQ.length>3)announceQ.shift();showAnnounce();}
 $("#announce-close").addEventListener("click",()=>{$("#announce").hidden=true;showAnnounce();});
 const pad2=n=>String(n).padStart(2,"0");
 function clockLabel(){const v=vnow(),c=R.clockOf(v);return `Jour ${R.mandateDay(S,v)} · ${pad2(c.hour)}:${pad2(c.minute)}`;}
@@ -825,11 +856,12 @@ function refresh(){
  }
  // A red dot on "Jouer" while the quitte-ou-double is on offer, a count while challenges wait: a toast alone is
  // easily missed.
- const rm=!rematchBlock(),dn=incoming().length,playBtn=$(".pad-btn[data-sheet=play]"),sig=`${rm}|${dn}`;
+ // A mission's report or a voter's letter waiting: the same red dot.
+ const rm=!rematchBlock(),dn=incoming().length,rep=A.missionReady(S),mail=A.mailWaiting(S),bt=!!batonTodo(),playBtn=$(".pad-btn[data-sheet=play]"),sig=`${rm}|${dn}|${rep}|${mail}|${bt}`;
  if(playBtn.dataset.sig!==sig){
-  playBtn.dataset.sig=sig;playBtn.classList.toggle("alert",rm||dn>0);playBtn.classList.toggle("clash",dn>0);   // a challenge waits: the icon wiggles
+  playBtn.dataset.sig=sig;playBtn.classList.toggle("alert",rm||dn>0||rep||mail||bt);playBtn.classList.toggle("clash",dn>0);   // a challenge waits: the icon wiggles
   if(dn)playBtn.dataset.count=String(Math.min(dn,9));else delete playBtn.dataset.count;
-  const why=[dn&&`${dn} défi${dn>1?"s":""} en attente`,rm&&"quitte ou double disponible"].filter(Boolean).join(", ");
+  const why=[bt&&"duel du Bâton à jouer",dn&&`${dn} défi${dn>1?"s":""} en attente`,rep&&"rapport de mission à lire",mail&&"une lettre d'électeur",rm&&"quitte ou double disponible"].filter(Boolean).join(", ");
   if(why)playBtn.setAttribute("aria-label",`Jouer (${why})`);else playBtn.removeAttribute("aria-label");
  }
  const label=`${p.name}, niveau ${S.lvl}. Satiété ${Math.round(S.sat)}, moral ${Math.round(S.moral)}, énergie ${Math.round(S.energy)}, hygiène ${Math.round(S.hyg)}. Entrée pour lui taper sur l'épaule.`;
@@ -867,13 +899,16 @@ function renderBoard(){
  const rows=[...board].sort(TABS[boardTab].sort);
  $("#board").replaceChildren(...rows.map((r,i)=>{
   const li=document.createElement("li");li.className=`row ${r.camp}${r.name===me?" me":""}`;
+  const btn=document.createElement("button");btn.type="button";btn.className="row-in";btn.title=`Voir la fiche de ${r.name}`;
   const rank=document.createElement("span");rank.className="rank";rank.textContent=ordinal(i+1);
+  const cv=document.createElement("canvas");cv.className="mini";cv.setAttribute("aria-hidden","true");
+  const look=boardLook(r);portrait(cv,(c,t)=>sprite(c,look,t+i*331,r.asleep?"sleep":"idle"),{size:48,group:"board"});
   const who=document.createElement("span");who.className="who";
   const n=nameWithDot(document.createElement("b"),r.name+(r.name===me?" (toi)":""),r.online);
   const c=document.createElement("small");c.textContent=`${r.candidate} · niv. ${r.lvl}${r.asleep?" · zzz":""}${r.form==="Négligée"||r.form==="Abandonnée"?" · en danger":""}`;
   who.append(n,c);
   const v=document.createElement("span");v.className="val";v.textContent=TABS[boardTab].show(r);
-  li.append(rank,who,v);return li;
+  btn.append(rank,cv,who,v);btn.addEventListener("click",()=>openPlayer(r.name,btn));li.append(btn);return li;
  }));
  const mine=[...board].sort(TABS.score.sort).findIndex(r=>r.name===me);
  $("#chip-rank").textContent=mine>=0?`Classement ${ordinal(mine+1)}/${board.length}`:"Classement";
@@ -895,11 +930,26 @@ function connectLive(){
  // Every message, pings included, proves the stream alive; a malformed one is skipped, not fatal.
  const on=(ev,fn)=>es.addEventListener(ev,e=>{lastLive=Date.now();setNet(true);let v;try{v=JSON.parse(e.data);}catch{return;}fn(v);});
  on("me",m=>applyMe(m));
- on("board",v=>{if(Array.isArray(v)){board=v;renderBoard();}});
+ on("board",v=>{if(Array.isArray(v)){board=v;renderBoard();if(sheetKind==="player")liveSheet(true);}});
  on("feedInit",v=>{if(Array.isArray(v)){feed=v;renderFeed();}});
  on("feed",v=>{if(!Array.isArray(v))return;for(const f of v)feed.unshift(f);feed.length=Math.min(feed.length,60);renderFeed();});
  on("duel",v=>{if(v&&typeof v==="object")duelEvent(v);});
- on("announce",v=>{if(typeof v?.text!=="string"||!v.text.trim())return;announceQ.push(v.text.slice(0,240));if(announceQ.length>3)announceQ.shift();showAnnounce();});
+ on("announce",v=>{if(typeof v?.text!=="string"||!v.text.trim())return;announceQ.push({text:v.text.slice(0,240)});if(announceQ.length>3)announceQ.shift();showAnnounce();});
+ // The Bâton de feu found its bearer: a banner for everyone else (the bearer has the legend).
+ on("mythic",v=>{
+  if(typeof v?.name!=="string")return;
+  const name=v.name.slice(0,40),from=typeof v.from==="string"?v.from.slice(0,40):"";
+  if(from){                                          // the Duel du Bâton: the staff changed hands
+   if(name===me){if(bd.isOpen())bd.markWon();else{closeSheet();legend.play($(".pad-btn[data-sheet=more]"));}batonReload();return;}
+   banner("⚔️ Le Bâton de feu a changé de mains !",from===me?`${name} te l'a arraché !`:`${name} l'a arraché à ${from} !`);batonReload();return;
+  }
+  if(name===me)return;
+  banner("🔥 Le Bâton de feu des Apprix a trouvé son maître !",`${name} l'a tiré à ${v.camp==="right"?"la Loterie du Gala":"la Tombola de la Fête"}. Le monde brûle au rythme du hardcore.`);
+ });
+ // The Duel du Bâton (batonduel.mjs): the duel's news, the live round for spectators, the cheers.
+ on("baton",v=>{if(v&&typeof v==="object")batonEvent(v);});
+ on("batonLive",v=>bd.onLive(v));
+ on("batonCheer",v=>bd.onCheer(v));
  // The chat: the badge on "Chat" only, never a toast, a sound or a notification (chat.mjs).
  on("chat",v=>chat.onChat(v));
  on("chatDel",v=>chat.onDel(v));
@@ -965,7 +1015,10 @@ function armedButton(label,armedLabel,cls,onConfirm){
  return b;
 }
 // What a sheet's content depends on: when this changes while it is open, the sheet is redrawn in place.
-const sheetSig=()=>[S.fm,curIdx(),R.actsToday(S),R.actsThisVisit(S),S.energy<20,S.coffees,S.breadIdx,S.lvl,S.best,S.equipped[person().name]||0,isAsleep(),S.camp,!rematchBlock(),season(),S.treatDay].join("|");
+// 1.6.0: the missions (a report ready), the letter, the goals' progress, the wardrobe and the urn.
+const sheetSig=()=>[S.fm,curIdx(),R.actsToday(S),R.actsThisVisit(S),S.energy<20,S.coffees,S.breadIdx,S.lvl,S.best,S.equipped[person().name]||0,isAsleep(),S.camp,!rematchBlock(),season(),S.treatDay,
+ S.missions?.cur?.id,A.missionReady(S),A.missionsToday(S),S.energy<A.MISSION_RULES.minEnergy,S.mail?.letter?.id,A.lettersToday(S),S.goals?.list?.map(x=>`${x.n}${x.done?"d":""}`).join(),
+ S.wardrobe?.own?.length,worn().outfit,worn().object,S.wardrobe?.bulletins,S.wardrobe?.confetti,W.freeDrawToday(S),A.flameOf(S),urnHint,batonSig()].join("|");
 let shownSig="";
 function setBackgroundInert(on){for(const el of document.querySelectorAll(".topbar,.app,footer"))el.inert=on;lockScroll(on);}
 // The page behind an open sheet does not move: a swipe that reaches the end of a list (the chat) no longer scrolls the
@@ -1038,7 +1091,12 @@ function renderSheet(kind,opener){
    // Always open: even when he cannot duel now, the sheet shows the challenges, the results and why.
    itemButton("Duels",`Défie un rival au Débat chrono : mêmes questions, meilleur score. ${R.DUEL.perDay} défis par jour.`,dn?`${dn} défi${dn>1?"s":""}`:"PvP",false,openDuels)
   ));
+  renderBatonBlock(body);
+  renderActivities(body);
  }
+ if(kind==="wardrobe")renderWardrobe(body,set);
+ if(kind==="urn")renderUrn(body,set);
+ if(kind==="player")renderPlayer(body,set);
  if(kind==="duels")renderDuels(body,set);
  if(kind==="test"){
   set("Test politique","Cinq questions pour les indécis. Sans effet sur la partie : le dernier mot reste le tien.");
@@ -1065,8 +1123,15 @@ function renderSheet(kind,opener){
  }
  if(kind==="more"){
   set(p.name,`Niveau ${S.lvl}/100 · ${p.detail}`);
+  // The wardrobe first: what he wears is the first thing a player comes here for.
+  const w=S.wardrobe,vis=[...wardItems("outfit"),...wardItems("object")],got=vis.filter(([id])=>owns(id)).length,wo=worn();
+  const wearing=[wo.outfit,wo.object].filter(id=>id&&W.ITEMS[id]).map(id=>W.ITEMS[id].name).join(" et ");
+  body.append(blockTitle("Garde-robe"),list(
+   itemButton("Garde-robe",`${got} sur ${vis.length} tenues et objets${wearing?` · porte ${wearing}`:""}. Purement cosmétique.`,"Ouvrir",false,()=>openSheet("wardrobe")),
+   itemButton(W.URN_NAME[S.camp],W.freeDrawToday(S)?"Ton tirage gratuit du jour t'attend.":`Tirage gratuit déjà pris aujourd'hui · ${plural(w.bulletins,"bulletin")} en poche.`,`🎟️ ${w.bulletins}`,false,()=>openSheet("urn"))));
   body.append(blockTitle("Objets personnels"),list(...personalItems[p.name].map((it,i)=>{
-   const on=(S.equipped[p.name]||0)===i;return itemButton(it.name,on?"Dans sa main":"Toucher pour équiper",on?"équipé":"",false,()=>equip(i),on);
+   const on=(S.equipped[p.name]||0)===i,held=on&&!wo.object;
+   return itemButton(it.name,held?"Dans sa main":on?"Équipé, mais rangé : un objet de la garde-robe est dans sa main. Toucher pour le reprendre.":"Toucher pour équiper",on?"équipé":"",false,()=>equip(i),held);
   })));
   body.append(blockTitle("Ses casseroles (sources de stress)"));
   const risk=document.createElement("p");risk.className="fine";
@@ -1131,6 +1196,355 @@ function renderSheet(kind,opener){
   body.append(about);
  }
 }
+// ---------- portraits: one animation loop for every small élu on the page ----------
+// The leaderboard's faces, the wardrobe's cards, the reveal card, the player sheet: each canvas registers a draw
+// function, and one shared loop (tickFrame, ~15 fps) repaints the ones on screen. Paused while the tab is hidden,
+// during a game, off screen (IntersectionObserver), and for the board while a sheet covers it; one still frame with
+// reduced motion. A canvas taken out of the page leaves the loop on its own.
+const portraits=new Map(),pScratch=document.createElement("canvas");pScratch.width=pScratch.height=64;
+const portraitSeen=typeof IntersectionObserver==="function"?new IntersectionObserver(es=>{for(const e of es){const p=portraits.get(e.target);if(p)p.on=e.isIntersecting;}}):null;
+let lastPortrait=0;
+// draw(ctx,t): on the 64x64 grid, or raw (opts.raw: a size x size space, the player sheet's stage).
+function portrait(cv,draw,{size=64,raw=false,group=""}={}){
+ const dpr=Math.min(2,devicePixelRatio||1);cv.width=cv.height=raw?Math.round(size*dpr):64*Math.max(1,Math.round(size/64*dpr));
+ const e={cv,ctx:cv.getContext("2d"),draw,raw,size,group,on:!portraitSeen};portraits.set(cv,e);portraitSeen?.observe(cv);paintPortrait(e,performance.now());
+ return cv;
+}
+function paintPortrait(e,now){
+ const t=reduced?0:now;
+ try{
+  if(e.raw){const k=e.cv.width/e.size;e.ctx.setTransform(k,0,0,k,0,0);e.ctx.clearRect(0,0,e.size,e.size);e.draw(e.ctx,t);return;}
+  const s=pScratch.getContext("2d");s.clearRect(0,0,64,64);e.draw(s,t);
+  e.ctx.imageSmoothingEnabled=false;e.ctx.clearRect(0,0,e.cv.width,e.cv.height);e.ctx.drawImage(pScratch,0,0,e.cv.width,e.cv.height);
+ }catch(err){portraits.delete(e.cv);console.error(err);}   // one broken drawing never stops the others
+}
+function portraitsTick(now){
+ if(now-lastPortrait<66)return;lastPortrait=now;
+ const covered=!$("#sheet").hidden||legend.open()||bd.isOpen();
+ for(const [cv,e] of portraits){
+  if(!cv.isConnected){portraits.delete(cv);portraitSeen?.unobserve(cv);continue;}
+  if(reduced||document.hidden||quiet()||!e.on||(covered&&e.group==="board"))continue;
+  paintPortrait(e,now);
+ }
+}
+// A plain silhouette (a card not won yet: nothing to see).
+function greyOut(c){c.globalCompositeOperation="source-in";c.fillStyle="#6c6478";c.fillRect(0,0,64,64);c.globalCompositeOperation="source-over";}
+// How a leaderboard row's élu looks: the candidate with his first personal item, and what he wears.
+function boardLook(r){
+ const base=allPeople.find(x=>x.name===r.candidate)||people[r.camp==="right"?"right":"left"][0];
+ return {...base,prop:personalItems[base.name]?.[0]?.prop,outfit:typeof r.outfit==="string"?r.outfit:null,object:typeof r.object==="string"?r.object:null};
+}
+
+// ---------- missions, voter mail, daily goals (activities.mjs) ----------
+const dur=ms=>ms<R.H?`${Math.round(ms/60000)} min`:`${String(Math.round(ms/R.H*10)/10).replace(".",",")} h`;
+const leftLabel=ms=>{const m=Math.max(1,Math.ceil(ms/60000));return m>=60?`${Math.floor(m/60)} h ${pad2(m%60)}`:`${m} min`;};
+const plural=(n,w)=>`${n} ${w}${n>1?"s":""}`;
+async function missionStart(m){const r=await send({type:"missionStart",id:m.id});if(r?.ok)toast(`En mission : ${m[S.camp]}. Retour dans ${dur(m.ms)} (heure du jeu).`,true);liveSheet(true);}
+async function missionReport(){
+ const r=await send({type:"missionReport"});if(!r?.ok||!r.report)return;
+ const m=A.missionOf(r.report.id),how=m?.risk?(r.report.ok?" : coup réussi !":" : ça a mal tourné."):" :";
+ toast(`Rapport${m?`, ${m[S.camp]}`:""}${how} ${R.fxText(r.report.fx||{})}, +1 bulletin.`,true);if(r.report.ok)playAnim("win",2000);liveSheet(true);
+}
+async function mailAnswer(id,choice){
+ const a=A.letterOf(id)?.answers[choice],r=await send({type:"mailAnswer",id,choice});if(!r?.ok)return;
+ toast(`${a?.reply||"Réponse envoyée."} (${R.fxText(r.fx||a?.fx||{})}${r.bulletin?", +1 bulletin":""})`,true);liveSheet(true);
+}
+function renderActivities(body){
+ const c=S.camp,cur=S.missions.cur,ready=A.missionReady(S),n=A.missionsToday(S),max=A.MISSION_RULES.perDay;
+ body.append(blockTitle("Missions"),fine(`Quelques heures sur le terrain, pendant que tu fais autre chose : des jauges en plus et 1 bulletin pour ${W.URN_NAME[c]} à chaque rapport. Une à la fois, ${max} par jour (${n}/${max} aujourd'hui).`));
+ if(cur){
+  const m=A.missionOf(cur.id);
+  if(ready)body.append(list(itemButton(`Lire le rapport : ${m[c]}`,"Mission terminée : son rapport t'attend.","Rapport",false,missionReport,true)));
+  else{const d=duelCard(`En mission : ${m[c]}`,`Retour dans ${leftLabel(A.missionLeft(S))}`);d.classList.add("mission-run");d.querySelector("small").className="mission-left";body.append(d);}
+ }
+ // A reason shared by every mission (one running, the day's four used) is said once, above the list.
+ const shared=cur||n>=max?A.missionBlock(S,A.MISSIONS[0].id):"";
+ if(shared&&!ready)body.append(Object.assign(fine(shared),{className:"fine warn"}));
+ body.append(list(...A.MISSIONS.map(m=>{
+  const e=A.missionBlock(S,m.id),desc=`${R.fxText(m.fx)}${m.risk?` ; ou, une fois sur deux : ${R.fxText(m.risk.fx)}`:""}${m.night&&!e?" · le soir seulement, de 20 h à minuit":""}`;
+  return itemButton(m[c],e&&e!==shared?`${e} ${desc}`:desc,dur(m.ms),!!e,()=>missionStart(m));
+ })));
+ body.append(blockTitle("Courrier"));
+ const l=S.mail.letter&&A.letterOf(S.mail.letter.id);
+ if(l){
+  const d=document.createElement("div"),b=document.createElement("b"),q=document.createElement("q");d.className="dossier letter";
+  b.textContent=`✉️ ${l.from}`;q.textContent=l.text;d.append(b,q);
+  body.append(d,list(...l.answers.map((a,i)=>itemButton(a.text,R.fxText(a.fx),"Répondre",false,()=>mailAnswer(l.id,i)))));
+ }else body.append(fine(R.clockOf(vnow()).hour<A.MAIL.quietTo?`Le facteur passe à partir de ${A.MAIL.quietTo} h.`:"Pas de lettre pour l'instant : les électeurs écrivent toutes les 30 à 60 minutes (heure du jeu)."));
+ const lt=A.lettersToday(S);
+ body.append(fine(`${plural(lt,"lettre")} répondue${lt>1?"s":""} aujourd'hui · 1 bulletin toutes les ${A.MAIL.bulletinEvery} lettres.`));
+ body.append(blockTitle("Objectifs du jour"));
+ const goals=A.goalView(S);
+ if(!goals.length)body.append(fine("Les objectifs du jour arrivent à la prochaine heure de jeu."));
+ else{
+  const ul=document.createElement("ul");ul.className="goals";
+  for(const g of goals){
+   const li=document.createElement("li"),b=document.createElement("b"),sm=document.createElement("small"),bar=document.createElement("div"),fill=document.createElement("i");
+   li.className=g.done?"done":"";b.textContent=`${g.done?"✓ ":""}${g.name}`;sm.textContent=`${g.desc} · ${R.fxText(g.fx)}, +1 bulletin · ${g.have}/${g.need}`;
+   bar.className="bar";bar.setAttribute("aria-hidden","true");fill.style.width=`${Math.round(100*Math.min(1,g.have/g.need))}%`;bar.append(fill);   // CSSOM
+   li.append(b,sm,bar);ul.append(li);
+  }
+  body.append(ul);
+ }
+ body.append(fine(`🎟️ ${plural(S.wardrobe.bulletins,"bulletin")} en poche : à jouer dans Dossier → ${W.URN_NAME[c]}. Rien de tout ça ne rapporte d'XP : seulement des jauges et des bulletins.`));
+}
+
+// ---------- the wardrobe (wardrobe.mjs, looks.mjs) ----------
+const RANK_ORDER=["mythique","ultra","legendaire","epique","rare","commun"];
+let wardTab="outfit",wardSwap=false;
+const owns=id=>S.wardrobe.own.includes(id);
+// What this camp's wardrobe shows: its own and the shared items. The mythic only once won: never a spoiler.
+const wardVisible=(id,it)=>owns(id)||(it.rarity!=="mythique"&&(it.pool==="all"||it.pool===S.camp));
+const wardItems=kind=>Object.entries(W.ITEMS).filter(([id,it])=>it.kind===kind&&wardVisible(id,it));
+const ownLook=()=>R.look(S);                       // the élu without the wardrobe, for the previews
+async function wearItem(kind,id){const r=await send({type:"wear",kind,id});if(r?.ok&&id)playAnim("win",1500);liveSheet(true);return r;}
+async function exchangeItem(id){const r=await send({type:"exchange",id});if(r?.ok){wardSwap=false;toast(`${W.ITEMS[id].name} rejoint ta garde-robe contre ${W.EXCHANGE.cost} confettis.`,true);}liveSheet(true);}
+function flameMeter(){
+ const pts=A.flameOf(S),d=document.createElement("div"),head=document.createElement("div"),l=document.createElement("span"),v=document.createElement("b"),bar=document.createElement("div"),fill=document.createElement("i");
+ d.className="flame";head.className="flame-head";l.textContent="🔥 Flamme";v.textContent=String(pts);head.append(l,v);
+ bar.className="bar";bar.setAttribute("aria-hidden","true");fill.style.width=`${Math.min(100,Math.round(pts/3))}%`;bar.append(fill);   // CSSOM
+ d.append(head,bar,fine("Elle grandit avec ton assiduité, jour après jour. On dit qu'elle attire quelque chose…"));
+ return d;
+}
+function wardCard(id,it,i){
+ const own=owns(id),on=worn()[it.kind]===id,label=W.RARITY_LABEL[it.rarity];
+ const swap=wardSwap&&!own&&W.EXCHANGE.rarities.includes(it.rarity)&&S.wardrobe.confetti>=W.EXCHANGE.cost,shown=own||swap;
+ const b=document.createElement("button");b.type="button";
+ b.className=`ward-card${own?"":" locked"}${on?" on":""}${swap?" swap":""} r-${it.rarity}`;
+ b.style.setProperty("--r",shown?W.RARITY_COLOR[it.rarity]:"#4a4258");   // CSSOM: allowed by the CSP
+ const cv=document.createElement("canvas"),rk=document.createElement("span"),nm=document.createElement("span"),st=document.createElement("small");
+ cv.setAttribute("aria-hidden","true");rk.className="rk";rk.textContent=label;nm.className="nm";nm.textContent=shown?it.name:"???";
+ const idle=on?"Porté":own?(it.kind==="outfit"?"Porter":"Brandir"):swap?`Échanger · ${W.EXCHANGE.cost} 🎊`:"À gagner";
+ st.className="st";st.textContent=idle;
+ b.append(cv,rk,nm,st);
+ b.setAttribute("aria-label",own?`${it.name}, ${label}. ${on?"Porté : toucher pour l'enlever.":"Toucher pour le porter."}`:swap?`${it.name}, ${label} : échanger ${W.EXCHANGE.cost} confettis contre lui.`:`${label}, pas encore gagné.`);
+ if(own)b.title=it.desc;
+ if(!own&&!swap)b.setAttribute("aria-disabled","true");
+ const p=ownLook(),off=i*331;
+ portrait(cv,(c,t)=>{
+  if(!shown){sprite(c,p,0,"idle");greyOut(c);return;}
+  sprite(c,{...p,outfit:it.kind==="outfit"?id:null,object:it.kind==="object"?id:null},t+off,"idle");
+ },{size:96});
+ let armed=0;
+ b.addEventListener("click",()=>{
+  if(own){wearItem(it.kind,on?null:id);return;}
+  if(!swap)return;
+  // Two taps: 100 confetti are not spent by a stray one.
+  if(!armed){armed=setTimeout(()=>{armed=0;b.classList.remove("armed");st.textContent=idle;},8000);b.classList.add("armed");st.textContent="Touche encore";return;}
+  clearTimeout(armed);armed=0;b.classList.remove("armed");exchangeItem(id);
+ });
+ return b;
+}
+function renderWardrobe(body,set){
+ const w=S.wardrobe;
+ set("Garde-robe","Ce que ton élu porte et brandit. Purement cosmétique : aucun effet sur le jeu.");
+ body.append(flameMeter());
+ if(batonV?.mine&&batonV.warn){const h=fine("La flamme du Bâton vacille… Ta Flamme est passée sous 200 : sous 150, le Bâton retournera dans l'urne.");h.classList.add("urn-hint");body.append(h);}
+ const tabs=document.createElement("div");tabs.className="tabs small ward-tabs";tabs.setAttribute("role","group");tabs.setAttribute("aria-label","Tenues ou objets");
+ for(const [k,t] of [["outfit","Tenues"],["object","Objets"]]){const b=document.createElement("button");b.type="button";b.textContent=t;b.setAttribute("aria-pressed",String(wardTab===k));b.addEventListener("click",()=>{wardTab=k;renderSheet("wardrobe");$("#sheet-body .ward-tabs [aria-pressed=true]")?.focus();});tabs.append(b);}
+ const row=document.createElement("div");row.className="btn-row ward-bar";
+ const swap=smallButton(wardSwap?"Annuler l'échange":`Échanger ${W.EXCHANGE.cost} confettis`,"",()=>{wardSwap=!wardSwap;renderSheet("wardrobe");$("#sheet-body .ward-bar .swap-btn")?.focus();},!wardSwap&&w.confetti<W.EXCHANGE.cost);
+ swap.classList.add("swap-btn");swap.setAttribute("aria-pressed",String(wardSwap));row.append(pill(`🎊 ${w.confetti} confetti${w.confetti>1?"s":""}`),swap);
+ if(owns("baton"))row.append(smallButton("Lire la légende","",()=>{closeSheet();legend.play($(".pad-btn[data-sheet=more]"));}));
+ body.append(tabs,row);
+ if(wardSwap)body.append(fine(`Touche une case à gagner, commune, rare ou épique : ${W.EXCHANGE.cost} confettis contre elle (deux touches pour confirmer).`));
+ const all=wardItems(wardTab);let i=0;
+ for(const r of RANK_ORDER){
+  const l=all.filter(([,it])=>it.rarity===r);if(!l.length)continue;
+  const h=blockTitle(`${W.RARITY_LABEL[r]} · ${l.filter(([id])=>owns(id)).length}/${l.length}`);h.style.setProperty("--r",W.RARITY_COLOR[r]);h.classList.add("ward-title");
+  const g=document.createElement("div");g.className="ward-grid";for(const [id,it] of l)g.append(wardCard(id,it,i++));
+  body.append(h,g);
+ }
+ body.append(fine(wardTab==="object"?"Un objet de la garde-robe remplace l'objet personnel dans sa main ; équiper un objet personnel (Dossier) le range.":"Une tenue s'enfile par-dessus son costume ; touche-la de nouveau pour l'enlever."),
+  fine("Les doublons d'un tirage deviennent des confettis : 5 pour un commun, jusqu'à 100 pour un ultra rare."));
+ const go=document.createElement("div");go.className="btn-row";go.append(smallButton(`Aller à ${W.URN_NAME[S.camp]}`,"go",()=>openSheet("urn")));body.append(go);
+}
+
+// ---------- La Tombola de la Fête / La Loterie du Gala ----------
+let urnLast=null,drawing=false,urnShakeUntil=0;
+// The urn: a pixel ballot box that shakes now and then (and while a draw is on its way), ballots tumbling inside.
+// The sparks and the merguez smell only when the server says the urn hides something for this player (urnHint).
+function drawUrnBox(c,now){
+ const px=(x,y,w,h,col)=>{c.fillStyle=col;c.fillRect(Math.round(x),Math.round(y),w,h);},left=S?.camp==="left";
+ const shake=reduced?0:now<urnShakeUntil?Math.round(Math.sin(now/30)*2):Math.floor(now/2400)%3===0?Math.round(Math.sin(now/40)*1.2):0;
+ c.save();c.translate(shake,0);
+ px(12,58,40,3,"#0005");px(12,20,40,38,"#bfe3ff40");px(12,20,40,1,"#ffffffaa");px(12,20,1,38,"#ffffff66");px(51,20,1,38,"#ffffff33");
+ for(let i=0;i<9;i++){const x=16+((i*13+Math.floor(now/300)*(shake?3:0))%30),y=44+((i*7)%10)-(shake?(i%3):0);px(x,y,7,5,["#f2e8cd","#fff6e0","#e8dcc0"][i%3]);px(x+1,y+2,5,1,"#b9ab8c");}
+ px(12,53,40,5,left?"#d42a2a":"#2f5fb4");px(25,53,14,5,"#ffffff");px(12,53,13,5,"#2f5fb4");px(39,53,13,5,"#d42a2a");
+ px(10,17,44,4,"#2a2230");px(26,17,12,2,"#0d0b12");
+ const fly=(now/1800)%1;if(!reduced&&fly<0.5)px(29,15-fly*24,6,8,"#fff6e0");
+ if(urnHint)for(let i=0;i<5;i++){const life=((now/900)+i*0.2)%1;px(30+Math.sin(now/180+i*2)*4,16-life*14,1,1,i%2?"#ffd23f":"#ff6a1a");}
+ c.restore();
+}
+async function drawUrn(pay){
+ if(drawing)return;
+ drawing=true;urnLast=null;urnShakeUntil=performance.now()+(reduced?0:1200);liveSheet(true);
+ let r=null;
+ try{r=await send({type:"draw",pay});const wait=urnShakeUntil-performance.now();if(wait>0)await new Promise(ok=>setTimeout(ok,wait));}
+ finally{drawing=false;urnShakeUntil=0;}
+ if(!r?.ok||!r.item||!S){liveSheet(true);return;}
+ // The one and only: the screen dims and the legend plays (legend.mjs), then its own reveal card.
+ if(r.mythic){closeSheet();legend.play($(".pad-btn[data-sheet=more]"));return;}
+ const it=W.ITEMS[r.item.id];if(!it){liveSheet(true);return;}
+ urnLast={id:r.item.id,dup:!!r.dup,confetti:r.confetti||0,transfuge:!!r.transfuge};
+ if(sheetKind==="urn"){liveSheet(true);$("#sheet-body .reveal h3")?.focus();}
+ toast(r.dup?`${it.name} : déjà dans ta garde-robe, +${r.confetti} confettis.`:`${it.name} (${W.RARITY_LABEL[it.rarity]}) rejoint ta garde-robe !`,true);
+ if(!r.dup&&RANK_ORDER.indexOf(it.rarity)<=RANK_ORDER.indexOf("epique"))playAnim("win",2500);
+}
+function revealCard(){
+ const d=urnLast,it=W.ITEMS[d.id],box=document.createElement("div"),rays=document.createElement("div"),cv=document.createElement("canvas");
+ box.className=`reveal r-${it.rarity}`;box.style.setProperty("--r",W.RARITY_COLOR[it.rarity]);rays.className="rays";rays.setAttribute("aria-hidden","true");cv.setAttribute("aria-hidden","true");
+ const tag=Object.assign(document.createElement("span"),{className:"tag",textContent:W.RARITY_LABEL[it.rarity]});
+ const h=Object.assign(document.createElement("h3"),{textContent:it.name,tabIndex:-1});
+ box.append(rays,cv,tag,h,fine(it.desc));
+ if(d.dup)box.append(fine(`Déjà dans ta garde-robe : +${d.confetti} confettis.`));
+ else if(d.transfuge)box.append(fine("La carte du camp d'en face… Le fil de la République en parle déjà."));
+ const p=ownLook();
+ portrait(cv,(c,t)=>sprite(c,{...p,outfit:it.kind==="outfit"?d.id:worn().outfit,object:it.kind==="object"?d.id:null},t,"win"),{size:176});
+ const row=document.createElement("div");row.className="btn-row";
+ if(owns(d.id)&&worn()[it.kind]!==d.id)row.append(smallButton(it.kind==="outfit"?"Porter maintenant":"Brandir maintenant","go",()=>wearItem(it.kind,d.id)));
+ row.append(smallButton("Ranger","",()=>{urnLast=null;liveSheet(true);$("#sheet-body .urn-actions .btn")?.focus();}));
+ box.append(row);return box;
+}
+function renderUrn(body,set){
+ const w=S.wardrobe,free=W.freeDrawToday(S);
+ set(W.URN_NAME[S.camp],"Un tirage gratuit par jour, des bulletins à gagner avec les missions, le courrier et les objectifs du jour. Jamais d'argent réel.");
+ const pills=document.createElement("div");pills.className="meta";
+ pills.append(pill(`🎟️ ${plural(w.bulletins,"bulletin")}`),pill(`🎊 ${w.confetti} confetti${w.confetti>1?"s":""}`),pill(free?"🎁 tirage gratuit prêt":"🎁 gratuit demain",free?"good":""));
+ const stage=document.createElement("div"),cv=document.createElement("canvas");stage.className="urn";cv.setAttribute("role","img");cv.setAttribute("aria-label",drawing?"L'urne s'agite…":"L'urne");stage.append(cv);
+ portrait(cv,drawUrnBox,{size:200});
+ body.append(pills,stage);
+ if(urnHint){const h=fine("Une odeur de merguez s'échappe de l'urne…");h.classList.add("urn-hint");body.append(h);}
+ const act=document.createElement("div");act.className="btn-row urn-actions";
+ act.append(smallButton(drawing?"L'urne s'agite…":"Tirage gratuit","go",()=>drawUrn("free"),drawing||!free),smallButton("Tirer · 1 bulletin","",()=>drawUrn("bulletin"),drawing||w.bulletins<1));
+ body.append(act);
+ if(!free&&w.bulletins<1&&!urnLast)body.append(fine(W.drawBlock(S,"bulletin")));
+ if(urnLast&&W.ITEMS[urnLast.id])body.append(revealCard());
+ const odds=document.createElement("div");odds.className="odds";odds.setAttribute("aria-label","Chances par tirage");odds.setAttribute("role","group");
+ for(const [r,p] of Object.entries(W.ODDS)){const d=document.createElement("div"),b=document.createElement("b");b.textContent=`${String(p).replace(".",",")} %`;b.style.color=W.RARITY_COLOR[r];d.append(b,W.RARITY_LABEL[r]);odds.append(d);}
+ body.append(blockTitle("Chances"),odds);
+ const pity=document.createElement("div");pity.className="pity";
+ for(const k of Object.keys(W.PITY)){
+  const n=w.pity?.[k]||0,left=W.PITY[k]-n,row=document.createElement("div"),l=document.createElement("span"),v=document.createElement("b"),bar=document.createElement("div"),fill=document.createElement("i");
+  row.className="pity-row";l.textContent=`${W.RARITY_LABEL[k]} garanti${k==="epique"?" (ou mieux)":""}`;v.textContent=left<=1?"au prochain tirage":`dans ${left} tirages`;row.append(l,v);
+  bar.className="bar";bar.setAttribute("aria-hidden","true");fill.style.width=`${Math.round(100*n/W.PITY[k])}%`;fill.style.background=W.RARITY_COLOR[k];bar.append(fill);   // CSSOM
+  pity.append(row,bar);
+ }
+ body.append(pity,fine(`Un doublon devient des confettis ; ${W.EXCHANGE.cost} confettis s'échangent contre une case commune, rare ou épique dans la Garde-robe.`));
+ const go=document.createElement("div");go.className="btn-row";go.append(smallButton("Ouvrir la garde-robe","",()=>openSheet("wardrobe")));body.append(go);
+}
+
+// ---------- a player's sheet (a tap on the leaderboard or on a duel opponent) ----------
+let playerSel=null;
+function openPlayer(name,opener){playerSel=name;openSheet("player",opener);if(!duelData)duelsLoad();}
+function renderPlayer(body,set){
+ const r=board.find(x=>x.name===playerSel);
+ if(!r){set(playerSel||"Joueur","");body.append(fine("Ce joueur n'apparaît plus au classement."));return;}
+ const mine=r.name===me,p=boardLook(r),holder=batonV?.holder?.name===r.name,volcano=r.object==="baton"||holder,on=typeof r.online==="boolean"?r.online?" · en ligne":" · hors ligne":"";
+ set(`${r.name}${mine?" (toi)":""}`,`${r.camp==="right"?"Droite":"Gauche"} · niveau ${r.lvl}${on}`);
+ const stage=document.createElement("div"),cv=document.createElement("canvas");stage.className=`stage${volcano?" volcano":""}`;
+ const on1=id=>id&&W.ITEMS[id]?W.ITEMS[id].name:"";
+ cv.setAttribute("role","img");cv.setAttribute("aria-label",`${r.candidate}${on1(r.outfit)?`, en ${on1(r.outfit)}`:""}${on1(r.object)?`, avec ${on1(r.object)}`:""}`);stage.append(cv);
+ portrait(cv,(c,t)=>{
+  if(volcano)volcanoRoom(c,t,240);
+  const s=pScratch.getContext("2d");sprite(s,p,t,"idle");c.imageSmoothingEnabled=false;c.drawImage(pScratch,20,volcano?34:24,200,200);
+ },{size:240,raw:true});
+ const kv=document.createElement("dl");kv.className="kv";
+ const item=id=>id&&W.ITEMS[id]?`${W.ITEMS[id].name} (${W.RARITY_LABEL[W.ITEMS[id].rarity]})`:"aucun";
+ const rank=[...board].sort(TABS.score.sort).findIndex(x=>x.name===r.name)+1;
+ for(const [k,v] of [["Élu",r.candidate],["Niveau",String(r.lvl)],["Score",`${r.score} pts${rank?` · ${ordinal(rank)}`:""}`],["Duels",`${plural(r.dw|0,"gagné")} · ${plural(r.dl|0,"perdu")}`],["Tenue",r.outfit?item(r.outfit):"aucune"],["Objet",item(r.object)]]){
+  const dt=document.createElement("dt"),dd=document.createElement("dd");dt.textContent=k;dd.textContent=v;kv.append(dt,dd);
+ }
+ body.append(stage,kv);
+ // The bearer's sheet: the Duel du Bâton (the challenge, or the arena while a duel is on).
+ if(holder||batonDuel()&&[batonDuel().c,batonDuel().b].includes(r.name)){
+  const d=batonDuel(),w=watchable(),row=document.createElement("div");row.className="btn-row";
+  let why="";
+  if(d&&(d.role!=="spectator"||w))row.append(smallButton(d.role==="spectator"?(w==="live"?"🔴 Regarder le duel en direct":"📺 Regarder la rediffusion"):"⚔️ Ouvrir le duel du Bâton","go",()=>openBaton()));
+  else if(holder&&!mine){why=d?"Un duel pour le Bâton est déjà en cours.":typeof batonV.can==="string"?batonV.can:"";row.append(smallButton("⚔️ Défier pour le Bâton","go",batonChallenge,!!why));}
+  if(row.childElementCount)body.append(row);
+  if(why)body.append(fine(why));
+  else if(holder&&!mine&&!d)body.append(fine("Duel de rythme en 3 manches de 45 s, en direct si vous êtes en ligne tous les deux, sinon en différé puis rediffusé à 21 h. Un défi par semaine, sans XP ni FM en jeu."));
+ }
+ if(mine)return;
+ const why=R.duelBlock(S,duelData?.minLevel??R.DUEL.minLevel),o=Array.isArray(duelData?.opponents)?duelData.opponents.find(x=>x?.name===r.name):null;
+ const reason=why||(!duelData?"Chargement des duels…":!o?"Pas d'adversaire possible pour l'instant.":o.ok===false?o.why||"Pas de duel possible pour l'instant.":"");
+ const row=document.createElement("div");row.className="btn-row";
+ row.append(smallButton("Défier en duel","go",()=>challenge(r.name),!!reason));body.append(row);
+ if(reason)body.append(fine(reason));
+}
+
+// ---------- the Bâton de feu's legend (legend.mjs) ----------
+const legend=createLegend({reduced:()=>reduced,
+ drawWinner:(c,t)=>{if(S)sprite(c,{...R.look(S),outfit:worn().outfit,object:"baton"},t,"win");},
+ inert:on=>setBackgroundInert(on),
+ onWear:async()=>{const r=await send({type:"wear",kind:"object",id:"baton"});if(r?.ok)toast("Tu brandis le Bâton de feu des Apprix. Le monde brûle au rythme du hardcore.",true);}});
+
+// ---------- the Duel du Bâton (batonduel.mjs) ----------
+// Nothing of it shows before the staff has been won once: batonV.holder (or a duel) only exists from then on.
+const lookOfName=name=>{const r=board.find(x=>x.name===name);return r?boardLook(r):name===me&&S?look():{...people.left[0],prop:null};};
+bd=createBatonDuel({api,sprite:(c,p,t,st)=>sprite(c,p,t,st),lookOf:lookOfName,reduced:()=>reduced,serverNow,inert:on=>setBackgroundInert(on),
+ toast,view:()=>batonV,setView:v=>setBaton(v),refreshMe:()=>batonReload(),when,onLegend:()=>legend.play($(".pad-btn[data-sheet=more]"))});
+const batonDuel=()=>batonV?.duel&&typeof batonV.duel==="object"?batonV.duel:null;
+function setBaton(v){batonV=v&&typeof v==="object"?v:null;refresh();liveSheet(true);bd.update();syncWatch();}
+// What waits for this player in the duel: an invite, his part to play, her answer.
+function batonTodo(){
+ const d=batonDuel();if(!d)return "";
+ if(d.role==="bearer"&&d.status==="invited")return "invite";
+ if(d.role==="challenger"&&d.status==="c_play")return "play";
+ if(d.role==="bearer"&&(d.status==="b_wait"||d.status==="b_play"))return "answer";
+ return "";
+}
+const batonSig=()=>{const v=batonV,d=batonDuel();return v?`${v.holder?.name||""}|${v.can??""}|${v.warn?1:0}|${d?`${d.id}${d.status}${d.role}`:""}`:"";};
+// Whether the arena has something to show now (a live duel, a replay under way or over).
+const watchable=()=>{const d=batonDuel(),s=screenOf(d,serverNow());return s==="live"||s==="replay"?s:"";};
+let batonTimer=0;
+// The full view comes with /api/me: reloaded (once for a burst of events) when the duel moves.
+function batonReload(){clearTimeout(batonTimer);batonTimer=setTimeout(async()=>{if(!S)return;const r=await api("GET","/api/me");if(r.ok&&S){applyMe(r);setBaton(r.baton??batonV);}},300);}
+async function batonChallenge(){
+ const r=await send({op:"challenge"},"/api/baton");if(!r?.ok)return;
+ if(r.baton)setBaton(r.baton);
+ toast(batonDuel()?.status==="invited"?`${batonDuel().b} est en ligne : le duel lui est proposé en direct.`:"Défi lancé : joue ta partie maintenant.",true);
+ openBaton();
+}
+function openBaton(from){if(!batonDuel())return;closeSheet();bd.open(from||document.activeElement);}
+function batonEvent(v){
+ const d=batonDuel();
+ // Every change brings a view: this player's own (the two players, the bearer), or the public one (no role, no rights:
+ // the ones we had are kept).
+ const pub=v.baton&&typeof v.baton==="object"?v.baton:null;
+ const was=batonTodo();
+ if(pub){const same=pub.duel&&d&&pub.duel.id===d.id;setBaton({...pub,can:"can" in pub?pub.can:batonV?.can,duel:pub.duel?{...pub.duel,role:pub.duel.role||(same?d.role:"spectator")}:null});}
+ if(v.kind==="round"||v.kind==="over"){bd.onEvent(v);return;}
+ // The challenger's part is in: the bearer's turn (the server also sends a push).
+ if(batonTodo()==="answer"&&was!=="answer"&&!bd.isOpen()){const x=batonDuel();banner("⚔️ À toi de défendre le Bâton",`${x.c} a joué sa partie : tu as jusqu'à ${when(x.expires)} pour jouer la tienne, contre son fantôme.`,{label:"Jouer",fn:()=>openBaton()},()=>batonDuel()?.id!==x.id||batonDuel()?.status!=="b_wait");}
+ if(v.kind==="invite"){
+  const d2=batonDuel(),who=typeof v.c==="string"?v.c.slice(0,40):d2?.id===v.id?d2.c:"Un rival",text=`${who} te défie pour le Bâton de feu ! En direct maintenant, ou plus tard (48 h).`;
+  banner("⚔️ Défi pour le Bâton de feu",text,{label:"Répondre",fn:()=>openBaton()},()=>batonDuel()?.id===v.id&&batonDuel()?.status!=="invited");notifyHidden(text,`baton-${v.id}`);
+ }else if(v.kind==="replay")banner("📺 Rediffusion du duel pour le Bâton de feu","Le duel passe dans l'arène, maintenant : viens découvrir qui l'emporte.",{label:"Regarder",fn:()=>openBaton()});
+ else if(v.kind==="freed"){banner("🔥 Le Bâton de feu attend un nouveau maître…","La flamme s'est éteinte : le Bâton est retourné dans l'urne.");if(batonV)setBaton({...batonV,holder:null,mine:false,warn:false,duel:null});if(bd.isOpen())bd.close();}
+ else if(v.kind==="warn")banner("🔥 La flamme du Bâton vacille…","Ta Flamme passe sous 200 : sous 150, le Bâton retournera dans l'urne.");
+}
+// The feed's button: the arena, while there is something to watch.
+function syncWatch(){
+ const b=$("#bd-watch"),w=watchable(),d=batonDuel();if(!b)return;
+ b.hidden=!w;if(w)b.textContent=`${w==="live"?"🔴 En direct":"📺 Rediffusion"} · ${d.c} contre ${d.b} : regarder le duel`;
+}
+setInterval(()=>{if(S)syncWatch();},5000);   // a replay starts at its hour, without any event
+$("#bd-watch").addEventListener("click",e=>openBaton(e.currentTarget));
+// Jouer: the duel under way for its two players (or the arena for the others).
+function renderBatonBlock(body){
+ const d=batonDuel();if(!d)return;
+ const now=serverNow(),w=watchable(),exp=Number(d.expires)||0,mins=ms=>leftLabel(Math.max(0,ms));
+ const sub={invited:d.role==="bearer"?`${d.c} te défie : en direct maintenant, ou plus tard.`:`En attente de la réponse de ${d.b}.`,
+  live:"En direct : la partie se joue maintenant.",
+  c_play:d.role==="challenger"?`Joue ta partie maintenant${exp?` (encore ${mins(exp-now)})`:""}.`:`${d.c} joue sa partie.`,
+  b_wait:d.role==="bearer"?`${d.c} a joué sa partie : à toi${exp?`, avant ${when(exp)}`:""}.`:`À ${d.b} de jouer${exp?`, avant ${when(exp)}`:""}.`,
+  b_play:d.role==="bearer"?"Ta partie est commencée : finis-la.":`${d.b} joue sa partie.`,
+  scheduled:`Rediffusion ${d.replayAt?when(d.replayAt):"ce soir à 21 h"}.`,held:"Vérification par l'arbitre en cours.",done:"Duel terminé.",forfeit:"Duel terminé (sans réponse).",void:"Duel annulé.",annulled:"Duel annulé."}[d.status]||"";
+ body.append(blockTitle("Duel du Bâton"),list(itemButton(`${d.c} contre ${d.b}`,w?`${w==="live"?"En direct":"Rediffusion"} dans l'arène. ${sub}`:sub,batonTodo()?"À toi":w?"Regarder":"Ouvrir",false,()=>openBaton())));
+}
+
 // ---------- what's new ----------
 // After an update, each player sees what changed once (on any device: the server keeps the last release read);
 // closing the sheet, however it is closed, marks it read. The Dossier button shows it again on demand.
@@ -1158,7 +1572,7 @@ function closeSheet(fromBack=false){
  if(sheetKind==="news"&&newsAuto){newsAuto=false;SEEN=RELEASE;markNewsSeen();}
  if(!fromBack&&sheetInHistory){sheetInHistory=false;pendingBack=true;history.back();}
  $("#sheet").hidden=true;sheetKind=null;setBackgroundInert(false);chat.hide();$("#sheet").classList.remove("chat");
- if(authEl.hidden)(sheetOpener||cv).focus();
+ if(authEl.hidden&&!legend.open())(sheetOpener?.isConnected?sheetOpener:cv).focus();   // a board row redrawn meanwhile: back to the screen
 }
 document.querySelectorAll("[data-sheet]").forEach(b=>b.addEventListener("click",()=>{
  if(!S)return;
@@ -1197,7 +1611,7 @@ async function duelsLoad(){
  if(seq!==duelSeq||!S||me!==who)return duelData;             // a newer load, or another player, won the race
  if(r.ok){duelData=r;duelErr="";pushSync(r.pushKey);if(incoming().length)pushAsk();}else duelErr=r.error;
  refresh();
- if(sheetKind==="duels"||(r.ok&&(sheetKind==="play"||sheetKind==="more")))liveSheet(true);
+ if(sheetKind==="duels"||(r.ok&&["play","more","player"].includes(sheetKind)))liveSheet(true);
  return duelData;
 }
 function openDuels(){openSheet("duels");duelsLoad();}
@@ -1252,7 +1666,8 @@ function renderDuels(body,set){
  if(!opps.length)body.append(fine(`Personne à défier pour l'instant : les duels s'ouvrent au niveau ${D.minLevel}.`));
  else body.append(list(...opps.map(o=>{
   const sub=`${o.candidate||"?"} · niv. ${o.lvl??"?"}${o.ok===false&&o.why?` · ${o.why}`:""}`;
-  const b=itemButton(o.name,sub,"Défier",o.ok===false||!!why,()=>challenge(o.name));
+  // A tap opens the rival's sheet (his élu, his record), where « Défier en duel » waits.
+  const b=itemButton(o.name,sub,"Défier ›",false,()=>openPlayer(o.name,b));
   nameWithDot(b.querySelector("b"),o.name,o.online);
   b.classList.add("opp",o.camp==="right"?"right":"left");return b;
  })));
@@ -1435,7 +1850,7 @@ function armRestart(camp,text){
 const authEl=$("#auth");
 let regCamp="left";
 function showAuth(message=""){
- closeSheet();chat.reset();chatFlags(null);es?.close();es=null;S=null;anim=pong=mini=scene=null;newsPending=false;toastQ.length=0;announceQ.length=0;$("#announce").hidden=true;$("#push-ask").hidden=true;pushAskWanted=pushAsked=false;duelData=null;duelErr="";duelSeq++;pushOn=null;pushSynced=false;setNet(true);$("#tips").hidden=true;
+ closeSheet();chat.reset();chatFlags(null);es?.close();es=null;S=null;anim=pong=mini=scene=null;newsPending=false;toastQ.length=0;announceQ.length=0;$("#announce").hidden=true;$("#push-ask").hidden=true;pushAskWanted=pushAsked=false;duelData=null;duelErr="";duelSeq++;pushOn=null;pushSynced=false;setNet(true);$("#tips").hidden=true;urnLast=null;wardSwap=false;urnHint=false;batonV=null;bd.close();
  authEl.hidden=false;setBackgroundInert(true);
  $("#auth-error").textContent=message;regQuizShow(false);$("#camp-note").textContent="";document.body.dataset.camp=regCamp;
  document.querySelectorAll(".camp").forEach(b=>{
@@ -1491,8 +1906,8 @@ async function submitAuth(e,path,extra){
  else{toast(`Bon retour, ${me} !`);maybeShowNews();}
 }
 // The first steps card shows until it is dismissed once on this device.
-function showTips(){let seen=false;try{seen=!!localStorage.getItem("politigo.tips");}catch{}$("#tips").hidden=seen;}
-$("#tips-close").addEventListener("click",()=>{try{localStorage.setItem("politigo.tips","1");}catch{}$("#tips").hidden=true;});
+function showTips(){let seen=false;try{seen=!!localStorage.getItem("politigo.tips.1.6");}catch{}$("#tips").hidden=seen;}
+$("#tips-close").addEventListener("click",()=>{try{localStorage.setItem("politigo.tips.1.6","1");}catch{}$("#tips").hidden=true;});
 $("#form-login").addEventListener("submit",e=>submitAuth(e,"/api/login",{}));
 $("#form-register").addEventListener("submit",e=>submitAuth(e,"/api/register",{camp:regCamp}));
 function endSession(message){me=null;board=[];feed=[];renderFeed();showAuth(message);}
@@ -1515,6 +1930,8 @@ function halloweenHello(){
  toast("🎃 Joyeux Halloween ! La République est hantée jusqu'au 1er novembre : bonbons à la Buvette, costumes la nuit…");
 }
 
+// The running mission's countdown, updated in place: the sheet is not redrawn every game minute.
+function missionClock(){const el=sheetKind==="play"&&S.missions?.cur&&$("#sheet-body .mission-left");if(el){const t=`Retour dans ${leftLabel(A.missionLeft(S))}`;if(el.textContent!==t)el.textContent=t;}}
 // ===================================================================== LOOP
 let lastHud=0,lastDraw=0,lastFrame=0;
 let drawFailed=false,playing=false;
@@ -1532,8 +1949,10 @@ function tickFrame(now){
   // The mini-games run on their own clock, which a scene stops and a hidden tab pauses (one frame is 100 ms at most).
   if(mini&&!scene){const d=Math.min(100,fdt);miniClock+=d;mini.step(miniClock,Math.min(0.05,d/1000));if(mini.over(miniClock))endMini();}
   // Full frame rate only while something moves fast; the idle screen is fine at ~8 fps and saves battery.
-  if(pong||mini||scene||anim||lvlFx||now-lastDraw>=120){lastDraw=now;render(now);}
-  if(now-lastHud>500){lastHud=now;refresh();liveSheet();}
+  if(bd.isOpen())bd.frame(now);
+  else if(pong||mini||scene||anim||lvlFx||now-lastDraw>=120){lastDraw=now;render(now);}
+  if(now-lastHud>500){lastHud=now;refresh();liveSheet();missionClock();}
+  portraitsTick(now);
   // After a game, in order: what the journal kept back (once the game's own result has been read), the news,
   // then the queued toasts one at a time.
   if(!scene&&!quiet()&&!busy){
