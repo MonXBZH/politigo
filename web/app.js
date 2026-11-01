@@ -1666,8 +1666,9 @@ function renderDuels(body,set){
  if(!opps.length)body.append(fine(`Personne à défier pour l'instant : les duels s'ouvrent au niveau ${D.minLevel}.`));
  else body.append(list(...opps.map(o=>{
   const sub=`${o.candidate||"?"} · niv. ${o.lvl??"?"}${o.ok===false&&o.why?` · ${o.why}`:""}`;
-  // A tap opens the rival's sheet (his élu, his record), where « Défier en duel » waits.
-  const b=itemButton(o.name,sub,"Défier ›",false,()=>openPlayer(o.name,b));
+  // Only the rivals one can challenge are live, the others greyed with the reason; a tap challenges at once (the rival's
+  // sheet, his élu and record, opens from the leaderboard).
+  const b=itemButton(o.name,sub,"Défier",o.ok===false||!!why,()=>challenge(o.name));
   nameWithDot(b.querySelector("b"),o.name,o.online);
   b.classList.add("opp",o.camp==="right"?"right":"left");return b;
  })));
