@@ -4,6 +4,20 @@
 import {cmpRelease} from "./rules.mjs";
 
 export const CHANGELOG=[
+ {version:"1.6.0",date:"2026-11-01",
+  added:[
+   "Des missions pour ton élu, entre deux visites : une à la fois, 4 par jour, de 30 minutes à une nuit entière. Tractage au marché ou serrage de mains, gîte coopératif ou thalasso à La Baule, Nuit debout ou soirée au Fouquet's… Elles jouent seulement sur les jauges, jamais sur l'XP, et une notification te prévient quand le rapport t'attend.",
+   "Le courrier des électeurs : une lettre toutes les 30 à 60 minutes, de 7 h à minuit. À toi de choisir la réponse, chacune a ses effets.",
+   "Trois objectifs du jour, tirés chaque matin et récompensés en jauges.",
+   "La Flamme : elle grandit avec ton assiduité, jour après jour, et baisse quand tu délaisses ton élu. On dit qu'elle attire quelque chose…",
+   "La Tombola de la Fête à gauche, la Loterie du Gala à droite : un tirage gratuit par jour, puis des bulletins gagnés en jouant (missions, objectifs, courrier). Jamais d'argent réel.",
+   "La Garde-robe (Dossier) : une dizaine de tenues par camp, des objets à brandir, cinq raretés, des tirages garantis, et des confettis pour tes doublons, à échanger contre la pièce de ton choix. Purement cosmétique.",
+   "Au classement, chaque élu apparaît en petit, avec sa tenue et son objet. Touche-le pour ouvrir sa fiche : l'élu en grand, son niveau et ses duels gagnés et perdus."
+  ],
+  fixed:[],
+  admin:[
+   "La fiche d'un joueur montre sa Flamme, ses bulletins, ses confettis et sa Garde-robe, et les événements rares remontent dans « À traiter »."
+  ]},
   {version:"1.5.3",date:"2026-10-31",
   added:[],
   fixed:[

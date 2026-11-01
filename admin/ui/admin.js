@@ -32,7 +32,10 @@ const DUEL_STATUS={c_play:"le lanceur joue",pending:"en attente du défié",d_pl
 const DUEL_RES={win:"victoire",loss:"défaite",tie:"égalité",chicken:"refusé ou sans réponse"};
 const EVENT={halloween:"Halloween"};
 const VIA={cli:"console",web:"web",schedule:"planif."};
-const FEED_KIND={announce:"annonce",duel:"duel"};
+const FEED_KIND={announce:"annonce",duel:"duel",mythic:"mythique",ultra:"ultra rare",transfuge:"transfuge",baton:"duel du Bâton"};
+const BATON_STATUS={invited:"invitation en direct",live:"en direct",c_play:"le lanceur joue",b_wait:"en attente du porteur",b_play:"le porteur joue",scheduled:"rediffusion prévue",
+ done:"terminé",held:"à valider",void:"annulé",annulled:"annulé par l'organisation",forfeit:"porteur sans réponse"};
+const RARITY={commun:"Commun",rare:"Rare",epique:"Épique",legendaire:"Légendaire",ultra:"Ultra rare",mythique:"Mythique"};
 // The two chat rooms, each switched on by the admin (closed by default).
 const chatState=r=>!r?"—":r.global&&r.camp?"Tous les salons":r.global?"Pour tous":r.camp?"De camp":"Fermé";
 const tr=(map,v)=>v==null?"—":map[v]??String(v);
@@ -192,7 +195,7 @@ document.addEventListener("visibilitychange",()=>{if(!document.hidden&&route().i
 // Polled every 20 s on every server, the page hidden or not: the count heads the menu and the tab's title, a new item
 // chimes (sound on) and, the console in the background, shows a system notification (HTTPS or localhost only: browsers
 // refuse it on plain http). "Vu" files an item away on its game server, for every console.
-const ALERT_MS=20000,KIND={chat:"Chat",duel:"Duel",bot:"Bot",suspect:"Comptes"},BASE_TITLE=document.title,SOUND_KEY="politigo-admin-sound";
+const ALERT_MS=20000,KIND={chat:"Chat",duel:"Duel",bot:"Bot",suspect:"Comptes",mythic:"Mythique",baton:"Duel du Bâton"},BASE_TITLE=document.title,SOUND_KEY="politigo-admin-sound";
 const alertLink=a=>a.kind==="chat"?"#chat":a.kind==="suspect"?"#duels":`#joueurs/${a.ref}`;
 let alerts=new Map(),alertsKnown=null,alertsT=null,audio=null;   // server id -> {items,acked,error}; "server|key" seen so far (null: first poll)
 const soundOn=()=>{try{return localStorage.getItem(SOUND_KEY)!=="off";}catch{return true;}};
@@ -250,7 +253,7 @@ async function viewAlerts(){
    h("div",{class:"btn-row"},h("h2",{},multi()?s.name:"Alertes"),items.length>1&&can("alerts-ack")?h("button",{class:"btn small",type:"button",onclick:e=>ack(s.id,items.map(a=>a.key),e.currentTarget)},"Tout marquer comme vu"):null),
    st.error?h("p",{class:"err"},st.error):null,
    items.length?h("div",{class:"list"},items.map(a=>h("div",{class:"alert-item"},
-    h("div",{class:"btn-row"},h("span",{class:`badge ${a.kind==="chat"?"warn":"bad"}`},KIND[a.kind]||a.kind),h("b",{},a.title),a.t?h("span",{class:"muted small"},fmt(a.t)):null),
+    h("div",{class:"btn-row"},h("span",{class:`badge ${a.kind==="chat"?"warn":a.kind==="mythic"||a.kind==="baton"?"mythic":"bad"}`},KIND[a.kind]||a.kind),h("b",{},a.title),a.t?h("span",{class:"muted small"},fmt(a.t)):null),
     a.detail?h("p",{class:"wrap muted small"},a.detail):null,
     h("div",{class:"btn-row"},h("button",{class:"btn small go",type:"button",onclick:()=>open(s.id,a)},"Ouvrir"),
      can("alerts-ack")&&h("button",{class:"btn small",type:"button",onclick:e=>ack(s.id,[a.key],e.currentTarget)},"Vu"))))):empty("Rien à traiter."),
@@ -258,7 +261,7 @@ async function viewAlerts(){
  });
  return [h("div",{class:"view-head"},h("h1",{},"À traiter"),h("div",{class:"btn-row"},h("span",{class:"muted small"},"vérifié toutes les 20 s, sur tous les serveurs"),refreshBtn())),
   h("div",{class:"card"},h("h2",{},"Me prévenir"),snd,perm,
-   h("p",{class:"muted small"},"Signalements du chat, duels signalés par l'anti-triche, joueurs au score de bot élevé (50/100 et plus) et groupes de duels suspects.")),
+   h("p",{class:"muted small"},"Signalements du chat, duels signalés par l'anti-triche, joueurs au score de bot élevé (50/100 et plus), groupes de duels suspects et gain d'un objet mythique.")),
   ...blocks];
 }
 
@@ -394,6 +397,8 @@ async function viewPlayer(id){
     ["En ligne",p.online?"oui":"non"],["Sessions",String(p.sessions??"—")],["Abonnements notif.",String(p.pushSubs??"—")],["Suspendu",p.suspended?"oui":"non"])),
    h("div",{class:"card"},h("h2",{},"Partie"),kv(["Niveau",String(p.lvl??"—")],["XP",String(p.xp??"—")],["Score",String(p.score??"—")],["Fonds (FM)",String(p.fm??"—")],["Morts",String(p.deaths??"—")],
     ...GAUGES.map(([k,l])=>[l,p[k]==null?"—":String(Math.round(p[k]))])))),
+  wardrobeCard(p),
+  batonCard(p,self),
   h("div",{class:"card"},h("h2",{},"Derniers duels"),p.duels?.length?h("div",{class:"table-wrap"},h("table",{},
    h("thead",{},h("tr",{},["Date","Contre","Rôle","Statut","Résultat","Signaux",""].map(t=>h("th",{},t)))),
    h("tbody",{},p.duels.map(d=>h("tr",{},h("td",{class:"nowrap"},fmt(d.created)),h("td",{},who(d.vs)),h("td",{},d.role==="challenger"?"lanceur":d.role==="defender"?"défié":d.role??"—"),
@@ -402,6 +407,37 @@ async function viewPlayer(id){
   p.games&&!p.activity?.games?h("div",{class:"card"},h("h2",{},"Mini-jeux (14 jours)"),gamesTable(p.games)):null,
   h("div",{class:"card"},h("h2",{},"Activité et mini-jeux (14 jours)"),p.activity?botReport(p.activity,false):empty("Pas de rapport d'activité.")),
  ];
+}
+
+// The player's cosmetics (Garde-robe): never money nor XP, just what they own and wear. The owner alone can put the
+// mythic staff back in the urn (a win to undo after a cheat, say).
+function wardrobeCard(p){
+ const w=p.wardrobe;if(!w)return null;
+ const name=x=>x?`${x.name}${x.rarity?` (${RARITY[x.rarity]||x.rarity})`:""}`:"rien";
+ const counts=Object.entries(RARITY).map(([k,l])=>[l,w.own.filter(x=>x.rarity===k).length]).filter(([,n])=>n);
+ const reset=owner()&&w.baton?h("button",{class:"btn small danger",type:"button",onclick:e=>{const b=e.currentTarget;confirmBox("Remettre le Bâton dans l'urne ?",
+  `${p.name} perd le Bâton de feu des Apprix ; il redevient gagnable au tirage par tous les joueurs.`,"Remettre dans l'urne").then(ok=>ok&&act(b,()=>call("mythic-reset"),"Le Bâton est de retour dans l'urne."));}},"Remettre le Bâton dans l'urne"):null;
+ return h("div",{class:"card"},h("div",{class:"btn-row"},h("h2",{},"Garde-robe"),w.baton?h("span",{class:"badge mythic"},"🔥 Porteur du Bâton de feu"):null),
+  h("dl",{class:"kv"},[["Flamme",String(w.flame)],["Bulletins",String(w.bulletins)],["Confettis",String(w.confetti)],["Tirages",String(w.draws)],
+   ["Objets possédés",`${w.own.length}${counts.length?` (${counts.map(([l,n])=>`${l} ${n}`).join(", ")})`:""}`],["Tenue portée",name(w.worn?.outfit)],["Objet porté",name(w.worn?.object)]]
+   .flatMap(([k,v])=>[h("dt",{},k),h("dd",{},v)])),
+  w.own.length?h("p",{class:"wrap muted small"},w.own.map(x=>x.name).join(" · ")):null,
+  reset?h("div",{class:"btn-row"},reset):null);
+}
+
+// The player's duels for the Bâton: a held one (the anti-cheat flagged a part) waits for a judgement, with the right
+// to annul duels: accepted, its result applies (the staff may move); rejected, nothing moves.
+function batonCard(p,self){
+ const list=p.batonDuels||[];if(!list.length)return null;
+ const judge=(d,accept)=>h("button",{class:`btn small ${accept?"go":"danger"}`,type:"button",onclick:e=>{const b=e.currentTarget;
+  confirmBox(accept?"Valider ce duel du Bâton ?":"Annuler ce duel du Bâton ?",accept?`Duel #${d.id} : son résultat s'applique tel quel, le Bâton peut changer de mains.`:`Duel #${d.id} : annulé, le Bâton reste où il est.`,accept?"Valider":"Annuler le duel")
+   .then(ok=>ok&&act(b,()=>call("baton-judge",{id:d.id,accept}),accept?"Duel validé.":"Duel annulé."));}},accept?"Valider le résultat":"Annuler (rien ne bouge)");
+ return h("div",{class:"card"},h("h2",{},"Duels du Bâton"),h("div",{class:"table-wrap"},h("table",{},
+  h("thead",{},h("tr",{},["Date","Contre","Rôle","Mode","Statut","Résultat","Signaux",""].map(t=>h("th",{},t)))),
+  h("tbody",{},list.map(d=>h("tr",{},h("td",{class:"nowrap"},fmt(d.created)),h("td",{},who(d.vs)),h("td",{},d.role==="challenger"?"lanceur":"porteur"),
+   h("td",{},d.mode==="live"?"en direct":"en différé"),h("td",{},tr(BATON_STATUS,d.status)),h("td",{},tr(DUEL_RES,d.res)),
+   h("td",{},flagBadges((d.flags||[]).map(x=>({...x,name:`${x.name}, manche ${x.n+1}`})))||"—"),
+   h("td",{},d.status==="held"&&can("duel-annul")&&!self?h("div",{class:"btn-row"},judge(d,true),judge(d,false)):null)))))));
 }
 
 // ===================================================================== Annonces
