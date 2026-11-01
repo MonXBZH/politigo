@@ -133,6 +133,10 @@ sur les **jauges** (et rapportent des bulletins pour la Tombola).
   possibles, chacune avec ses effets.
 - 🎯 **Objectifs du jour** : trois défis tirés chaque matin (« Militant modèle », « Agenda de ministre »…), récompensés
   en jauges.
+<p align="center">
+  <img src="docs/images/sheet-missions.png" width="240" alt="Les missions : une en cours, les autres au catalogue, avec leurs effets sur les jauges">
+</p>
+
 - 🔥 **La Flamme** : elle grandit avec ton assiduité, jour après jour. Des jauges tenues au-dessus de 50 toute la journée,
   les objectifs remplis, des visites étalées, quelques missions et lettres : jusqu'à 10 points par jour. Une journée
   sans visite la fait baisser, une mort politique aussi. On dit qu'elle attire quelque chose…
@@ -147,8 +151,8 @@ dans la main. **Purement cosmétique** : aucun effet sur le jeu, et **jamais d'a
 - 🌈 **Cinq raretés** : commun (60 %), rare (28 %), épique (9,5 %), légendaire (2 %) et ultra rare (0,5 %). Un tirage
   garanti épique au 10ᵉ sans en voir, légendaire au 50ᵉ, ultra rare au 80ᵉ.
 - 🎊 **Les doublons deviennent des confettis**. 100 confettis s'échangent contre la case commune, rare ou épique de ton choix.
-- 👔 **La Garde-robe** (Dossier) : une dizaine de tenues par camp, de la *Marinière made in France* au *Front populaire, 1936*,
-  du *Blazer de club nautique* au *Général, 1958*, et une bonne trentaine d'objets à brandir. La tenue se superpose à
+- 👔 **La Garde-robe** (Dossier) : une dizaine de tenues par camp, du *Bleu de travail* au *Front populaire, 1936*,
+  du *Pull sur les épaules* au *Général, 1958*, et une bonne trentaine d'objets à brandir. La tenue se superpose à
   tous les personnages de la collection.
 
 | La Tombola de la Fête | Un tirage | La Garde-robe, à gauche | La Garde-robe, à droite | Les objets |

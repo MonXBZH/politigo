@@ -409,5 +409,7 @@ powershell -ExecutionPolicy Bypass -File tools\screenshots.ps1 -AdminUrl http://
 docker run --rm -v "$PWD:/w" -w /w node:24-alpine node tools/make-sources.mjs
 ```
 
-Le script de captures crée cinq joueurs de démonstration, puis les supprime. Il refuse de tourner sur une base qui contient
+Le script de captures crée cinq joueurs de démonstration, puis les supprime. Leur Garde-robe ne contient que la première
+pièce de chaque rareté (rien d'autre ne doit apparaître dans le README) ; la capture d'un tirage, tiré au hasard, n'est
+gardée que s'il donne une de ces pièces, sinon l'ancienne image reste. Il refuse de tourner sur une base qui contient
 déjà des joueurs (`-Force` seulement sur une pile jetable) : ne jamais le lancer sur le serveur de production.
