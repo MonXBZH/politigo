@@ -162,7 +162,7 @@ dans la main. **Purement cosmétique** : aucun effet sur le jeu, et **jamais d'a
   répondues.
 - 🌈 **Cinq raretés** : commun (60 %), rare (28 %), épique (9,5 %), légendaire (2 %) et ultra rare (0,5 %). Un tirage
   garanti épique au 10ᵉ sans en voir, légendaire au 50ᵉ, ultra rare au 80ᵉ.
-- 🎊 **Les doublons deviennent des confettis**. 100 confettis s'échangent contre la case commune, rare ou épique de ton choix.
+- 🎊 **Les doublons deviennent des confettis**. Ils s'échangent contre la case de ton choix : 100 pour une commune, 200 pour une rare, 300 pour une épique.
 - 👔 **La Garde-robe** (Dossier) : une vingtaine de tenues par camp, du *Bleu de travail* au *Front populaire, 1936*,
   du *Pull sur les épaules* au *Général, 1958*, et une cinquantaine d'objets à brandir. La tenue se superpose à
   tous les personnages de la collection.

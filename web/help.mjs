@@ -65,7 +65,7 @@ export const HELP=[
   ["Un tirage gratuit par jour, puis un bulletin par tirage.",
    `Chances : ${rarities.map(r=>`${RARITY_LABEL[r].toLowerCase()} ${pct(ODDS[r])}`).join(", ")}.`,
    `Tirages garantis : ${RARITY_LABEL.epique.toLowerCase()} (ou mieux) au ${PITY.epique}ᵉ tirage sans en voir, ${RARITY_LABEL.legendaire.toLowerCase()} au ${PITY.legendaire}ᵉ, ${RARITY_LABEL.ultra.toLowerCase()} au ${PITY.ultra}ᵉ.`,
-   `Un doublon devient des confettis (${rarities.map(r=>CONFETTI[r]).join(", ")} selon la rareté) ; ${EXCHANGE.cost} confettis s'échangent contre une pièce commune, rare ou épique de ton choix.`],
+   `Un doublon devient des confettis (${rarities.map(r=>CONFETTI[r]).join(", ")} selon la rareté) ; ${EXCHANGE.cost.commun}, ${EXCHANGE.cost.rare} ou ${EXCHANGE.cost.epique} confettis s'échangent contre une pièce commune, rare ou épique de ton choix.`],
   "La Garde-robe range tes tenues et tes objets : touche-en un pour le porter, touche-le de nouveau pour l'enlever. Une tenue s'enfile par-dessus tous les personnages de la collection."]},
  {id:"events",title:"Les événements",parts:[
   "De temps en temps, l'organisation lance un événement pour quelques heures : XP doublée, missions sans limite, soldes à la Buvette, nuit des duels… Un bandeau l'annonce en haut de l'écran, avec le temps restant. Touche-le pour en lire le détail.",

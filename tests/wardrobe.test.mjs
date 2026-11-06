@@ -100,16 +100,23 @@ test("a duplicate turns into confetti; 100 confetti buy a missing commun, rare o
  assert.equal(S.wardrobe.own.filter(id=>id===first.item.id).length,1);
  const r=game();r.wardrobe.own=["camarade"];r.wardrobe.pity.ultra=79;r.wardrobe.bulletins=1;
  assert.equal(play(r,{type:"draw",pay:"bulletin"},10,never).confetti,100,"an ultra duplicate is worth 100");
+ assert.deepEqual(W.EXCHANGE.cost,{commun:100,rare:200,epique:300});
+ S.wardrobe.confetti=299;
+ assert.match(play(S,{type:"exchange",id:"urne"}).error,/300 confettis/,"épique");
+ S.wardrobe.confetti=199;
+ assert.match(play(S,{type:"exchange",id:"giletjaune"}).error,/200 confettis/,"rare");
  S.wardrobe.confetti=99;
- assert.match(play(S,{type:"exchange",id:"urne"}).error,/100 confettis/);
- S.wardrobe.confetti=250;
+ assert.match(play(S,{type:"exchange",id:"kway"}).error,/100 confettis/,"commun");
+ S.wardrobe.confetti=350;
  assert.match(play(S,{type:"exchange",id:"cle"}).error,/ne s'échange pas/,"légendaire");
  assert.match(play(S,{type:"exchange",id:"sacre"}).error,/ne s'échange pas/,"the other camp's");
  assert.match(play(S,{type:"exchange",id:"camarade"}).error,/ne s'échange pas/,"ultra");
  assert.match(play(S,{type:"exchange",id:"baton"}).error,/ne s'échange pas/);
  assert.match(play(S,{type:"exchange",id:first.item.id}).error,/Déjà/);
  const ok=play(S,{type:"exchange",id:"giletjaune"});assert.ok(ok.ok);assert.equal(S.wardrobe.confetti,150);assert.ok(S.wardrobe.own.includes("giletjaune"));
- const T=game("right");T.wardrobe.confetti=100;assert.ok(play(T,{type:"exchange",id:"giletjaune"}).ok,"the gilet jaune is in both camps");
+ S.wardrobe.confetti=300;assert.ok(play(S,{type:"exchange",id:"urne"}).ok);assert.equal(S.wardrobe.confetti,0);
+ S.wardrobe.confetti=100;assert.ok(play(S,{type:"exchange",id:"kway"}).ok);assert.equal(S.wardrobe.confetti,0);
+ const T=game("right");T.wardrobe.confetti=200;assert.ok(play(T,{type:"exchange",id:"giletjaune"}).ok,"the gilet jaune is in both camps");
 });
 
 test("wear: owned items only, of the right kind; null takes it off",()=>{
