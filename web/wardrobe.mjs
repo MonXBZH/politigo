@@ -79,7 +79,7 @@ export const ODDS={commun:60,rare:28,epique:9.5,legendaire:2,ultra:0.5};
 export const PITY={epique:10,legendaire:50,ultra:80};
 export const CONFETTI={commun:5,rare:10,epique:25,legendaire:50,ultra:100,mythique:100};
 export const EXCHANGE={cost:100,rarities:["commun","rare","epique"]};
-export const MYTHIC={item:"baton",minDays:30,minFlame:300,base:0.01,step:0.001,per:10,cap:0.03};
+export const MYTHIC={item:"baton",minDays:21,minFlame:300,base:0.01,step:0.001,per:10,cap:0.03};
 const rank=r=>RARITIES.indexOf(r);
 const DRAWN=["commun","rare","epique","legendaire","ultra"];
 // The items a player of a camp can draw or exchange: the shared ones (pool "all") and the camp's own.

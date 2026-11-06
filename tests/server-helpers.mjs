@@ -16,7 +16,7 @@ export const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 export const dayNow=(now=Date.now())=>R.dayKey(Math.floor(now/R.H));
 export const yesterday=(now=Date.now())=>R.dayKey(Math.floor(now/R.H)-24);
 // The server's own turn limit (server.mjs: DUEL_TURN_MS).
-export const DUEL_TURN_MS=R.MINI.debate.ms+R.DEBATE.intro+R.MINI_RULES.graceSeconds*1000;
+export const DUEL_TURN_MS=R.MINI.debate.ms+R.DEBATE.maxPoints*R.DEBATE.gain+R.DEBATE.intro+R.MINI_RULES.graceSeconds*1000;
 
 export function boot(port,dir,extra={},db="t.db"){
  const env={...process.env,PORT:String(port),DB_PATH:join(dir,db),POLITIGO_INVITE:INVITE,COOKIE_SECURE:"0",PROXY_HOPS:"1",SWEEP_MS:"200",PRESENCE_MS:"50",BOARD_MS:"50",POLITIGO_DEBATE_MS:"3000",
@@ -32,13 +32,14 @@ let ipSeq=0;
 export function client(port){
  let cookie="";const ip=`10.7.${ipSeq>>8}.${ipSeq++&255}`;
  const call=async(method,path,body)=>{
-  const r=await fetch(`http://127.0.0.1:${port}${path}`,{method,headers:{...(body!==undefined?{"Content-Type":"application/json"}:{}),...(cookie?{Cookie:cookie}:{}),"X-Forwarded-For":ip},
+  const r=await fetch(`http://127.0.0.1:${port}${path}`,{method,headers:{...(body!==undefined?{"Content-Type":"application/json"}:{}),...(cookie?{Cookie:cookie}:{}),...(c.ua?{"User-Agent":c.ua}:{}),"X-Forwarded-For":ip},
    body:body===undefined?undefined:JSON.stringify(body)});
   const set=r.headers.get("set-cookie");if(set)cookie=set.split(";")[0].endsWith("=")?"":set.split(";")[0];
   let json=null;try{json=await r.json();}catch{}
   return {status:r.status,json};
  };
- return {call,port,get cookie(){return cookie;}};
+ const c={call,port,ua:null,get cookie(){return cookie;}};   // ua: the client's User-Agent, Node's own ("node") when null
+ return c;
 }
 export async function player(port,name,camp="left"){
  const c=client(port),r=await c.call("POST","/api/register",{name,password:PW,invite:INVITE,camp});

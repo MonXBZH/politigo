@@ -1,22 +1,31 @@
 // Missions, voter mail, daily goals and the Flamme (the long-run "ferveur" meter). Same effects in both camps, only
-// the names change. Gauges only (clamped 0-100) and bulletins for the Tombola / Loterie: never XP, never FM.
+// the names change. Gauges (clamped 0-100) and bulletins for the Tombola / Loterie, never FM; only the missions pay XP.
 // rules.mjs bindings are only used inside functions (the modules import each other).
-import {clamp,dayKey,curIdx,hodOf,clockOf,isAsleep,fxText,logEntry} from "./rules.mjs";
+import {clamp,dayKey,curIdx,hodOf,clockOf,isAsleep,fxText,logEntry,addXp} from "./rules.mjs";
 
 const MIN=60000,HOUR=60*MIN;
 // ===================================================================== DATA
 export const MISSIONS=[
  {id:"tract",left:"Tractage au marché",right:"Serrage de mains au marché",ms:30*MIN,fx:{moral:12,energy:-8}},
  {id:"ag",left:"AG à la Bourse du travail",right:"Petit-déjeuner avec la CCI",ms:HOUR,fx:{moral:10,sat:10,energy:-10}},
+ {id:"tribune",left:"Tribune dans L'Humanité",right:"Tribune dans Le Figaro",ms:HOUR,fx:{moral:12,energy:-6}},
+ {id:"perm",left:"Permanence à la Maison du peuple",right:"Permanence à la mairie",ms:1.5*HOUR,fx:{moral:10,sat:5,energy:-10}},
+ {id:"repas",left:"Repas de quartier",right:"Banquet du Rotary",ms:2*HOUR,fx:{sat:30,moral:5,energy:-8,hyg:-5}},
  {id:"piquet",left:"Piquet de grève solidaire",right:"Visite d'une PME qui exporte",ms:2*HOUR,fx:{moral:20,energy:-15,hyg:-10}},
  {id:"fete",left:"Concert à la Fête de l'Huma",right:"Gala de charité au polo",ms:3*HOUR,fx:{moral:25,sat:15,energy:-20,hyg:-15}},
  {id:"repos",left:"Retraite en gîte coopératif",right:"Thalasso à La Baule",ms:4*HOUR,fx:{energy:30,hyg:20,moral:5,sat:-10}},
+ {id:"univ",left:"Université d'été",right:"Campus de rentrée",ms:6*HOUR,fx:{moral:20,sat:10,energy:-25}},
  // Heads or tails at report time: a win, or a public flop.
  {id:"risque",left:"Manif sauvage",right:"Débat télé face à l'opposition",ms:2*HOUR,fx:{moral:25},risk:{p:0.5,fx:{moral:-15,hyg:-10}}},
  // Only from 20:00 to 23:59 (game clock), even with the light off: it is the night out.
  {id:"nuit",left:"Nuit debout place de la République",right:"Soirée au Fouquet's",ms:8*HOUR,fx:{moral:20,energy:-30},night:true}
 ];
-export const MISSION_RULES={perDay:4,minEnergy:15,nightFrom:20};
+export const MISSION_RULES={perDay:6,minEnergy:15,nightFrom:20,bulletinsPerDay:6,xpPerTier:10};
+// The pay follows the time away (tier 1 up to 1 h, 2 under 4 h, 3 beyond), win or flop: the shortest mission must
+// not be the best deal. XP comes with every report; a mission's bulletins only once a day, within the daily cap.
+export const missionTier=m=>m.ms<=HOUR?1:m.ms<4*HOUR?2:3;
+export const missionXp=m=>missionTier(m)*MISSION_RULES.xpPerTier;
+export const missionTime=ms=>{const h=Math.floor(ms/HOUR),m=Math.round(ms%HOUR/MIN);return !h?`${m} min`:m?`${h} h ${String(m).padStart(2,"0")}`:`${h} h`;};
 export const missionOf=id=>MISSIONS.find(m=>m.id===id)||null;
 export const missionName=(m,camp)=>(typeof m==="string"?missionOf(m):m)?.[camp]??"";
 
@@ -42,7 +51,17 @@ export const LETTERS={
   L("l_reglement","Mme Lefèvre, professeure retraitée","J'ai regardé la séance de l'Assemblée hier. Douze rappels au règlement en une heure. C'est une matière au bac ?",
    [["Défendre l'obstruction parlementaire",{moral:4,energy:-3},"Elle a lu le règlement en entier : elle a des questions."],["Promettre une séance calme",{moral:6},"La séance suivante a duré quatre heures. Calmement."]]),
   L("l_rich","Théo, start-upper à Station F","Je suis de gauche, mais ma levée de fonds de 3 M€ me fait douter. C'est grave docteur ?",
-   [["Lui parler de la taxe Zucman",{moral:6},"2 % au-delà de 100 M€ : il est rassuré, il en est loin."],["Lui proposer d'adhérer",{moral:8,hyg:2},"Il a adhéré par Apple Pay. Le trésorier est perplexe."]])
+   [["Lui parler de la taxe Zucman",{moral:6},"2 % au-delà de 100 M€ : il est rassuré, il en est loin."],["Lui proposer d'adhérer",{moral:8,hyg:2},"Il a adhéré par Apple Pay. Le trésorier est perplexe."]]),
+  L("l_hopital","Aïcha, infirmière à Nantes","On m'a applaudie à 20 h en 2020. Depuis, j'ai un service en moins et trois gardes en plus.",
+   [["Promettre un nouveau Ségur",{moral:6},"Le Ségur de la santé, c'était 2020 : 183 € net par mois. Elle a fait le calcul."],["Passer une nuit aux urgences",{moral:9,energy:-6},"Six heures sur un brancard du couloir. Côté patient."]]),
+  L("l_huma","Marcel, 71 ans, Saint-Denis","Je vends L'Humanité depuis 1974. Mes clients sont morts ou à la Fête. On fait quoi ?",
+   [["Acheter un numéro",{moral:6,sat:2},"Il rend la monnaie en vignettes de la Fête."],["Proposer une version TikTok",{moral:5,energy:-3},"Marcel a demandé ce qu'était un TikTok. Puis s'il y avait un abonnement."]]),
+  L("l_vote16","Zoé, 17 ans, Rennes","Je veux voter à 16 ans. Mon père dit que je ne range même pas ma chambre.",
+   [["Promettre le vote à 16 ans",{moral:7},"En Autriche, c'est le cas depuis 2007. La chambre reste en débat."],["Lui expliquer la démocratie participative",{moral:5,energy:-3},"Sa chambre a voté : trois voix contre, une abstention."]]),
+  L("l_ter","Yann, Quimper","Ma ligne de TER ferme, on me propose un car. Le car est en grève. Je fais comment ?",
+   [["Exiger un plan rail",{moral:6},"Le plan est prêt. Le train, non."],["Prendre le car avec lui",{moral:8,energy:-5},"Deux heures de route : un vrai moment de lutte."]]),
+  L("l_panier","Élodie, maraîchère bio","Mon panier coûte plus cher qu'au discount, et mes électeurs font leurs courses au discount.",
+   [["Défendre le bio à la cantine",{moral:6,sat:2},"Loi Egalim : 20 % de bio visés en cantine. L'objectif attend encore à table."],["Acheter un panier",{sat:8,moral:3},"Trois poireaux, une betterave et une grande conviction."]])
  ],
  right:[
   L("r_impots","Hervé, chef d'entreprise à Cholet","Je paie 45 % d'impôts sur le revenu et mon rond-point n'a toujours pas de sculpture.",
@@ -62,7 +81,17 @@ export const LETTERS={
   L("r_35h","Philippe, artisan boulanger","Je travaille 60 h par semaine, mon apprenti 35 h. C'est lui le patron ?",
    [["Promettre d'assouplir les 35 heures",{moral:7},"Loi Aubry, 2000 : toujours là, assouplie déjà vingt fois."],["Acheter dix croissants",{sat:8,moral:4},"Pur beurre. Le boulanger sourit, l'apprenti est en pause."]]),
   L("r_golf","Arnaud, Deauville","Mon club de golf veut taxer les voiturettes électriques. C'est le communisme qui commence ?",
-   [["Le rassurer : c'est l'écologie",{moral:4,energy:2},"Il compte rouler au diesel jusqu'au trou 18."],["Venir jouer neuf trous avec lui",{moral:8,energy:-6},"Score : 54. Les électeurs du club ont apprécié l'effort."]])
+   [["Le rassurer : c'est l'écologie",{moral:4,energy:2},"Il compte rouler au diesel jusqu'au trou 18."],["Venir jouer neuf trous avec lui",{moral:8,energy:-6},"Score : 54. Les électeurs du club ont apprécié l'effort."]]),
+  L("r_chasse","Gontran, Sologne","On veut m'interdire de chasser le dimanche. C'est le seul jour où je ne vois pas ma belle-mère.",
+   [["Défendre la ruralité",{moral:7},"Environ un million de chasseurs en France : ça pèse, dimanche compris."],["Venir à la battue",{moral:8,energy:-6},"Vous avez vu un sanglier. Il n'a pas l'air de voter."]]),
+  L("r_toit","Marie-Laure, Sarlat","Mon manoir perd ses tuiles. Le Loto du Patrimoine m'a donné de l'espoir, pas de toiture.",
+   [["Promettre un crédit d'impôt",{moral:6},"Le Loto du Patrimoine existe depuis 2018. Le toit, depuis 1640."],["Porter une tuile pour la photo",{moral:8,energy:-5},"Elle est tombée. Sur le pied du maire."]]),
+  L("r_cerfa","Didier, expert-comptable à Angers","J'ai rempli le même Cerfa quatre fois. Le cinquième me demande pourquoi j'en remplis autant.",
+   [["Annoncer un guichet unique",{moral:6},"Le guichet unique a son propre formulaire."],["Supprimer un formulaire en direct",{moral:8,energy:-3},"Il a été remplacé par deux autres."]]),
+  L("r_socio","Héloïse, Versailles","Ma fille veut faire sociologie. Où ai-je raté ?",
+   [["Lui parler d'une école de commerce",{moral:6},"12 000 € l'année. Elle y lit Bourdieu dans le hall."],["La rassurer sur Sciences Po",{moral:7,hyg:2},"Ça forme des ministres, à droite comme à gauche. C'est bien le problème."]]),
+  L("r_urssaf","Alain, restaurateur à Dijon","L'Urssaf m'a écrit pour mes charges, ma serveuse pour sa démission. Même recommandé.",
+   [["Promettre une baisse des charges",{moral:6},"Les allègements sur les bas salaires existent depuis 1993. Il en veut encore."],["Déjeuner chez lui",{sat:8,moral:4},"Bœuf bourguignon. Vous avez fini à la plonge."]])
  ]
 };
 export const MAIL={gapMin:30*MIN,gapMax:60*MIN,quietTo:7,bulletinEvery:3,first:30*MIN};
@@ -85,8 +114,8 @@ const keys=g=>Object.keys(g.need),combo=g=>keys(g).length>1;
 const goalNeed=g=>combo(g)?keys(g).length:g.need[keys(g)[0]];
 const goalHave=(g,n)=>combo(g)?keys(g).filter((_,i)=>n>>i&1).length:Math.min(n,goalNeed(g));
 
-// The Flamme: a finished calendar day scores at most 10. A day without a visit burns 10 %, a death 25 %.
-export const FLAME={gauges:3,goals:3,visits:2,visitsMin:4,spanH:8,missions:1,missionsMin:2,letters:1,lettersMin:3,idle:0.9,death:0.75,gaugeMin:50};
+// The Flamme: a finished calendar day scores at most 15. A day without a visit burns 10 %, a death 25 %.
+export const FLAME={gauges:4,goals:4,visits:3,visitsMin:4,spanH:8,missions:2,missionsMin:2,letters:2,lettersMin:3,idle:0.9,death:0.75,gaugeMin:50};
 export const flameOf=S=>Math.floor(S.flame?.pts||0);
 
 // ===================================================================== STATE
@@ -95,7 +124,7 @@ const flameLog=S=>({hours:[],min:minGauge(S),missions:0,letters:0,goals:0});
 // The new fields of a fresh state (rules.mjs freshState); goals are drawn at the first advance (they need random).
 export function freshActivities(S,now){
  const d=dayKey(Math.floor(now/HOUR));
- return {missions:{cur:null,day:d,n:0},mail:{next:now+MAIL.first,letter:null,day:d,n:0},goals:{day:-1,list:[]},
+ return {missions:{cur:null,day:d,n:0,paid:[],b:0},mail:{next:now+MAIL.first,letter:null,day:d,n:0},goals:{day:-1,list:[]},
   flame:{pts:0,day:d,log:flameLog(S)}};
 }
 // Re-derives the stored fields over o (a fresh state of the same camp): nothing malformed survives a load.
@@ -104,7 +133,8 @@ export function sanitizeActivities(s,o){
  const day=v=>int(v,-1,99991231,-1),V=o.vclock;
  const m=s.missions;
  if(m&&typeof m==="object"){
-  o.missions.day=day(m.day);o.missions.n=int(m.n,0,MISSION_RULES.perDay,0);
+  o.missions.day=day(m.day);o.missions.n=int(m.n,0,MISSION_RULES.perDay,0);o.missions.b=int(m.b,0,MISSION_RULES.bulletinsPerDay,0);
+  o.missions.paid=Array.isArray(m.paid)?MISSIONS.map(x=>x.id).filter(id=>m.paid.includes(id)):[];
   const c=m.cur,def=c&&missionOf(c.id);
   if(def&&Number.isFinite(c.start)&&c.start<=V&&c.start>=0)o.missions.cur={id:def.id,start:c.start,end:c.start+def.ms,notified:c.notified===true};
  }
@@ -135,13 +165,22 @@ export function sanitizeActivities(s,o){
 // ===================================================================== READ-ONLY CHECKS
 const today=S=>dayKey(curIdx(S));
 export const missionsToday=S=>S.missions.day===today(S)?S.missions.n:0;
+export const bulletinsToday=S=>S.missions.day===today(S)?S.missions.b:0;
+// What this mission's report would pay right now. why: "repeat" (its bulletins already won today), "cap" (the day's
+// bulletins all won), "" otherwise.
+export function missionPay(S,m){
+ const xp=missionXp(m),left=Math.max(0,MISSION_RULES.bulletinsPerDay-bulletinsToday(S));
+ if(S.missions.day===today(S)&&S.missions.paid.includes(m.id))return {xp,bulletins:0,why:"repeat"};
+ return {xp,bulletins:Math.min(missionTier(m),left),why:left?"":"cap"};
+}
+export const payText=({xp,bulletins})=>`+${xp} XP${bulletins?`, +${bulletins} bulletin${bulletins>1?"s":""}`:""}`;
 export const missionReady=S=>!!S.missions.cur&&S.vclock>=S.missions.cur.end;
 export const missionLeft=S=>S.missions.cur?Math.max(0,S.missions.cur.end-S.vclock):0;
 // Why this mission cannot start now ("" when it can).
 export function missionBlock(S,id){
  const m=missionOf(id);if(!m)return "Mission inconnue.";
  if(S.missions.cur)return missionReady(S)?"Lis d'abord le rapport de la mission précédente.":"Une mission à la fois : la précédente n'est pas finie.";
- if(missionsToday(S)>=MISSION_RULES.perDay)return "Quatre missions par jour maximum.";
+ if(missionsToday(S)>=MISSION_RULES.perDay)return `${MISSION_RULES.perDay} missions par jour maximum.`;
  if(m.night){const h=clockOf(S.vclock).hour;return h>=MISSION_RULES.nightFrom?"":"Celle-ci se lance le soir, de 20 h à minuit.";}
  if(isAsleep(S))return S.sleeping?"Il fait la sieste : rallume la lumière d'abord.":"Chut, il dort.";
  if(S.energy<MISSION_RULES.minEnergy)return "Trop fatigué pour partir en mission : un café ou une sieste d'abord.";
@@ -170,7 +209,7 @@ export function progress(S,kind,k=1){
 }
 // A paid visit (rules.mjs registerVisit): its hour for the Flamme, and the goals.
 export function onVisit(S){const h=hodOf(curIdx(S));if(S.flame.log.hours.length<24)S.flame.log.hours.push(h);progress(S,"visits");}
-// The finished day's Flamme points (at most 10).
+// The finished day's Flamme points (at most 15).
 export function dayScore(lg,goalsDone){
  if(!lg.hours.length)return 0;
  let p=0;
@@ -195,7 +234,7 @@ export function rollDay(S,d,random){
   }
   f.day=d;f.log=flameLog(S);
  }
- if(S.missions.day!==d){S.missions.day=d;S.missions.n=0;}
+ if(S.missions.day!==d){S.missions.day=d;S.missions.n=0;S.missions.paid=[];S.missions.b=0;}
  if(S.mail.day!==d){S.mail.day=d;S.mail.n=0;}
  if(S.goals.day!==d){
   const pool=GOALS.map(g=>g.id);for(let i=pool.length-1;i>0;i--){const j=Math.floor(random()*(i+1));[pool[i],pool[j]]=[pool[j],pool[i]];}
@@ -213,17 +252,19 @@ export function missionStart(S,id){
  const e=missionBlock(S,id);if(e)return fail(e);
  const m=missionOf(id);
  S.missions.cur={id,start:S.vclock,end:S.vclock+m.ms,notified:false};S.missions.day=today(S);S.missions.n++;
- logEntry(S,"mission",`En mission : ${m[S.camp]} (${m.ms<HOUR?m.ms/MIN+" min":m.ms/HOUR+" h"}).`,{id,start:true});
+ logEntry(S,"mission",`En mission : ${m[S.camp]} (${missionTime(m.ms)}).`,{id,start:true});
  return {ok:true,end:S.missions.cur.end};
 }
 export function missionReport(S,random){
  const c=S.missions.cur;if(!c)return fail("Aucune mission en cours.");
  if(S.vclock<c.end)return fail("La mission n'est pas finie : son rapport arrive bientôt.");
  const m=missionOf(c.id),ok=!m.risk||random()<m.risk.p,fx=ok?m.fx:m.risk.fx;
- applyFx(S,fx);bulletin(S);S.flame.log.missions++;S.missions.cur=null;
- logEntry(S,"mission",`Rapport de mission, ${m[S.camp]}${m.risk?ok?" : coup réussi !":" : ça a mal tourné.":""} ${fxText(fx)}, +1 bulletin.`,{id:m.id,ok});
+ const {xp,bulletins}=missionPay(S,m);
+ applyFx(S,fx);addXp(S,xp);bulletin(S,bulletins);S.flame.log.missions++;S.missions.cur=null;S.missions.b+=bulletins;
+ if(!S.missions.paid.includes(m.id))S.missions.paid.push(m.id);
+ logEntry(S,"mission",`Rapport de mission, ${m[S.camp]}${m.risk?ok?" : coup réussi !":" : ça a mal tourné.":""} ${fxText(fx)}, ${payText({xp,bulletins})}.`,{id:m.id,ok});
  progress(S,"missions");
- return {ok:true,report:{id:m.id,fx,ok}};
+ return {ok:true,report:{id:m.id,fx,ok,xp,bulletins}};
 }
 export function mailAnswer(S,id,choice,random){
  const l=S.mail.letter;if(!l||l.id!==id)return fail("Pas de lettre en attente.");

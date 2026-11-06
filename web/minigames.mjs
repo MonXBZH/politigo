@@ -196,7 +196,7 @@ function cortege(g,K,drawCand){
 }
 
 // ===================================================================== L'ÉPERVIER (right: the candidate and a CRS catch protesters crossing the square)
-const EP={ms:35000,speed:225,ally:95,catchR:30,zoneL:118,zoneR:348,lives:3,flight:950,lead:.75,fireMs:2000,fireR:34};
+const EP={ms:35000,speed:225,ally:95,catchR:30,zoneL:118,zoneR:348,lives:3,flight:950,lead:.75,fireMs:2000,fireR:34,reportMin:8000,reportMax:12000,reportMs:6000};
 // Who throws what: black blocs favour molotovs, the others mostly paving stones; pensioners and journalists never throw.
 const THROW={bloc:.8,plain:.2,gilet:.2};
 // Catching these costs points: the press, and colleagues working undercover.
@@ -207,7 +207,7 @@ function spawnProt(g,side,y){
 }
 function epervier(g,K,drawCand){
  const {ctx}=K,hw=g.season==="halloween";
- Object.assign(g,{x:C,y:250,vx:0,vy:0,hp:EP.lives,inv:-Infinity,hitT:-Infinity,throws:[],fires:[],rubble:[],points:0,caught:0,press:0,cops:0,wave:0,
+ Object.assign(g,{x:C,y:250,vx:0,vy:0,hp:EP.lives,inv:-Infinity,hitT:-Infinity,throws:[],fires:[],rubble:[],reports:[],nextReport:g.t0+rnd(g,EP.reportMin,EP.reportMax),points:0,caught:0,press:0,cops:0,wave:0,
   waveT:g.t0+1600,side:0,prot:[],ally:{x:C+30,y:320,hitT:-Infinity,flip:false},swingT:-Infinity,shoutT:-Infinity,reinfT:-Infinity,why:""});
  for(let i=0;i<5;i++)g.prot.push(spawnProt(g,0,150+i*50));
  g.score=()=>Math.max(0,g.points);
@@ -261,6 +261,12 @@ function epervier(g,K,drawCand){
   g.fires=g.fires.filter(f=>now-f.born<EP.fireMs);g.rubble=g.rubble.filter(r=>now-r.t<1500);
   if(g.fires.some(f=>dist(f.x,f.y,g.x,g.y-6)<EP.fireR))hurt("Ça brûle !");
   if(g.endT)return;
+  // The Épervier's merguez: an incident report lying on the ground for a few seconds gives a life back.
+  if(now>=g.nextReport){g.nextReport=now+rnd(g,EP.reportMin,EP.reportMax);const [x,y]=inCircle(rnd(g,EP.zoneL+24,EP.zoneR-24),rnd(g,170,390),24);g.reports.push({x,y,born:now});}
+  g.reports=g.reports.filter(r=>{
+   if(now-r.born>=EP.reportMs)return false;
+   if(dist(r.x,r.y,g.x,g.y-8)>=EP.catchR)return true;
+   if(g.hp<EP.lives)g.hp++;K.floater("Rapport d'incident : bavure couverte ! ♥",r.x,r.y-14,"#ef6c89",now);return false;});
   // A wave is over: the next one runs back; when nobody is left, reinforcements join from the cortège.
   if(!g.waveT&&!g.prot.some(m=>m.state==="run"||m.state==="caught")){
    g.side=1-g.side;g.waveT=now+1400;
@@ -293,7 +299,13 @@ function epervier(g,K,drawCand){
   ctx.fillStyle=Math.floor(now/250)%2?"#3c7cf0":"#8fb6ff";ctx.fillRect(220,40,26,7);
   if(hw){ctx.fillStyle="#3b1d5e59";ctx.fillRect(0,0,W,W);}   // in costume: dusk over the square
   K.text(`${g.caught}`,233,104,"700 11px Inter, sans-serif","#fff6ea");
-  // On the ground: where each projectile will land (the ring closes in), fires and fallen stones.
+  // On the ground: the incident reports (they blink before going), where each projectile will land (the ring closes
+  // in), fires and fallen stones.
+  for(const r of g.reports){
+   if(until-r.born>EP.reportMs-1500&&Math.floor(until/150)%2)continue;
+   ctx.fillStyle="#f6f1e4";ctx.fillRect(r.x-9,r.y-12,18,23);ctx.fillStyle="#2f4c8f";ctx.fillRect(r.x-9,r.y-12,18,5);
+   ctx.fillStyle="#685a67";ctx.fillRect(r.x-6,r.y-4,12,2);ctx.fillRect(r.x-6,r.y,12,2);ctx.fillStyle="#c23b4a";ctx.fillRect(r.x-1,r.y+4,8,4);
+  }
   for(const s of g.throws){const a=Math.min(1,(until-s.t0)/s.ms),r=(s.type==="molotov"?EP.fireR:26)*(1.5-.5*a);ctx.strokeStyle=s.type==="molotov"?`rgba(${hw?"110,230,80":"255,120,40"},${.3+.6*a})`:`rgba(40,40,50,${.25+.5*a})`;ctx.lineWidth=2;ctx.beginPath();ctx.ellipse(s.x1,s.y1,r,r*.45,0,0,7);ctx.stroke();}
   for(const f of g.fires){const age=until-f.born,k=Math.max(0,age<200?age/200:age>EP.fireMs-400?(EP.fireMs-age)/400:1);
    const gr=ctx.createRadialGradient(f.x,f.y,0,f.x,f.y,EP.fireR*1.3);gr.addColorStop(0,`rgba(${hw?"120,235,90":"255,170,60"},${.55*k})`);gr.addColorStop(1,hw?"rgba(60,200,60,0)":"rgba(255,90,30,0)");ctx.fillStyle=gr;ctx.beginPath();ctx.ellipse(f.x,f.y,EP.fireR*1.3,EP.fireR*.7,0,0,7);ctx.fill();
@@ -370,7 +382,7 @@ function debate(g,K,drawCand){
   if(Number.isInteger(r.errors))g.errors=r.errors;
   if(Number.isFinite(r.leftMs))g.endAt=now+Math.max(0,r.leftMs);
   if("choice" in body){
-   if(g.points>p0){g.flashT=now;g.flashOk=true;K.floater("+1",C+150,160,"#9be59b",now);}
+   if(g.points>p0){g.flashT=now;g.flashOk=true;K.floater(`+1 · +${String(D.gain/1000).replace(".",",")} s`,C+130,160,"#9be59b",now);}
    else if(g.errors>e0){g.flashT=now;g.flashOk=false;K.floater(r.miss==="decoy"?"Hors sujet ! −1 s":r.miss==="opponent"?"Ligne de l'adversaire ! −1 s":"Hors de la ligne ! −1 s",C,206,"#ff9aa5",now);}
    else if(r.ignored)K.floater("Lis d'abord la question !",C,206,"#ffd59a",now);
   }
@@ -389,7 +401,7 @@ function debate(g,K,drawCand){
   else if(left(now)<=0)call({});
  };
  g.draw=now=>{
-  const lft=g.camp==="left",accent=lft?"#ef7c91":"#7fa8f8",rest=left(now),frac=rest/ms;
+  const lft=g.camp==="left",accent=lft?"#ef7c91":"#7fa8f8",rest=left(now),frac=Math.min(1,rest/ms);
   ctx.fillStyle="#141b2a";ctx.fillRect(0,0,W,W);
   ctx.fillStyle=lft?"#583345":"#2d4265";ctx.beginPath();ctx.arc(C,C,200,0,7);ctx.fill();
   ctx.lineWidth=12;ctx.strokeStyle=lft?"#ffb2c21c":"#b4ceff1c";for(const r of [150,185]){ctx.beginPath();ctx.arc(C,330,r,Math.PI,2*Math.PI);ctx.stroke();}
@@ -438,7 +450,7 @@ function debate(g,K,drawCand){
    const pending=g.failed?"Partie close par l'arbitre.":"Score compté par l'arbitre à la fin du temps.";
    if(g.duel){
     const n=v=>Number.isFinite(v)?v:0;
-    const last=!res?pending:res.res==="win"?`Victoire ${n(res.mine)} à ${n(res.theirs)} !`:res.res==="loss"?`Défaite ${n(res.mine)} à ${n(res.theirs)}.`
+    const last=!res?pending:res.res==="win"?`Victoire ${n(res.mine)} à ${n(res.theirs)}${n(res.mine)===n(res.theirs)?", moins d'erreurs":""} !`:res.res==="loss"?`Défaite ${n(res.mine)} à ${n(res.theirs)}${n(res.mine)===n(res.theirs)?", plus d'erreurs":""}.`
      :res.res==="tie"?`Match nul, ${n(res.mine)} partout.`:"Score envoyé : ton rival a 24 h pour répondre.";
     K.endPanel("Fin du duel !",[tally,`Fidélité à la ligne : ${rate} %`,last],accent);
    }else K.endPanel(great?"Débat remporté !":g.points>=9?"Match nul sur le plateau":"Recadré par le parti",

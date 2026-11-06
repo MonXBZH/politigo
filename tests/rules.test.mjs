@@ -92,13 +92,13 @@ test("the Pong result is checked by the server",()=>{
 
 test("level-ups, evolutions and the coronation are journaled for the browser and the feed",()=>{
  const S=game();
- S.lvl=5;S.xp=R.xpFloor(6)-1;play(S,{type:"debate"},10);
+ S.lvl=5;S.xp=R.xpFloor(6)-1;play(S,{type:"pongStart"},10);
  const lv=S.journal.find(j=>j.k==="level");
  assert.ok(lv&&lv.d.lvl===S.lvl&&S.lvl>=6,"one entry per gain, naming the level reached");
- S.lvl=9;S.xp=R.xpFloor(10)-1;play(S,{type:"debate"},10.1);
+ S.lvl=9;S.xp=R.xpFloor(10)-1;play(S,{type:"pongStart"},10.1);
  const ev=S.journal.find(j=>j.k==="evolve");
  assert.deepEqual([ev.d.from,ev.d.to,ev.d.lvl],["Olivier Faure","Raphaël Glucksmann",S.lvl]);assert.ok(S.lvl>=10);
- S.lvl=99;S.xp=R.xpFloor(100)-1;play(S,{type:"debate"},12.2);
+ S.lvl=99;S.xp=R.xpFloor(100)-1;play(S,{type:"pongStart"},12.2);
  assert.equal(S.journal.find(j=>j.k==="legend")?.d.name,"Jean-Luc Mélenchon");
 });
 
@@ -157,7 +157,7 @@ function simulate(visitHours,activities){
   R.advance(S,at(h),1,Math.random);
   const hod=R.hodOf(R.curIdx(S));
   if(!visitHours.includes(hod))continue;
-  for(let k=0;k<activities;k++)play(S,{type:"debate"},h);
+  for(let k=0;k<activities;k++)play(S,{type:"manifStart"},h);
   const t=hod===visitHours.at(-1)?95:75,buy=k=>play(S,{type:"buy",key:k},h).ok;
   while(S.sat<t&&S.fm>=1&&buy(S.fm>=3?"meal":"soup"));
   while(S.hyg<t&&buy("soap"));

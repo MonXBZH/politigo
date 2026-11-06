@@ -251,11 +251,11 @@ test("debateRounds: the new count parameter defaults to QUESTIONS.length",()=>{
 });
 
 test("replayDebate: the same deal and score as before the event (fixed seed)",()=>{
- assert.deepEqual(R.debateRounds(R.seeded(424242),6),[
+ assert.deepEqual(R.debateRounds(R.seeded(424242),6,32),[   // the 32 questions of that time
   {i:4,order:[0,1,2]},{i:7,order:[1,2,0]},{i:5,order:[1,2,0]},{i:18,order:[1,2,0]},{i:9,order:[0,1,2]},{i:16,order:[1,0,2]}]);
  const picks=[[0,300],[1,700],[2,1100],[0,1500],[1,1900],[2,2300]];
- assert.deepEqual(R.replayDebate(424242,"left",picks),{points:2,errors:4,last:2300});
- assert.deepEqual(R.replayDebate(424242,"right",picks),{points:2,errors:4,last:2300});
+ assert.deepEqual(R.replayDebate(424242,"left",picks,32),{points:2,errors:4,last:2300});
+ assert.deepEqual(R.replayDebate(424242,"right",picks,32),{points:2,errors:4,last:2300});
  // The right answers for the camp score every pick.
  const rounds=R.debateRounds(R.seeded(424242),6);
  for(const camp of ["left","right"]){

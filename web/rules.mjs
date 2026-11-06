@@ -140,7 +140,29 @@ export const QUESTIONS=[
  ["Les assistés ?","Ça n'existe pas","Au boulot, les fainéants !","Assistés par ordinateur"],
  ["Les bobos ?","Notre électorat","Des rebelles en trottinette","Un pansement et ça passe"],
  ["Le service militaire ?","Jamais de la vie","Obligatoire, en rangers","En pyjama, le dimanche"],
- ["La fraude ?","La fraude fiscale d'abord","La fraude aux allocs d'abord","Frauder au loto"]
+ ["La fraude ?","La fraude fiscale d'abord","La fraude aux allocs d'abord","Frauder au loto"],
+ ["Le nucléaire ?","Sortir de l'atome","Six EPR de plus","Une centrale par commune"],
+ ["La dette ?","Elle attendra","Rembourser d'abord","La payer en Pokémon"],
+ ["L'immigration ?","Régulariser les sans-papiers","Quotas et expulsions","Un visa pour les pigeons"],
+ ["L'agriculture ?","Petites fermes bio","Moins de normes","Vaches en télétravail"],
+ ["Les GAFAM ?","Les taxer à la source","Les laisser innover","Les inviter à dîner"],
+ ["Les institutions ?","VIᵉ République","Un président fort","Monarchie tournante"],
+ ["Le RSA ?","Le revaloriser","15 h d'activité obligatoires","Le verser en coquillages"],
+ ["La SNCF ?","Service public d'abord","Ouvrir à la concurrence","Des trains à voile"],
+ ["Les profs ?","Les augmenter","Les évaluer","Les cloner"],
+ ["L'université ?","Gratuite pour tous","Sélection à l'entrée","Diplôme à la tombola"],
+ ["Les éoliennes ?","Partout où ça souffle","Pas dans mon jardin","L'éolienne de poche"],
+ ["La chasse ?","Pas le dimanche","Une tradition à défendre","Chasse au dahu"],
+ ["La défense ?","La paix par le dialogue","Budget à 3 % du PIB","Une armée de pigeons"],
+ ["Les dividendes ?","Les taxer plus fort","Récompenser le risque","Les payer en bons d'achat"],
+ ["Les déserts médicaux ?","Obliger à s'installer","Liberté d'installation","Un médecin par rond-point"],
+ ["Le pouvoir d'achat ?","Bloquer les prix","Baisser les impôts","Acheter moins"],
+ ["Les étudiants ?","Un revenu étudiant","L'apprentissage dès 14 ans","Couvre-feu à 19 h"],
+ ["Les aides aux entreprises ?","Les conditionner","Baisser les impôts de production","En liquide, au guichet"],
+ ["La TVA ?","Zéro sur l'essentiel","TVA sociale","Payable en nature"],
+ ["Les écolos ?","L'avenir de la planète","Des Khmers verts","Des plantes vertes"],
+ ["Les banlieues ?","Des moyens pour les quartiers","Le Kärcher","Un rond-point de plus"],
+ ["Le Sénat ?","Le supprimer","Le respecter","En faire un Ehpad"]
 ];
 // What each answer of a question is, in QUESTIONS order.
 export const ANSWER_KINDS=["left","right","decoy"];
@@ -208,9 +230,10 @@ export function pongLine(camp,event="",random=Math.random){
 // a state (advance, act); the browser imports the same module for the read-only checks it displays.
 export const H=3600000;
 export const ECO={income:2,cap:99,nightEnd:6,awake:{sat:13,moral:4,energy:8,hyg:6},night:{sat:4,moral:2,energy:-15,hyg:2}};
-// Tuned by simulation: 6 visits + 6 activities a day reach level 100 on day 15 (mini-game bonuses aside: with good
-// scores, around day 11-13); 3 bare visits survive and reach it on day ~39.
-export const XP={base:5,visit:25,visitGap:2,visitsPerDay:8,activity:30,actsPerVisit:2,actsPerDay:8,deathHours:12,
+// Tuned by simulation: 6 visits + 6 activities a day reach level 100 around day 15 (mini-game bonuses aside: with good
+// scores, around day 11-13); 3 bare visits survive and reach it on day ~39. What an activity pays when it starts is
+// each game's xp (PONG_RULES, MINI): the harder the game, the more.
+export const XP={base:5,visit:25,visitGap:2,visitsPerDay:8,actsPerVisit:2,actsPerDay:8,deathHours:12,
  excellent:50,correct:25,a:17,b:1.15,streakStep:0.01,streakCap:0.25,stressMin:0.03,stressMax:0.15,napFactor:0.5};
 // The hourly stress risk follows his moral: 3 % at full moral, 15 % at rock bottom. A sulking candidate spirals.
 export const stressChance=S=>XP.stressMin+(XP.stressMax-XP.stressMin)*(100-S.moral)/100;
@@ -220,7 +243,7 @@ export const DOUBLE={odds:0.5,moral:12,energy:12,window:H,stressFactor:2};
 // The Pong is played in the browser, so its result is checked: no more than ~1.5 returns a second, within 90 s.
 // maxScore is the game's own physics: a perfect tracker over 20 s makes ~23 returns (the bubble speeds up 6 % a
 // return up to 480 px/s); "suspect" is where a score gets flagged for the admin.
-export const PONG_RULES={ms:20000,intro:0,maxScore:25,suspect:22,minSeconds:2,timeoutSeconds:90,returnsPerSecond:1.5,bonusPerReturn:1,bonusCap:10};
+export const PONG_RULES={xp:25,ms:20000,intro:0,maxScore:25,suspect:22,minSeconds:2,timeoutSeconds:90,returnsPerSecond:1.5,bonusPerReturn:1,bonusCap:10};
 // Mini-games played in the browser (results checked like the Pong's): one per camp for the "Manif", and the
 // timed debate behind "Débattre". The bonus comes on top of the activity XP; a score is capped by the time really
 // played (from the start, minus the intro, at most the game's length: never the waiting time), at a human pace,
@@ -229,16 +252,16 @@ export const PONG_RULES={ms:20000,intro:0,maxScore:25,suspect:22,minSeconds:2,ti
 // (umbrella 1.3 s every 6 s): ~230 for a superhuman run, 241 by the pace cap; Épervier ~55 if every runner of
 // ~8 waves were caught, ~25 for a very good human.
 export const MINI={
- debate:{label:"Débat chrono",camp:null,ms:15000,intro:1300,maxScore:30,perSecond:2.5,bonusRate:1,bonusCap:20,great:18,suspect:21},
- cortege:{label:"Le Cortège",camp:"left",ms:30000,intro:0,maxScore:250,perSecond:8,bonusRate:0.25,bonusCap:30,great:120,suspect:220},
- epervier:{label:"L'Épervier",camp:"right",ms:35000,intro:0,maxScore:60,perSecond:2,bonusRate:2,bonusCap:30,great:15,suspect:40}
+ debate:{label:"Débat chrono",camp:null,xp:0,ms:15000,intro:1300,maxScore:30,perSecond:2.5,bonusRate:2.5,bonusCap:50,great:24,suspect:31},
+ cortege:{label:"Le Cortège",camp:"left",xp:35,ms:30000,intro:0,maxScore:250,perSecond:8,bonusRate:0.25,bonusCap:35,great:140,suspect:220},
+ epervier:{label:"L'Épervier",camp:"right",xp:35,ms:35000,intro:0,maxScore:60,perSecond:2,bonusRate:2,bonusCap:35,great:18,suspect:40}
 };
 // The debate's clock: a 1.3 s countdown, then 15 s of play; a wrong answer costs a second, and a pick shows for
 // 260 ms. Refereed by the server: an answer given less than minReact after its question was sent is ignored (and
 // flagged), a game never scores more than maxPoints; the flags tell the admin about too perfect a game. reflexMs: a
 // steady pace is only suspect from regularPoints up (a steady hand scoring little beats nobody). A
 // median answer time (network and the 260 ms flash included) under it over reflexMin answers reads faster than anyone.
-export const DEBATE={intro:1300,penalty:1000,flash:260,minReact:600,maxPoints:20,zeroErrors:12,regularMin:8,regularCv:0.15,regularPoints:10,reflexMs:850,reflexMin:10};
+export const DEBATE={intro:1300,penalty:1000,gain:1500,flash:260,minReact:600,maxPoints:30,zeroErrors:25,regularMin:8,regularCv:0.15,regularPoints:10,reflexMs:850,reflexMin:10};
 // Duels (PvP, played one after the other within 24 h): both players get the same debate, dealt from a seed the
 // server draws, and the server replays each player's picks. A duel score is computed, never taken on trust.
 // A win pays at most paidWins times a day; a lost duel never costs a level nor pushes a gauge under "floor".
@@ -389,7 +412,7 @@ export function itemBlock(S,it){
 // ---------- mutations (server side) ----------
 function ensureDay(S){if(!sameDay(S)){S.visitDay=dayKey(curIdx(S));S.visitsToday=0;S.actsToday=0;}}
 function ensureWindow(S){if(curIdx(S)-S.actWindow>=XP.visitGap){S.actWindow=curIdx(S);S.actsVisit=0;}}
-function addXp(S,v){
+export function addXp(S,v){
  const before=S.lvl;
  S.xp=Math.max(xpFloor(S.lvl),S.xp+v);              // XP can fall, but never below the current level
  while(S.lvl<100&&S.xp>=xpFloor(S.lvl+1))S.lvl++;
@@ -406,7 +429,7 @@ function registerVisit(S){
  if(isAsleep(S)||curIdx(S)-S.lastVisit<XP.visitGap||S.visitsToday>=XP.visitsPerDay)return false;
  S.visitsToday++;S.lastVisit=curIdx(S);S.actsVisit=0;S.actWindow=curIdx(S);addXp(S,XP.visit);ACT.onVisit(S);return true;
 }
-function spendActivity(S){ensureDay(S);ensureWindow(S);S.energy=clamp(S.energy-8);S.moral=clamp(S.moral+10);S.actsVisit++;S.actsToday++;addXp(S,XP.activity);}
+function spendActivity(S,xp){ensureDay(S);ensureWindow(S);S.energy=clamp(S.energy-8);S.moral=clamp(S.moral+10);S.actsVisit++;S.actsToday++;addXp(S,xp);}
 function applyItem(S,it){
  S.fm-=it.price;
  for(const [k,v] of Object.entries(it.fx))S[k]=clamp(S[k]+v);
@@ -436,10 +459,10 @@ function stressHit(S,random,factor=1){
  log(S,"stress",`${factor>1?`Quitte ou double perdu ! Stress ×${factor}`:"Stress"} de ${p.name} : ${s.trigger}. « ${s.line} » (moral −${hit})`,{name:p.name,i,factor});
 }
 // A death (or a resignation) restarts at level 1 in place: the object identity is kept for the server cache.
-// Cosmetics survive whole; the Flamme loses a quarter. The day's goals and its counters (missions started, letters
-// answered) are kept: a resignation must not deal a fresh set of goals, nor more missions, hence more bulletins.
+// Cosmetics survive whole; the Flamme loses a quarter. The day's goals and its counters (missions started and paid,
+// letters answered) are kept: a resignation must not deal a fresh set of goals, nor more missions, hence more bulletins.
 function die(S,reason,camp=S.camp,random=Math.random){
- const day={goals:S.goals,mDay:S.missions.day,mN:S.missions.n,lDay:S.mail.day,lN:S.mail.n};
+ const day={goals:S.goals,mDay:S.missions.day,mN:S.missions.n,mPaid:S.missions.paid,mB:S.missions.b,lDay:S.mail.day,lN:S.mail.n};
  const name=person(S).name,keep={journal:S.journal,jn:S.jn,deaths:S.deaths+1,best:S.best,bestStreak:S.bestStreak,equipped:S.equipped,treatDay:S.treatDay,
   wardrobe:S.wardrobe,flame:{...S.flame,pts:Math.round(S.flame.pts*ACT.FLAME.death*100)/100}};
  const fresh=Object.assign(freshState(camp,S.vclock),keep,{lastReal:S.lastReal,diedAt:S.vclock});
@@ -448,7 +471,7 @@ function die(S,reason,camp=S.camp,random=Math.random){
  log(S,"death",reason==="resign"
   ?`Démission de ${name}. Nouveau départ au niveau 1 avec ${person(S).name}.`
   :`Mort politique de ${name} : ${XP.deathHours} h avec une jauge à zéro. Nouveau départ au niveau 1.`,{name,reason,camp});
- S.goals=day.goals;S.missions.day=day.mDay;S.missions.n=day.mN;S.mail.day=day.lDay;S.mail.n=day.lN;
+ S.goals=day.goals;S.missions.day=day.mDay;S.missions.n=day.mN;S.missions.paid=day.mPaid;S.missions.b=day.mB;S.mail.day=day.lDay;S.mail.n=day.lN;
  ACT.rollDay(S,dayKey(curIdx(S)),random);
 }
 // Brings a state up to real time (speed > 1 only on a test server). Returns true when an hour ticked.
@@ -518,24 +541,24 @@ function actOn(S,a,{now,speed=1,random=Math.random,event="",mythic=null}){
  }
  case "debate":case "pongStart":{
   const e=activityBlock(S);if(e)return fail(e);
-  const visit=registerVisit(S);spendActivity(S);
+  const visit=registerVisit(S);spendActivity(S,type==="debate"?MINI.debate.xp:PONG_RULES.xp);
   if(type==="debate"){
    // The seed stays on the server, in the turn (hidden): the browser only ever sees one question at a time.
    const seed=newSeed(random),id=gameId(random),line=pongLine(S.camp,event,random);   // the game first: the same in costume
    S.rematchT=S.vclock;S.mini={k:"debate",t:now,id};S.pong=null;
-   log(S,"act",`Débat chrono : +${XP.activity} XP, énergie −8, moral +10${visit?`, visite +${XP.visit} XP`:""}.`,{kind:"debate",line,visit});
+   log(S,"act",`Débat chrono : énergie −8, moral +10${visit?`, visite +${XP.visit} XP`:""}.`,{kind:"debate",line,visit});
    return hidden(done({visit,game:{k:"debate",id}}),"turn",debateNew(seed,S.camp,{count:debateCount(event),now,id}));
   }
   const seed=newSeed(random),id=gameId(random);
   S.pong={t:now,seed,id};S.mini=null;S.rematchT=-1;
-  log(S,"act",`Pong des arguments : +${XP.activity} XP${visit?`, visite +${XP.visit} XP`:""}.`,{kind:"pong",visit});
+  log(S,"act",`Pong des arguments : +${PONG_RULES.xp} XP${visit?`, visite +${XP.visit} XP`:""}.`,{kind:"pong",visit});
   return done({visit,game:{k:"pong",id,seed}});
  }
  case "manifStart":{
   const e=activityBlock(S);if(e)return fail(e);
-  const visit=registerVisit(S);spendActivity(S);
-  const k=manifGame(S),seed=newSeed(random),id=gameId(random);S.mini={k,t:now,seed,id};S.pong=null;S.rematchT=-1;
-  log(S,"act",`${MINI[k].label} : +${XP.activity} XP${visit?`, visite +${XP.visit} XP`:""}.`,{kind:"manif",game:k,visit});
+  const k=manifGame(S),visit=registerVisit(S);spendActivity(S,MINI[k].xp);
+  const seed=newSeed(random),id=gameId(random);S.mini={k,t:now,seed,id};S.pong=null;S.rematchT=-1;
+  log(S,"act",`${MINI[k].label} : +${MINI[k].xp} XP${visit?`, visite +${XP.visit} XP`:""}.`,{kind:"manif",game:k,visit});
   return done({visit,game:{k,id,seed}});
  }
  case "miniEnd":{
@@ -670,9 +693,10 @@ export function debateNew(seed,camp,{count=QUESTIONS.length,now=null,id=null}={}
   idx:0,t0:null,lost:0,points:0,errors:0,shownAt:null,gaps:[],fast:0};
 }
 const debateRound=st=>debateRounds(seeded(st.seed),st.idx+1,st.count)[st.idx];
-// Time left in the game (the whole 15 s until the first question is out), penalties included.
+// Time left in the game (the whole 15 s until the first question is out), penalties and gains included: st.lost goes
+// down with every right answer. A quick player would never run out, so a game also ends at maxPoints right answers.
 export const debateLeft=(st,now)=>st.t0===null?MINI.debate.ms:Math.max(0,MINI.debate.ms-st.lost-(now-st.t0));
-export const debateDone=(st,now)=>st.idx>=DUEL.maxPicks||(st.t0!==null&&debateLeft(st,now)<=0);
+export const debateDone=(st,now)=>st.idx>=DUEL.maxPicks||st.points>=DEBATE.maxPoints||(st.t0!==null&&debateLeft(st,now)<=0);
 // The question on screen: the first call starts the clock (the browser has shown its countdown before asking).
 // Asked again before an answer, the same question comes back and its clock is not reset. null when it is over.
 export function debateReveal(st,now){
@@ -694,7 +718,7 @@ export function debateAnswer(st,choice,now,idx){
  const react=now-st.shownAt;
  if(react<DEBATE.minReact){st.fast++;return out({right:null,ignored:true});}
  const kind=ANSWER_KINDS[debateRound(st).order[choice]],right=kind===st.camp;
- if(right)st.points++;else{st.errors++;st.lost+=DEBATE.penalty;}
+ if(right){st.points++;st.lost-=DEBATE.gain;}else{st.errors++;st.lost+=DEBATE.penalty;}
  st.gaps.push(Math.round(react));st.idx++;st.shownAt=null;
  return out(right?{right}:{right,miss:kind==="decoy"?"decoy":"opponent"});
 }
@@ -740,8 +764,9 @@ export function duelApply(S,res,{vs="?",mine=0,theirs=0,paid=true}={}){
  else return false;
  const dxp=Math.round(S.xp-before.xp),fx={moral:Math.round(S.moral-before.moral),energy:Math.round(S.energy-before.energy)};
  const parts=[dxp&&`${dxp>0?"+":"−"}${Math.abs(dxp)} XP`,fxText(Object.fromEntries(Object.entries(fx).filter(([,v])=>v)))].filter(Boolean).join(", ")||(res==="win"&&!paid?"plus de gain aujourd'hui, rien ne bouge":"rien ne bouge");
- const text=res==="win"?`Duel gagné contre ${vs} au Débat chrono, ${mine} à ${theirs} : ${parts}.`
-  :res==="loss"?`Duel perdu contre ${vs} au Débat chrono, ${mine} à ${theirs} : ${parts}.`
+ const even=mine===theirs;   // a win on the tie-break
+ const text=res==="win"?`Duel gagné contre ${vs} au Débat chrono, ${mine} à ${theirs}${even?", avec moins d'erreurs":""} : ${parts}.`
+  :res==="loss"?`Duel perdu contre ${vs} au Débat chrono, ${mine} à ${theirs}${even?", avec plus d'erreurs":""} : ${parts}.`
   :res==="tie"?`Match nul contre ${vs} au Débat chrono, ${mine} partout : ${parts}.`
   :`${vs} a esquivé ton défi : ${parts}.`;
  log(S,"duel",text,{res,vs,mine,theirs});ACT.trackMin(S);

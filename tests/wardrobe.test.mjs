@@ -129,14 +129,14 @@ test("the transfuge card is flagged in the result",()=>{
  assert.equal(r.item.id,"transfugeR");assert.equal(r.transfuge,true);
 });
 
-test("the mythic roll: only when available, clean, 30 days old and 300 Flamme; the server's claim decides",()=>{
+test("the mythic roll: only when available, clean, 21 days old and 300 Flamme; the server's claim decides",()=>{
  const S=game();S.flame.pts=300;
  assert.equal(W.mythicChance(S,eligible()),0.01);
  S.flame.pts=355;assert.equal(W.mythicChance(S,eligible()),0.015);
  S.flame.pts=5000;assert.equal(W.mythicChance(S,eligible()),0.03);
  S.flame.pts=299;assert.equal(W.mythicChance(S,eligible()),0);
  S.flame.pts=400;
- for(const m of [null,undefined,eligible({available:false}),eligible({clean:false}),eligible({ageDays:29}),eligible({ageDays:NaN}),{...eligible(),available:"yes"}]){
+ for(const m of [null,undefined,eligible({available:false}),eligible({clean:false}),eligible({ageDays:20}),eligible({ageDays:NaN}),{...eligible(),available:"yes"}]){
   assert.equal(W.mythicChance(S,m),0);assert.equal(W.urnHint(S,m),false);
  }
  assert.equal(W.urnHint(S,eligible()),true);assert.equal(W.urnHint(S,{mythic:eligible()}),true);

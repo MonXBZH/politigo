@@ -100,24 +100,24 @@ test("an answer faster than 600 ms is ignored, flagged, and the same question st
  assert.equal((await a.call("POST","/api/action",{type:"miniEnd",score:20})).status,422,"no score taken from the browser");
 });
 
-test("a scripted perfect run cannot score more than 20, solo or duel, and is flagged",async()=>{
+test("a scripted perfect run cannot score more than 30, solo or duel, and is flagged",async()=>{
  const a=await player(B,"Script Solo"),c=await player(B,"Script Duel"),d=await player(B,"Cible Duel");
  assert.equal((await a.call("POST","/api/action",{type:"debate"})).status,200);
  const ch=await duel(c,{op:"challenge",name:d.name}),id=ch.json.duel.id;
  const [solo,du]=await Promise.all([script(a,"solo"),script(c,id)]);
- assert.ok(solo.sent>20&&du.sent>20,`more than 20 right answers sent (${solo.sent}, ${du.sent})`);
+ assert.ok(solo.sent>=30&&du.sent>=30,`30 right answers sent (${solo.sent}, ${du.sent})`);
  assert.equal(solo.r.json.result.score,R.DEBATE.maxPoints);assert.ok(solo.r.json.result.bonus<=R.MINI.debate.bonusCap);
  assert.equal(du.r.json.result.score,R.DEBATE.maxPoints);assert.equal(du.r.json.result.status,"pending");
  const ms=B.db.prepare("SELECT * FROM mini_scores WHERE player_id=?").get(idOf(B,"Script Solo"));
- assert.equal(ms.score,20);for(const f of ["plafond","zero_erreur"])assert.ok(JSON.parse(ms.flags).includes(f),ms.flags);
+ assert.equal(ms.score,30);for(const f of ["zero_erreur"])assert.ok(JSON.parse(ms.flags).includes(f),ms.flags);
  const flags=JSON.parse(B.db.prepare("SELECT flags FROM duels WHERE id=?").get(id).flags);
- assert.equal(flags[0].side,"c");assert.equal(flags[0].name,"Script Duel");assert.ok(flags[0].flags.includes("plafond"));
+ assert.equal(flags[0].side,"c");assert.equal(flags[0].name,"Script Duel");assert.ok(flags[0].flags.includes("zero_erreur"));
  const log=(await ok(B,{cmd:"audit"})).items.find(x=>x.cmd==="duel-flag");
- assert.equal(log.via,"server");assert.equal(log.target,`#${id}`);assert.match(log.detail,new RegExp(`duel #${id} signalé : Script Duel \\(.*plafond`));
+ assert.equal(log.via,"server");assert.equal(log.target,`#${id}`);assert.match(log.detail,new RegExp(`duel #${id} signalé : Script Duel \\(.*zero_erreur`));
  const listed=(await ok(B,{cmd:"duels-list"})).items.find(x=>x.id===id);assert.deepEqual(listed.flags,flags);
  const sheet=(await ok(B,{cmd:"player",name:"Script Duel"})).player;assert.deepEqual(sheet.duels.find(x=>x.id===id).flags,flags);
  const bot=(await ok(B,{cmd:"bots"})).items.find(x=>x.name==="Script Solo");
- assert.ok(bot.reasons.some(x=>/invraisemblables.*plafond/.test(x)),JSON.stringify(bot.reasons));assert.equal(bot.games.debate.n,1);
+ assert.ok(bot.reasons.some(x=>/invraisemblables.*zero|invraisemblables.*reflexe/.test(x)),JSON.stringify(bot.reasons));assert.equal(bot.games.debate.n,1);
 });
 
 test("a turn's state survives a restart: resumed, never replayed",async()=>{

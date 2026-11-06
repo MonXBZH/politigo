@@ -1093,11 +1093,11 @@ function renderSheet(kind,opener){
   // The rematch only shows while it is on offer: right after a debate, for one hour of game time.
   const rm=rematchBlock()?[]:[itemButton("Quitte ou double !",`Revanche immédiate, 1 chance sur 2 : moral +${R.DOUBLE.moral} et énergie +${R.DOUBLE.energy}… ou un stress ×${R.DOUBLE.stressFactor} (moral −${R.STRESS_HIT*R.DOUBLE.stressFactor}).`,"50/50",false,rematch)];
   body.append(list(...rm,
-   itemButton("Pong des arguments",err||`Renvoie les piques de l'adversaire pendant 20 s (doigt, souris ou flèches). +${R.PONG_RULES.bonusPerReturn} XP par renvoi (${R.PONG_RULES.bonusCap} au plus).`,`+${XP.activity} XP`,!!err,startPong),
-   itemButton("Débattre",err||`Débat chrono : ${R.MINI.debate.ms/1000} s pour enchaîner les réponses de ta ligne (doigt, souris ou 1-2-3). Énergie −8, moral +10, +${R.MINI.debate.bonusRate} XP par bonne réponse (${R.MINI.debate.bonusCap} max).`,`+${XP.activity} XP`,!!err,()=>startMini("debate")),
+   itemButton("Pong des arguments",err||`Renvoie les piques de l'adversaire pendant 20 s (doigt, souris ou flèches). +${R.PONG_RULES.bonusPerReturn} XP par renvoi (${R.PONG_RULES.bonusCap} au plus).`,`+${R.PONG_RULES.xp} XP`,!!err,startPong),
+   itemButton("Débattre",err||`Débat chrono : ${R.MINI.debate.ms/1000} s pour enchaîner les réponses de ta ligne (doigt, souris ou 1-2-3). Une bonne réponse ajoute ${String(R.DEBATE.gain/1000).replace(".",",")} s, fin à ${R.DEBATE.maxPoints}. Énergie −8, moral +10.`,`+${String(R.MINI.debate.bonusRate).replace(".",",")} XP/réponse`,!!err,()=>startMini("debate")),
    itemButton(`Manif : ${manifLabel(S.camp)}`,err||(S.camp==="left"
-    ?"Tiens le cortège jusqu'à Nation en 30 s : esquive LBD et lacrymo, ramasse les tracts. Doigt, souris ou flèches ; parapluie avec un deuxième doigt ou Espace."
-    :"Joue l'épervier 35 s avec un CRS : interpelle les manifestants, esquive pavés et molotovs. Gare aux journalistes et aux collègues infiltrés."),`+${XP.activity} XP`,!!err,()=>startMini("manifStart")),
+    ?"Tiens le cortège jusqu'à Nation en 30 s : esquive LBD et lacrymo, ramasse les tracts et les merguez. Doigt, souris ou flèches ; parapluie avec un deuxième doigt ou Espace."
+    :"Joue l'épervier 35 s avec un CRS : interpelle les manifestants, esquive pavés et molotovs, ramasse les rapports d'incident. Gare aux journalistes et aux collègues infiltrés."),`+${R.MINI[S.camp==="left"?"cortege":"epervier"].xp} XP`,!!err,()=>startMini("manifStart")),
    // Always open: even when he cannot duel now, the sheet shows the challenges, the results and why.
    itemButton("Duels",`Défie un rival au Débat chrono : mêmes questions, meilleur score. ${R.DUEL.perDay} défis par jour.`,dn?`${dn} défi${dn>1?"s":""}`:"PvP",false,openDuels)
   ));
@@ -1266,33 +1266,38 @@ function boardLook(r){
 }
 
 // ---------- missions, voter mail, daily goals (activities.mjs) ----------
-const dur=ms=>ms<R.H?`${Math.round(ms/60000)} min`:`${String(Math.round(ms/R.H*10)/10).replace(".",",")} h`;
 const leftLabel=ms=>{const m=Math.max(1,Math.ceil(ms/60000));return m>=60?`${Math.floor(m/60)} h ${pad2(m%60)}`:`${m} min`;};
 const plural=(n,w)=>`${n} ${w}${n>1?"s":""}`;
-async function missionStart(m){const r=await send({type:"missionStart",id:m.id});if(r?.ok)toast(`En mission : ${m[S.camp]}. Retour dans ${dur(m.ms)} (heure du jeu).`,true);liveSheet(true);}
+async function missionStart(m){const r=await send({type:"missionStart",id:m.id});if(r?.ok)toast(`En mission : ${m[S.camp]}. Retour dans ${A.missionTime(m.ms)} (heure du jeu).`,true);liveSheet(true);}
 async function missionReport(){
  const r=await send({type:"missionReport"});if(!r?.ok||!r.report)return;
  const m=A.missionOf(r.report.id),how=m?.risk?(r.report.ok?" : coup réussi !":" : ça a mal tourné."):" :";
- toast(`Rapport${m?`, ${m[S.camp]}`:""}${how} ${R.fxText(r.report.fx||{})}, +1 bulletin.`,true);if(r.report.ok)playAnim("win",2000);liveSheet(true);
+ toast(`Rapport${m?`, ${m[S.camp]}`:""}${how} ${R.fxText(r.report.fx||{})}, ${A.payText(r.report)}.`,true);if(r.report.ok)playAnim("win",2000);liveSheet(true);
 }
 async function mailAnswer(id,choice){
  const a=A.letterOf(id)?.answers[choice],r=await send({type:"mailAnswer",id,choice});if(!r?.ok)return;
  toast(`${a?.reply||"Réponse envoyée."} (${R.fxText(r.fx||a?.fx||{})}${r.bulletin?", +1 bulletin":""})`,true);liveSheet(true);
 }
+// A mission's reward as the list shows it: the XP always, the bulletins or why there are none today.
+function missionReward(m){
+ const p=A.missionPay(S,m);
+ return `+${p.xp} XP · ${p.why==="repeat"?"bulletin déjà gagné aujourd'hui":p.why==="cap"?"plafond de bulletins atteint":`+${plural(p.bulletins,"bulletin").replace(" "," ")}`}`;
+}
 function renderActivities(body){
  const c=S.camp,cur=S.missions.cur,ready=A.missionReady(S),n=A.missionsToday(S),max=A.MISSION_RULES.perDay;
- body.append(blockTitle("Missions"),fine(`Quelques heures sur le terrain, pendant que tu fais autre chose : des jauges en plus et 1 bulletin pour ${W.URN_NAME[c]} à chaque rapport. Une à la fois, ${max} par jour (${n}/${max} aujourd'hui).`));
+ body.append(blockTitle("Missions"),fine(`Quelques heures sur le terrain, pendant que tu fais autre chose : des jauges, de l'XP à chaque rapport et des bulletins pour ${W.URN_NAME[c]}, une fois par mission et par jour. Plus elle dure, plus elle rapporte. Une à la fois.`),
+  fine(`Missions ${n}/${max} · Bulletins du jour ${A.bulletinsToday(S)}/${A.MISSION_RULES.bulletinsPerDay}`));
  if(cur){
   const m=A.missionOf(cur.id);
   if(ready)body.append(list(itemButton(`Lire le rapport : ${m[c]}`,"Mission terminée : son rapport t'attend.","Rapport",false,missionReport,true)));
   else{const d=duelCard(`En mission : ${m[c]}`,`Retour dans ${leftLabel(A.missionLeft(S))}`);d.classList.add("mission-run");d.querySelector("small").className="mission-left";body.append(d);}
  }
- // A reason shared by every mission (one running, the day's four used) is said once, above the list.
+ // A reason shared by every mission (one running, the day's missions used) is said once, above the list.
  const shared=cur||n>=max?A.missionBlock(S,A.MISSIONS[0].id):"";
  if(shared&&!ready)body.append(Object.assign(fine(shared),{className:"fine warn"}));
  body.append(list(...A.MISSIONS.map(m=>{
-  const e=A.missionBlock(S,m.id),desc=`${R.fxText(m.fx)}${m.risk?` ; ou, une fois sur deux : ${R.fxText(m.risk.fx)}`:""}${m.night&&!e?" · le soir seulement, de 20 h à minuit":""}`;
-  return itemButton(m[c],e&&e!==shared?`${e} ${desc}`:desc,dur(m.ms),!!e,()=>missionStart(m));
+  const e=A.missionBlock(S,m.id),desc=`${R.fxText(m.fx)}${m.risk?` ; ou, une fois sur deux : ${R.fxText(m.risk.fx)}`:""}${m.night&&!e?" · le soir seulement, de 20 h à minuit":""} · ${missionReward(m)}`;
+  return itemButton(m[c],e&&e!==shared?`${e} ${desc}`:desc,A.missionTime(m.ms),!!e,()=>missionStart(m));
  })));
  body.append(blockTitle("Courrier"));
  const l=S.mail.letter&&A.letterOf(S.mail.letter.id);
@@ -1316,7 +1321,7 @@ function renderActivities(body){
   }
   body.append(ul);
  }
- body.append(fine(`🎟️ ${plural(S.wardrobe.bulletins,"bulletin")} en poche : à jouer dans Dossier → ${W.URN_NAME[c]}. Rien de tout ça ne rapporte d'XP : seulement des jauges et des bulletins.`));
+ body.append(fine(`🎟️ ${plural(S.wardrobe.bulletins,"bulletin")} en poche : à jouer dans Dossier → ${W.URN_NAME[c]}. Les missions rapportent aussi de l'XP ; le courrier et les objectifs, seulement des jauges et des bulletins.`));
 }
 
 // ---------- the wardrobe (wardrobe.mjs, looks.mjs) ----------
@@ -1670,8 +1675,8 @@ const remain=x=>{const m=Math.max(1,Math.round((duelExp(x)-serverNow())/60000));
 // One line per finished duel, from this player's side.
 function duelResult(x){
  const vs=x.vs,a=x.mine??"?",b=x.theirs??"?";
- if(x.res==="win")return `Gagné ${a} à ${b} contre ${vs}`;
- if(x.res==="loss")return `Perdu ${a} à ${b} contre ${vs}`;
+ if(x.res==="win")return `Gagné ${a} à ${b} contre ${vs}${a===b?", avec moins d'erreurs":""}`;
+ if(x.res==="loss")return `Perdu ${a} à ${b} contre ${vs}${a===b?", avec plus d'erreurs":""}`;
  if(x.res==="tie")return `Match nul contre ${vs}, ${a} partout`;
  if(x.res==="chicken")return `${vs} a esquivé ton défi`;
  if(x.status==="refused")return x.role==="challenger"?`${vs} a esquivé ton défi`:`Refusé : le défi de ${vs}`;

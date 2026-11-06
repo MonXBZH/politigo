@@ -72,7 +72,8 @@ const BATON_K=Math.max(1,Math.min(20,Math.floor(Number(env.POLITIGO_BATON_SPEED)
 const BATON_REPLAY_MS=env.POLITIGO_BATON_REPLAY_MS?Math.max(0,Number(env.POLITIGO_BATON_REPLAY_MS)||0):null;
 if(BATON_K!==1||BATON_REPLAY_MS!==null)console.warn(`Bâton duel test settings active: clock x${BATON_K}, replay ${BATON_REPLAY_MS===null?"at 21:00":`${BATON_REPLAY_MS} ms after the bearer's part`}.`);
 // A turn is void past the debate, its countdown and the same grace as the solo mini-games.
-const DUEL_TURN_MS=R.MINI.debate.ms+R.DEBATE.intro+R.MINI_RULES.graceSeconds*1000;
+// The longest turn: the clock plus every right answer's gain, the countdown and the grace.
+const DUEL_LEAD_MS=R.DEBATE.intro+R.MINI_RULES.graceSeconds*1000,DUEL_TURN_MS=R.MINI.debate.ms+R.DEBATE.maxPoints*R.DEBATE.gain+DUEL_LEAD_MS;
 // The server-paced debate's length. The knob exists for tests (a turn in 2 s) and can only SHORTEN it.
 const DEBATE_MS=knob(env.POLITIGO_DEBATE_MS,R.MINI.debate.ms);
 if(DEBATE_MS!==R.MINI.debate.ms)console.warn(`Debate test setting active: ${DEBATE_MS} ms of play (normal: ${R.MINI.debate.ms}).`);
@@ -126,8 +127,8 @@ CREATE TABLE IF NOT EXISTS baton_duels(id INTEGER PRIMARY KEY,challenger INTEGER
  resolved INTEGER,winner INTEGER,flags TEXT);
 CREATE INDEX IF NOT EXISTS baton_duels_status ON baton_duels(status);`);
 // Duels from before the server-paced debate: its turn state, the per-turn flags, what the result changed (to annul
-// it) and when each side first answered and finished (the multi-account signals).
-for(const [col,type] of [["turn","TEXT"],["flags","TEXT"],["fx","TEXT"],["c_first","INTEGER"],["d_first","INTEGER"],["c_done","INTEGER"]]){
+// it), when each side first answered and finished (the multi-account signals), the challenger's errors (the tie-break).
+for(const [col,type] of [["turn","TEXT"],["flags","TEXT"],["fx","TEXT"],["c_first","INTEGER"],["d_first","INTEGER"],["c_done","INTEGER"],["c_errors","INTEGER"]]){
  if(db.prepare("PRAGMA table_info(duels)").all().some(c=>c.name===col))continue;
  try{db.exec(`ALTER TABLE duels ADD COLUMN ${col} ${type}`);}catch(e){if(!/duplicate column/i.test(e.message))throw e;}
 }
@@ -196,8 +197,8 @@ const q={
  announces:db.prepare("SELECT t,via,target,detail,actor FROM admin_log WHERE cmd IN ('announce','schedule') ORDER BY id DESC LIMIT 50"),
  insertActivity:db.prepare("INSERT INTO activity(player_id,t,kind,live,ua) VALUES(?,?,?,?,?)"),
  purgeActivity:db.prepare("DELETE FROM activity WHERE t<?"),
- activitySince:db.prepare("SELECT player_id,t,live,ua FROM activity WHERE t>? ORDER BY player_id,t"),
- activityOf:db.prepare("SELECT player_id,t,live,ua FROM activity WHERE player_id=? AND t>? ORDER BY t"),
+ activitySince:db.prepare("SELECT player_id,t,kind,live,ua FROM activity WHERE t>? ORDER BY player_id,t"),
+ activityOf:db.prepare("SELECT player_id,t,kind,live,ua FROM activity WHERE player_id=? AND t>? ORDER BY t"),
  activeSince:db.prepare("SELECT DISTINCT player_id AS id FROM activity WHERE t>?"),
  schedules:db.prepare("SELECT * FROM schedules ORDER BY id"),
  schedule:db.prepare("SELECT * FROM schedules WHERE id=?"),
@@ -220,7 +221,7 @@ const q={
  paidWinsOn:db.prepare("SELECT COUNT(*) AS n FROM duels WHERE winner=? AND paid=1 AND rday=? AND status IN ('done','annulled')"),
  // Every win as the defender counts, paid or not: past DUEL.defWinsPerDay a defence pays nothing at all.
  defWinsOn:db.prepare("SELECT COUNT(*) AS n FROM duels WHERE winner=? AND defender=? AND rday=? AND status IN ('done','annulled')"),
- duelPending:db.prepare("UPDATE duels SET status='pending',c_score=?,expires=?,c_done=?,turn=NULL WHERE id=? AND status='c_play'"),
+ duelPending:db.prepare("UPDATE duels SET status='pending',c_score=?,c_errors=?,expires=?,c_done=?,turn=NULL WHERE id=? AND status='c_play'"),
  duelAccept:db.prepare("UPDATE duels SET status='d_play',d_started=?,turn=NULL WHERE id=? AND status='pending'"),
  duelClose:db.prepare("UPDATE duels SET status=?,resolved=?,rday=?,turn=NULL WHERE id=? AND status=?"),
  duelDone:db.prepare("UPDATE duels SET status='done',d_score=?,resolved=?,winner=?,paid=?,rday=?,turn=NULL WHERE id=? AND status='d_play'"),
@@ -626,10 +627,12 @@ function duelView(d,me){
  return {id:d.id,role:mineC?"challenger":"defender",vs:nameOf(mineC?d.defender:d.challenger),status:d.status,
   mine:(mineC?d.c_score:d.d_score)??null,theirs:done?(mineC?d.d_score:d.c_score)??null:null,res,created:d.created,expires:d.expires??null};
 }
-// The defender has played (or forfeited with 0): scores compared, both candidates changed, the feed told.
-// Returns the result from the defender's view, or null when the duel was already over.
-function resolveDuel(d,dScore,now){
- const c=d.c_score??0,w=c>dScore?d.challenger:dScore>c?d.defender:null,day=dayNow(now);
+// The defender has played (or forfeited with 0): scores compared, then errors (the fewer the better: two good players
+// both reach the cap), both candidates changed, the feed told. A forfeit or a duel from before the tie-break has no
+// errors to compare. Returns the result from the defender's view, or null when the duel was already over.
+function resolveDuel(d,dScore,now,dErrors=null){
+ const c=d.c_score??0,cE=d.c_errors??null,gap=c-dScore||(cE===null||dErrors===null?0:dErrors-cE),w=gap>0?d.challenger:gap<0?d.defender:null,day=dayNow(now);
+ const by=c===dScore?", avec moins d'erreurs":"";
  // Paid: within the day's paid wins, and for a defender within DUEL.defWinsPerDay wins (an alt challenging its main
  // account all day long pays nothing past that).
  const paid=w!==null&&R.duelPaid(q.paidWinsOn.get(w,day).n,q.defWinsOn.get(w,w,day).n,w===d.defender)?1:0;
@@ -639,10 +642,10 @@ function resolveDuel(d,dScore,now){
   d:duelFx(d.defender,view(d.defender),{vs:cn,mine:dScore,theirs:c,paid:!!paid},now)};
  try{q.duelSetFx.run(JSON.stringify(fx),d.id);}catch(e){console.error(`duel ${d.id}: effects not recorded`,e);}
  duelFeed(w===d.defender?dn:cn,w===null?`Match nul entre ${cn} et ${dn} au Débat chrono, ${c} partout.`
-  :w===d.challenger?`${cn} bat ${dn} au Débat chrono, ${c} à ${dScore}.`:`${dn} bat ${cn} au Débat chrono, ${dScore} à ${c}.`);
+  :w===d.challenger?`${cn} bat ${dn} au Débat chrono, ${c} à ${dScore}${by}.`:`${dn} bat ${cn} au Débat chrono, ${dScore} à ${c}${by}.`);
  duelEvent(d,"resolved",[d.challenger,d.defender]);
  notify(d.challenger,{title:"Duel terminé",tag:`duel-${d.id}`,url:"/",body:w===null?`${dn} a relevé ton défi : match nul, ${c} partout.`
-  :w===d.challenger?`${dn} a relevé ton défi : tu gagnes ${c} à ${dScore} !`:`${dn} a relevé ton défi : tu perds ${c} à ${dScore}.`});
+  :w===d.challenger?`${dn} a relevé ton défi : tu gagnes ${c} à ${dScore}${by} !`:`${dn} a relevé ton défi : tu perds ${c} à ${dScore}${c===dScore?", avec plus d'erreurs":""}.`});
  return view(d.defender);
 }
 // Refused or left to expire: the challenger keeps a small consolation, the defender's game is untouched.
@@ -733,14 +736,14 @@ function duelFinish(p,d,tn,now){
   audit("server","duel-flag",`#${d.id}`,`duel #${d.id} signalé : ${p.name} (${res.flags.join(", ")})`);
  }
  if(mineC){
-  if(!q.duelPending.run(res.points,now+R.DUEL.window,now,d.id).changes)throw new HttpError(422,"Ce n'est pas ton tour de jouer.");
+  if(!q.duelPending.run(res.points,res.errors,now+R.DUEL.window,now,d.id).changes)throw new HttpError(422,"Ce n'est pas ton tour de jouer.");
   const dn=nameOf(d.defender);
   duelFeed(p.name,`${p.name} défie ${dn} au Débat chrono.`);
   duelEvent(d,"challenged",[d.defender]);
   notify(d.defender,{title:"Défi reçu !",body:`${p.name} te défie au Débat chrono. Tu as 24 h pour relever le défi.`,tag:`duel-${d.id}`,url:"/"});
   return {score:res.points,errors:res.errors,status:"pending",mine:res.points,theirs:null,res:null};
  }
- const out=resolveDuel(d,res.points,now);
+ const out=resolveDuel(d,res.points,now,res.errors);
  if(out===null)throw new HttpError(422,"Ce duel est déjà terminé.");
  return {score:res.points,errors:res.errors,status:"done",mine:res.points,theirs:d.c_score??0,res:out};
 }
@@ -751,7 +754,7 @@ function duelStep(p,d,choice,now,idx){
  let tn=turnOf(d);
  if(!tn){
   // The first question must come within the countdown and the grace, or the turn is over (as the sweep would say).
-  if(now-(mineC?d.c_started:d.d_started)>DUEL_TURN_MS-R.MINI.debate.ms){
+  if(now-(mineC?d.c_started:d.d_started)>DUEL_LEAD_MS){
    if(mineC){if(q.duelClose.run("void",now,dayNow(now),d.id,"c_play").changes)duelEvent(d,"void",[p.id]);}
    else resolveDuel(d,0,now);
    throw new HttpError(422,"Trop tard : ce tour est terminé.");
@@ -836,12 +839,13 @@ async function pushRoute(req,res,path){
 // The rules roll for it (web/wardrobe.mjs); the server says whether it is still in the urn and whether this player
 // deserves a chance, and owns the one row that makes a win real. No await between the roll and that row.
 const MYTHIC="baton",CLEAN_MS=60e3,cleanCache=new Map();   // playerId -> {t,clean,bot}: the bot report is costly, draws come in bursts
-// Clean: a bot score under BOT_ALERT and none of their duel turns flagged by the anti-cheat within 14 days.
+// Clean: a bot score under BOT_ALERT, under NON_BROWSER of the actions sent by something else than a browser (a script
+// scores only 40 on its own) and none of their duel turns flagged by the anti-cheat within 14 days.
 function mythicClean(p,now){
  const c=cleanCache.get(p.id);if(c&&now-c.t<CLEAN_MS)return c.clean;
- const bot=botReport(p,q.activityOf.all(p.id,activityCut(now)),q.miniOf.all(p.id,activityCut(now))).score;
+ const rep=botReport(p,q.activityOf.all(p.id,activityCut(now)),q.miniOf.all(p.id,activityCut(now))),bot=rep.score;
  const flagged=q.flaggedDuels.all(now-14*864e5).some(d=>flagsOf(d).some(x=>(x.side==="d"?d.defender:d.challenger)===p.id));
- const clean=bot<BOT_ALERT&&!flagged;cleanCache.set(p.id,{t:now,clean,bot});return clean;
+ const clean=bot<BOT_ALERT&&rep.nonBrowserShare<=NON_BROWSER&&!flagged;cleanCache.set(p.id,{t:now,clean,bot});return clean;
 }
 // opts.mythic for the rules. clean is a getter, worked out only for an otherwise eligible player. won.v: a claim landed.
 function mythicOpts(p,now,won={}){
@@ -1556,7 +1560,7 @@ function sweepSchedules(now){
 
 // ---- Activity log and bot report. Kept 14 days, no address: what was done, when, with a screen open or not, and
 // from what kind of client.
-const ACTIVITY_DAYS=14;
+const ACTIVITY_DAYS=14,NON_BROWSER=0.2;
 function uaTag(ua){
  ua=String(ua||"").slice(0,400);
  if(!ua.trim())return "none";
@@ -1580,8 +1584,10 @@ function recordMini(p,a,now=Date.now()){
 // pace cap over the time played; null for the debate, which the server paces itself).
 const P_=R.PONG_RULES;
 const GAMES={
- debate:{full:Math.ceil(R.MINI.debate.bonusCap/R.MINI.debate.bonusRate),max:R.DEBATE.maxPoints,minSecs:null},
- duel:{full:R.DEBATE.maxPoints,max:R.DEBATE.maxPoints,minSecs:null},   // a duel turn: the Débat chrono against a rival
+ // full: Infinity for the Débat chrono: its clock runs on right answers, so a good player reaches the top at a human
+ // pace; the referee's flags (reflexes, metronome) are what tells a script.
+ debate:{full:Infinity,max:R.DEBATE.maxPoints,minSecs:null},
+ duel:{full:Infinity,max:R.DEBATE.maxPoints,minSecs:null},   // a duel turn: the Débat chrono against a rival
  pong:{full:Math.ceil(P_.bonusCap/P_.bonusPerReturn),max:P_.maxScore,minSecs:sc=>Math.max(P_.minSeconds,(sc-1)/P_.returnsPerSecond)},
  ...Object.fromEntries(["cortege","epervier"].map(k=>{const m=R.MINI[k];
   return [k,{full:Math.ceil(m.bonusCap/m.bonusRate),max:m.maxScore,minSecs:sc=>Math.max(R.MINI_RULES.minSeconds,(sc-1)/m.perSecond+(m.intro||0)/1000)}];}))
@@ -1630,10 +1636,11 @@ function gameSignals(st){
 //  +15 more than 25 % of the actions between 1 h and 6 h (game time zone),
 //  +15 gaps under 2 h too regular (coefficient of variation < 0.15 over at least 30 gaps): a timer, not a hand.
 function botReport(p,rows,minis=[]){
- const byHour=Array(24).fill(0),n=rows.length;let noLive=0,nonBrowser=0,night=0;const gaps=[];
+ const byHour=Array(24).fill(0),n=rows.length,byKind=new Map();let noLive=0,nonBrowser=0,night=0;const gaps=[];
  for(let i=0;i<n;i++){
   const r=rows[i],h=R.clockOf(r.t).hour;byHour[h]++;
   if(!r.live)noLive++;if(r.ua!=="browser")nonBrowser++;if(h>=1&&h<6)night++;
+  let c=byKind.get(r.kind);if(!c)byKind.set(r.kind,c={kind:r.kind,n:0,off:0});c.n++;if(r.ua!=="browser")c.off++;
   if(i)gaps.push((r.t-rows[i-1].t)/1000);
  }
  const sorted=[...gaps].sort((a,b)=>a-b),median=sorted.length?sorted[sorted.length>>1]:null;
@@ -1642,14 +1649,14 @@ function botReport(p,rows,minis=[]){
  const noLiveShare=n?noLive/n:0,nonBrowserShare=n?nonBrowser/n:0,nightShare=n?night/n:0;
  const games=gameStats(minis),sig=gameSignals(games),reasons=[...sig.reasons];let score=sig.score;
  if(noLiveShare>0.5){score+=20;reasons.push(`${pct(noLiveShare)} des actions sans écran de jeu ouvert`);}
- if(nonBrowserShare>0.2){
+ if(nonBrowserShare>NON_BROWSER){
   const tags=[...new Set(rows.filter(r=>r.ua!=="browser").map(r=>r.ua))].slice(0,3).join(", ");
-  score+=20;reasons.push(`${pct(nonBrowserShare)} des actions hors navigateur (${tags})`);
+  score+=20;reasons.push(`${pct(nonBrowserShare)} des actions hors navigateur (${tags}) : pas de Bâton de feu`);
  }
  if(nightShare>0.25){score+=15;reasons.push(`${pct(nightShare)} des actions entre 1 h et 6 h`);}
  if(cv!==null&&short.length>=30&&cv<0.15){score+=15;reasons.push(`Rythme trop régulier (variation ${cv.toFixed(2).replace(".",",")} sur ${short.length} intervalles)`);}
  return {id:p.id,name:p.name,actions14d:n,byHour,noLiveShare,nonBrowserShare,nightShare,medianGapS:median===null?null:Math.round(median),
-  gapCv:cv===null?null:Math.round(cv*1000)/1000,score:Math.min(100,score),reasons,games:games.games,gameFlags:games.flags};
+  gapCv:cv===null?null:Math.round(cv*1000)/1000,score:Math.min(100,score),reasons,kinds:[...byKind.values()].sort((a,b)=>b.n-a.n).slice(0,12),games:games.games,gameFlags:games.flags};
 }
 const activityCut=now=>now-ACTIVITY_DAYS*864e5;
 function botsAll(now){

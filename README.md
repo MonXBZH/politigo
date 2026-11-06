@@ -7,7 +7,7 @@
   <img alt="Node 24" src="https://img.shields.io/badge/node-24%20LTS-5fa04e">
   <img alt="Aucune dépendance" src="https://img.shields.io/badge/d%C3%A9pendances-0-success">
   <img alt="Docker" src="https://img.shields.io/badge/docker-compose%20%7C%20Portainer-2496ed">
-  <img alt="412 tests" src="https://img.shields.io/badge/tests-412-brightgreen">
+  <img alt="421 tests" src="https://img.shields.io/badge/tests-421-brightgreen">
   <img alt="Satire" src="https://img.shields.io/badge/genre-satire-ff9db0">
 </p>
 
@@ -101,14 +101,15 @@ de renaissance propre à chaque camp (la *primaire unitaire* à gauche, *le part
 
 - ⏰ **Le jeu suit l'heure réelle** (Paris). La nuit, de 0 h à 6 h, ton élu dort et récupère.
 - 👋 **Passe le voir** : chaque visite rapporte de l'XP, une fois toutes les 2 heures, 8 fois par jour au maximum.
-- 🎮 **Trois mini-jeux** : 2 activités par visite, 8 par jour, chacune +30 XP plus un bonus selon le score,
-  d'autant plus gros que le jeu est difficile : **10 XP** au plus pour le Pong, **20** pour le Débat chrono, **30** pour la Manif.
-  - 🎤 **Débat chrono** : 15 secondes pour enchaîner les réponses de ta ligne, tirées dans le désordre parmi 32 questions.
+- 🎮 **Trois mini-jeux** : 2 activités par visite, 8 par jour. Plus le jeu est difficile, plus il rapporte : **35 XP** au plus
+  pour le Pong, **50** pour le Débat chrono, **70** pour la Manif, selon ton score.
+  - 🎤 **Débat chrono** : 15 secondes pour enchaîner les réponses de ta ligne, tirées dans le désordre parmi 54 questions.
     « Programme économique ? » : à gauche on taxe les riches, à droite les pauvres, et « taxer les politiques » est hors sujet pour tout le monde.
-    Une erreur coûte une seconde.
+    Une bonne réponse ajoute 1,5 seconde, une erreur en coûte une, et la partie s'arrête à 30 bonnes réponses.
   - ✊ **Manif**, un jeu par camp. À gauche, **Le Cortège** : tiens le défilé de République à Nation en esquivant LBD et lacrymo,
     avec un parapluie pour parer. À droite, **L'Épervier** : interpelle les manifestants avec ton CRS, esquive pavés et molotovs,
-    et gare aux journalistes et aux collègues infiltrés, qui coûtent des points.
+    et gare aux journalistes et aux collègues infiltrés, qui coûtent des points. Merguez de manif d'un côté, rapport d'incident
+    de l'autre : chacun a de quoi retrouver une vie.
   - 🏓 **Pong des arguments** : renvoie les piques de l'adversaire pendant 20 secondes.
 - 🎲 **Quitte ou double** : juste après un débat, une revanche à pile ou face. Gagnée : moral **+12** et énergie **+12**.
   Perdue : un **stress ×2**.
@@ -125,10 +126,11 @@ et toutes sont recensées, avec leurs références, dans **[docs/SOURCES.md](doc
 
 ### Entre deux visites
 
-De quoi s'occuper entre deux passages obligés, sans jamais toucher à l'équilibre de l'XP : ces activités ne jouent que
-sur les **jauges** (et rapportent des bulletins pour la Tombola).
+De quoi s'occuper entre deux passages obligés : ces activités jouent sur les **jauges** et rapportent des bulletins pour
+la Tombola. Les missions donnent aussi un peu d'**XP**.
 
-- 🚩 **Missions** : envoie ton élu sur le terrain, une mission à la fois et 4 par jour, de 30 minutes à une nuit entière.
+- 🚩 **Missions** : envoie ton élu sur le terrain, une mission à la fois et 6 par jour, de 30 minutes à une nuit entière.
+  Plus elle dure, plus elle rapporte : de +10 à +30 XP à chaque rapport, de 1 à 3 bulletins une fois par jour.
   Mêmes effets dans les deux camps, mais pas le même agenda : *Tractage au marché* ou *Serrage de mains au marché*,
   *Retraite en gîte coopératif* ou *Thalasso à La Baule*, *Nuit debout* ou *Soirée au Fouquet's*… La mission risquée se
   joue à pile ou face au moment du rapport. Une notification prévient quand le rapport t'attend.
@@ -141,7 +143,7 @@ sur les **jauges** (et rapportent des bulletins pour la Tombola).
 </p>
 
 - 🔥 **La Flamme** : elle grandit avec ton assiduité, jour après jour. Des jauges tenues au-dessus de 50 toute la journée,
-  les objectifs remplis, des visites étalées, quelques missions et lettres : jusqu'à 10 points par jour. Une journée
+  les objectifs remplis, des visites étalées, quelques missions et lettres : jusqu'à 15 points par jour. Une journée
   sans visite la fait baisser, une mort politique aussi. On dit qu'elle attire quelque chose…
 
 ### La Tombola, la Loterie et la Garde-robe
@@ -150,7 +152,8 @@ sur les **jauges** (et rapportent des bulletins pour la Tombola).
 dans la main. **Purement cosmétique** : aucun effet sur le jeu, et **jamais d'argent réel**.
 
 - 🎟️ **Un tirage gratuit par jour**, puis un **bulletin** par tirage. Les bulletins se gagnent seulement en jouant :
-  un par mission rapportée, un par objectif du jour atteint, un toutes les trois lettres répondues.
+  de 1 à 3 par mission selon sa durée (6 par jour au plus), un par objectif du jour atteint, un toutes les trois lettres
+  répondues.
 - 🌈 **Cinq raretés** : commun (60 %), rare (28 %), épique (9,5 %), légendaire (2 %) et ultra rare (0,5 %). Un tirage
   garanti épique au 10ᵉ sans en voir, légendaire au 50ᵉ, ultra rare au 80ᵉ.
 - 🎊 **Les doublons deviennent des confettis**. 100 confettis s'échangent contre la case commune, rare ou épique de ton choix.

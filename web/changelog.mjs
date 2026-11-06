@@ -5,6 +5,25 @@
 import {cmpRelease} from "./rules.mjs";
 
 export const CHANGELOG=[
+ {version:"1.6.2",date:"2026-11-06",help:["activites","jeux","duels","flamme"],
+  added:[
+   "Quatre nouvelles missions : une tribune dans L'Humanité ou Le Figaro, une permanence, un repas de quartier ou un banquet du Rotary, l'université d'été ou le campus de rentrée.",
+   "Les missions rapportent maintenant de l'XP à chaque rapport : +10, +20 ou +30 selon leur durée. La récompense s'affiche sur chaque mission.",
+   "L'Épervier a enfin son soin : ramasse les rapports d'incident au sol pour retrouver une vie, comme la merguez de manif au Cortège.",
+   "22 nouvelles questions au Débat chrono et 10 nouvelles lettres d'électeurs."
+  ],
+  changed:[
+   "6 missions par jour au lieu de 4.",
+   "Les bulletins suivent la durée : 1 jusqu'à 1 h, 2 jusqu'à 3 h, 3 à partir de 4 h. Une même mission donne ses bulletins une fois par jour, et les missions en donnent 6 par jour au plus. L'XP, elle, tombe à chaque rapport.",
+   "Débat chrono : chaque bonne réponse ajoute 1,5 s au chrono, et la partie s'arrête à 30 bonnes réponses. Ça vaut aussi pour les duels, où le joueur qui a fait le moins d'erreurs l'emporte à score égal.",
+   "L'XP des mini-jeux suit leur difficulté : le Pong rapporte 25 XP et 10 de bonus au plus, la Manif 35 XP et 35 de bonus au plus, le Débat chrono 2,5 XP par bonne réponse, 50 au plus.",
+   "La Flamme grandit plus vite : jusqu'à 15 points par jour."
+  ],
+  fixed:[],
+  admin:[
+   "La fiche d'un joueur détaille ses actions sur 14 jours, avec la part faite hors navigateur."
+  ]
+ },
  {version:"1.6.1",date:"2026-11-01",help:["demarrer","flamme","duels"],
   added:[
    "La Flamme s'affiche maintenant sur l'écran principal, sous les quatre jauges : tu vois ton assiduité grandir sans ouvrir la Garde-robe.",

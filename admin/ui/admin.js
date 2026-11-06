@@ -708,6 +708,9 @@ const annulBtn=d=>!can("duel-annul")?null:h("button",{class:"btn small danger",t
  confirmBox("Annuler ce duel et rendre les gains ?",`Duel #${d.id}${d.label?` (${d.label})`:""} : ses gains d'XP, de moral et d'énergie sont repris aux deux joueurs, le résultat est effacé.`,"Annuler et rendre les gains")
   .then(ok=>ok&&act(b,()=>call("duel-annul",{id:d.id}),"Duel annulé, gains rendus."));}},"Annuler ce duel (rendre les gains)");
 
+// The actions logged, in plain words (anything else shows under its own name).
+const KIND_LABEL={missionStart:"Mission lancée",missionReport:"Rapport de mission",mailAnswer:"Courrier",draw:"Tirage",exchange:"Échange",wear:"Garde-robe",buy:"Achat",pet:"Caresse",light:"Lumière",
+ "debate:next":"Débat","duel:challenge":"Duel lancé","duel:accept":"Duel accepté","duel:refuse":"Duel refusé"};
 function botReport(r,withName=true){
  const lvl=r.score>=60?"bad":r.score>=30?"warn":"good";
  return h("div",{},
@@ -715,6 +718,7 @@ function botReport(r,withName=true){
   h("div",{class:"metrics"},[["sans écran ouvert",pct(r.noLiveShare)],["hors navigateur",pct(r.nonBrowserShare)],["la nuit (1 h-6 h)",pct(r.nightShare)],["écart médian",r.medianGapS==null?"—":`${Math.round(r.medianGapS)} s`],["régularité (CV)",r.gapCv==null?"—":r.gapCv.toFixed(2)]]
    .map(([k,v])=>h("span",{},`${k} : `,h("b",{},v)))),
   r.reasons?.length?h("ul",{class:"reasons"},r.reasons.map(x=>h("li",{},x))):null,
+  r.kinds?.length?h("div",{class:"metrics"},r.kinds.map(k=>h("span",{},`${KIND_LABEL[k.kind]??k.kind} : `,h("b",{},String(k.n)),k.off?` (${k.off} hors navigateur)`:""))):null,
   Array.isArray(r.byHour)&&r.byHour.length===24?bars(r.byHour):null,
   flagBadges(r.gameFlags),
   r.games&&Object.keys(r.games).length?[h("h3",{class:"sub"},"Mini-jeux"),gamesTable(r.games)]:null);

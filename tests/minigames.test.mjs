@@ -27,10 +27,11 @@ function run(camp,ms,score){
 test("the contract: one mini-game per camp plus the debate, with the agreed numbers",()=>{
  assert.deepEqual(Object.keys(MINI),["debate","cortege","epervier"]);
  assert.deepEqual(MINI_RULES,{minSeconds:3,graceSeconds:75,tolerance:0.5});
- assert.deepEqual([R.PONG_RULES.bonusCap,MINI.debate.bonusCap,MINI.cortege.bonusCap,MINI.epervier.bonusCap],[10,20,30,30]);
+ assert.deepEqual([R.PONG_RULES.bonusCap,MINI.debate.bonusCap,MINI.cortege.bonusCap,MINI.epervier.bonusCap],[10,50,35,35]);
+ assert.deepEqual([R.PONG_RULES.xp,MINI.debate.xp,MINI.cortege.xp,MINI.epervier.xp],[25,0,35,35],"what starting a game pays");
  assert.deepEqual([MINI.debate.maxScore,R.PONG_RULES.maxScore,MINI.cortege.maxScore,MINI.epervier.maxScore],[30,25,250,60],"hard caps");
  for(const k of ["cortege","epervier"]){
-  assert.equal(Math.floor(MINI[k].great*MINI[k].bonusRate),MINI[k].bonusCap,`${k}: full bonus at the great score`);
+  assert.equal(Math.min(MINI[k].bonusCap,Math.floor(MINI[k].great*MINI[k].bonusRate)),MINI[k].bonusCap,`${k}: full bonus at the great score`);
   assert.ok(MINI[k].great<MINI[k].suspect&&MINI[k].suspect<MINI[k].maxScore,`${k}: great < suspect < cap`);
  }
  assert.equal(R.manifGame({camp:"left"}),"cortege");assert.equal(R.manifGame({camp:"right"}),"epervier");
@@ -44,14 +45,14 @@ test("manifStart picks the camp's game, deals a seed and an id, and costs like a
   assert.ok(r.ok);assert.equal(r.game.k,k);assert.equal(r.visit,true);
   assert.ok(Number.isInteger(r.game.seed)&&r.game.seed>=0&&r.game.seed<2**32);assert.match(r.game.id,/^[0-9a-z]{1,16}$/);
   assert.deepEqual(S.mini,{k,t:at(10),seed:r.game.seed,id:r.game.id});assert.equal(S.pong,null);assert.equal(S.rematchT,-1);
-  assert.equal(S.xp,XP.visit+XP.activity,"visit + activity");
+  assert.equal(S.xp,XP.visit+MINI[k].xp,"visit + activity");
   assert.equal(S.energy,e0-8);assert.equal(S.moral,Math.min(100,m0+10));assert.equal(R.actsToday(S),1);
   assert.deepEqual(S.journal[0].d,{kind:"manif",game:k,visit:true});
-  assert.equal(S.journal[0].text,`${MINI[k].label} : +${XP.activity} XP, visite +${XP.visit} XP.`);
+  assert.equal(S.journal[0].text,`${MINI[k].label} : +${MINI[k].xp} XP, visite +${XP.visit} XP.`);
  }
  const S=game();play(S,{type:"manifStart"},10);
  const r=play(S,{type:"manifStart"},10.1);assert.ok(r.ok);assert.equal(r.visit,false);
- assert.equal(S.journal[0].text,"Le Cortège : +30 XP.");
+ assert.equal(S.journal[0].text,"Le Cortège : +35 XP.");
 });
 
 test("manifStart is refused at night, when tired and after 8 activities, and cancels the rematch",()=>{
@@ -77,7 +78,7 @@ test("debate keeps the rematch, opens a refereed game without its seed, and drop
  assert.ok(r.turn&&r.turn.id===r.game.id&&r.turn.camp==="left","the server's turn");
  assert.ok(!Object.keys(r).includes("turn")&&!("turn" in JSON.parse(JSON.stringify({...r}))),"the turn never reaches a reply");
  assert.ok(S.rematchT>=0);assert.ok(play(S,{type:"rematch"},10.3).ok,"rematch still offered");
- assert.match(S.journal.find(j=>j.k==="act").text,/^Débat chrono : \+30 XP, énergie −8, moral \+10/);
+ assert.match(S.journal.find(j=>j.k==="act").text,/^Débat chrono : énergie −8, moral \+10/);
  assert.equal(S.journal.find(j=>j.k==="act").d.kind,"debate");
 });
 
@@ -131,8 +132,8 @@ test("a score that is too fast, too early, over the cap, malformed or for anothe
 });
 
 test("valid scores give the right capped bonus for each game, with an audit",()=>{
- const cases=[["left",30000,124,30],["left",30000,50,12],["left",30000,3,0],["left",30000,4,1],["left",30000,119,29],
-  ["right",35000,6,12],["right",35000,14,28],["right",35000,16,30],["right",35000,0,0]];
+ const cases=[["left",30000,144,35],["left",30000,50,12],["left",30000,3,0],["left",30000,4,1],["left",30000,119,29],
+  ["right",35000,6,12],["right",35000,14,28],["right",35000,19,35],["right",35000,0,0]];
  for(const [camp,ms,score,bonus] of cases){
   const {S,r,gain}=run(camp,ms,score);
   assert.ok(r.ok,`${camp} ${score}`);assert.equal(r.bonus,bonus,`${camp} ${score}`);assert.equal(gain,bonus);
@@ -145,15 +146,15 @@ test("valid scores give the right capped bonus for each game, with an audit",()=
 });
 
 test("the journal text and the great flag",()=>{
- let {S}=run("left",30000,120);
- assert.equal(S.journal[0].text,"Le Cortège : score 120, bonus de terrain +30 XP.");assert.equal(S.journal[0].d.great,true);
- ({S}=run("left",30000,119));assert.equal(S.journal[0].d.great,false);
+ let {S}=run("left",30000,140);
+ assert.equal(S.journal[0].text,"Le Cortège : score 140, bonus de terrain +35 XP.");assert.equal(S.journal[0].d.great,true);
+ ({S}=run("left",30000,139));assert.equal(S.journal[0].d.great,false);
  ({S}=run("left",30000,MINI.cortege.suspect));assert.equal(S.journal[0].d.great,false,"a flagged score is never announced");
  ({S}=run("right",35000,1));
  assert.equal(S.journal[0].text,"L'Épervier : 1 point, bonus d'ordre public +2 XP.");
- ({S}=run("right",35000,15));
- assert.equal(S.journal[0].text,"L'Épervier : 15 points, bonus d'ordre public +30 XP.");assert.equal(S.journal[0].d.great,true);
- ({S}=run("right",35000,14));assert.equal(S.journal[0].d.great,false);
+ ({S}=run("right",35000,18));
+ assert.equal(S.journal[0].text,"L'Épervier : 18 points, bonus d'ordre public +35 XP.");assert.equal(S.journal[0].d.great,true);
+ ({S}=run("right",35000,17));assert.equal(S.journal[0].d.great,false);
 });
 
 test("an abandoned mini-game expires after its duration plus the grace period",()=>{
@@ -193,11 +194,11 @@ test("a death clears the mini-game",()=>{
 
 test("a great score is announced at most once per game hour, the bonus is still paid",()=>{
  const S=game("right");
- let s=play(S,{type:"manifStart"},10);assert.ok(R.act(S,{type:"miniEnd",score:15,id:s.game.id},{now:at(10)+36000,random:noRandom}).ok);
+ let s=play(S,{type:"manifStart"},10);assert.ok(R.act(S,{type:"miniEnd",score:18,id:s.game.id},{now:at(10)+36000,random:noRandom}).ok);
  assert.equal(S.journal[0].d.great,true);
- s=play(S,{type:"manifStart"},10.1);const xp0=S.xp;assert.ok(R.act(S,{type:"miniEnd",score:16,id:s.game.id},{now:at(10.1)+36000,random:noRandom}).ok);
- assert.equal(S.journal[0].d.great,false,"a second one within the hour stays private");assert.equal(S.xp-xp0,30);
- full(S);s=play(S,{type:"manifStart"},12.2);assert.ok(R.act(S,{type:"miniEnd",score:15,id:s.game.id},{now:at(12.2)+36000,random:noRandom}).ok);
+ s=play(S,{type:"manifStart"},10.1);const xp0=S.xp;assert.ok(R.act(S,{type:"miniEnd",score:19,id:s.game.id},{now:at(10.1)+36000,random:noRandom}).ok);
+ assert.equal(S.journal[0].d.great,false,"a second one within the hour stays private");assert.equal(S.xp-xp0,35);
+ full(S);s=play(S,{type:"manifStart"},12.2);assert.ok(R.act(S,{type:"miniEnd",score:18,id:s.game.id},{now:at(12.2)+36000,random:noRandom}).ok);
  assert.equal(S.journal[0].d.great,true,"an hour later it is announced again");
 });
 
@@ -245,11 +246,11 @@ test("over HTTP: a great score reaches the public feed, a small one does not",as
  const great=await signUp("10.4.0.2","Grande","right"),small=await signUp("10.4.0.3","Petit","right");
  const a=await great.act({type:"manifStart"}),b=await small.act({type:"manifStart"});
  assert.equal(a.status,200);assert.equal(b.status,200);
- await new Promise(r=>setTimeout(r,7200));   // 15 Épervier points need 7 s at a human pace
- const g=await great.act({type:"miniEnd",score:15,id:a.json.game.id}),p=await small.act({type:"miniEnd",score:3,id:b.json.game.id});
- assert.equal(g.status,200);assert.equal(g.json.bonus,30);assert.equal(p.status,200);assert.equal(p.json.bonus,6);
+ await new Promise(r=>setTimeout(r,8700));   // 18 Épervier points need 8.5 s at a human pace
+ const g=await great.act({type:"miniEnd",score:18,id:a.json.game.id}),p=await small.act({type:"miniEnd",score:3,id:b.json.game.id});
+ assert.equal(g.status,200);assert.equal(g.json.bonus,35);assert.equal(p.status,200);assert.equal(p.json.bonus,6);
  const feed=(await great.call("GET","/api/board")).json.feed;
  const mine=feed.filter(f=>f.kind==="mini");
- assert.ok(mine.some(f=>f.player==="Grande"&&/^L'Épervier : 15 points/.test(f.text)),"great score published");
+ assert.ok(mine.some(f=>f.player==="Grande"&&/^L'Épervier : 18 points/.test(f.text)),"great score published");
  assert.ok(!mine.some(f=>f.player==="Petit"),"small score stays private");
 });
