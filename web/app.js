@@ -8,6 +8,7 @@ import {drawTest,verdict,randomCamp} from "./politest.mjs";
 import {createChat} from "./chat.mjs";
 import * as A from "./activities.mjs";
 import * as W from "./wardrobe.mjs";
+import * as E from "./events.mjs";
 import {outfitLook,drawObject,dressColors} from "./looks.mjs";
 import {createLegend,volcanoRoom} from "./legend.mjs";
 import {createBatonDuel,screenOf} from "./batonduel.mjs";
@@ -26,7 +27,7 @@ const curIdx=()=>R.curIdx(S),hodOf=R.hodOf,isNight=()=>R.isNight(S),isAsleep=()=
 // What the élu wears from the wardrobe (wardrobe.mjs): drawn over his own look by sprite().
 const worn=()=>S?.wardrobe?.worn||{outfit:null,object:null},dress=p=>({...p,outfit:worn().outfit,object:worn().object});
 const person=lvl=>R.person(S,lvl),look=()=>dress(R.look(S)),lookFor=(p,lvl)=>dress(R.lookFor(S,p,lvl));
-const itemBlock=it=>R.itemBlock(S,it),activityBlock=()=>R.activityBlock(S),rematchBlock=()=>R.rematchBlock(S);
+const itemBlock=it=>R.itemBlock(S,it,fx()),activityBlock=()=>R.activityBlock(S),rematchBlock=()=>R.rematchBlock(S);
 // The game clock as it is now: the server's last word, moved on by the time elapsed since.
 const vnow=()=>syncV+(Date.now()-syncReal)*SPEED;
 const seenKey=()=>`politigo.seen.${me}`;
@@ -55,6 +56,7 @@ function applyMe(m,{replay=false}={}){
  if(!m||!m.state)return;
  if(Number.isFinite(m.serverNow))skew=m.serverNow-Date.now();
  if(R.EVENT_MODES.includes(m.event)&&m.event!==EVENT_MODE){EVENT_MODE=m.event;seasonAt=0;}
+ if(Array.isArray(m.events))liveEvents=m.events;
  const first=!S||me!==m.name;
  // The action answer and the live stream race each other: an older copy of the state never replaces a newer one.
  if(!first&&m.state.lastReal<S.lastReal)return;
@@ -938,6 +940,7 @@ function connectLive(){
  // Every message, pings included, proves the stream alive; a malformed one is skipped, not fatal.
  const on=(ev,fn)=>es.addEventListener(ev,e=>{lastLive=Date.now();setNet(true);let v;try{v=JSON.parse(e.data);}catch{return;}fn(v);});
  on("me",m=>applyMe(m));
+ on("events",v=>{if(Array.isArray(v)){liveEvents=v;eventBar();liveSheet(true);}});
  on("board",v=>{if(Array.isArray(v)){board=v;renderBoard();if(sheetKind==="player")liveSheet(true);}});
  on("feedInit",v=>{if(Array.isArray(v)){feed=v;renderFeed();}});
  on("feed",v=>{if(!Array.isArray(v))return;for(const f of v)feed.unshift(f);feed.length=Math.min(feed.length,60);renderFeed();});
@@ -996,6 +999,34 @@ $("#chip-rank").addEventListener("click",()=>$("#board-card").scrollIntoView({be
 // ---------- bottom sheets ----------
 let sheetKind=null,sheetOpener=null;
 // An unavailable row is aria-disabled rather than disabled: it stays focusable, so its reason can be read.
+// ---------- timed events (events.mjs): what they change here, and the bar above the game ----------
+let liveEvents=[],eventsOpen=false,eventsKey="";
+const serverTime=()=>Date.now()+skew;
+const fx=()=>S?E.effectsOf(liveEvents,S.camp,serverTime()):E.NO_FX;
+const running=()=>S?E.activeEvents(liveEvents,S.camp,serverTime()):[];
+const frNum=v=>String(v).replace(".",",");
+function eventBar(){
+ const box=$("#event-bar");if(!box)return;
+ const on=running(),key=`${on.map(e=>e.id).join()}|${eventsOpen}`;
+ box.hidden=!on.length;document.body.classList.toggle("has-event",on.length>0);
+ if(key!==eventsKey){
+  eventsKey=key;box.replaceChildren();
+  if(on.length){
+   const b=document.createElement("button"),name=document.createElement("b"),clock=document.createElement("span");
+   b.type="button";b.className="event-main";b.setAttribute("aria-expanded",String(eventsOpen));name.textContent=`🎉 ${on[0].name}`;clock.className="event-clock";clock.dataset.end=on[0].ends;b.append(name,clock);
+   if(on.length>1){const more=document.createElement("span");more.className="event-more";more.textContent=`+${plural(on.length-1,"autre")}`;b.append(more);}
+   b.addEventListener("click",()=>{eventsOpen=!eventsOpen;eventBar();});box.append(b);
+   if(eventsOpen){
+    const ul=document.createElement("ul");ul.className="event-list";
+    for(const e of on){const li=document.createElement("li"),t=document.createElement("b"),m=document.createElement("small"),c=document.createElement("span");
+     t.textContent=e.name;m.textContent=e.msg;c.className="event-clock";c.dataset.end=e.ends;li.append(t,m,c);ul.append(li);}
+    box.append(ul);
+   }
+  }
+ }
+ if(on.length)document.documentElement.style.setProperty("--event-h",`${box.offsetHeight}px`);   // a notch makes the bar taller
+ for(const c of box.querySelectorAll(".event-clock"))c.textContent=`Fin dans ${leftLabel(c.dataset.end-serverTime())}`;
+}
 function itemButton(title,sub,side,disabled,onClick,on=false){
  const b=document.createElement("button");b.type="button";b.className=`item${on?" on":""}`;if(disabled)b.setAttribute("aria-disabled","true");
  const main=document.createElement("span"),bt=document.createElement("b"),sm=document.createElement("small");
@@ -1003,12 +1034,14 @@ function itemButton(title,sub,side,disabled,onClick,on=false){
  const pr=document.createElement("span");pr.className="price";pr.textContent=side;
  b.append(main,pr);b.addEventListener("click",()=>{if(!disabled)onClick();});return b;
 }
+// An item whose reward or price an event changes stands out.
+const boosted=(b,on)=>{if(on)b.querySelector(".price").classList.add("boost");return b;};
 function blockTitle(t){const h=document.createElement("h3");h.className="block-title";h.textContent=t;return h;}
 function list(...els){const d=document.createElement("div");d.className="items";d.append(...els);return d;}
 function shopList(kind){
  return list(...shop.filter(it=>it.kind===kind).map(it=>{
-  const err=itemBlock(it);
-  return itemButton(R.itemName(it,S.camp,season()),err||fxText(it.fx)+(it.note?` · ${it.note}`:""),it.price?`${it.price} FM`:"gratuit",!!err,()=>buy(it));
+  const err=itemBlock(it),f=fx(),price=R.itemPrice(it,f),sale=price<it.price;
+  return boosted(itemButton(R.itemName(it,S.camp,season()),err||fxText(it.fx)+(it.note?` · ${it.note}`:""),price?`${price} FM${sale?` (−${f.off} %)`:""}`:"gratuit",!!err,()=>buy(it)),sale);
  }));
 }
 const fxText=R.fxText;
@@ -1026,7 +1059,7 @@ function armedButton(label,armedLabel,cls,onConfirm){
 // 1.6.0: the missions (a report ready), the letter, the goals' progress, the wardrobe and the urn.
 const sheetSig=()=>[S.fm,curIdx(),R.actsToday(S),R.actsThisVisit(S),S.energy<20,S.coffees,S.breadIdx,S.lvl,S.best,S.equipped[person().name]||0,isAsleep(),S.camp,!rematchBlock(),season(),S.treatDay,
  S.missions?.cur?.id,A.missionReady(S),A.missionsToday(S),S.energy<A.MISSION_RULES.minEnergy,S.mail?.letter?.id,A.lettersToday(S),S.goals?.list?.map(x=>`${x.n}${x.done?"d":""}`).join(),
- S.wardrobe?.own?.length,worn().outfit,worn().object,S.wardrobe?.bulletins,S.wardrobe?.confetti,W.freeDrawToday(S),A.flameOf(S),urnHint,batonSig()].join("|");
+ running().map(e=>e.id).join(),S.wardrobe?.own?.length,worn().outfit,worn().object,S.wardrobe?.bulletins,S.wardrobe?.confetti,W.freeDrawToday(S),A.flameOf(S),urnHint,batonSig()].join("|");
 let shownSig="";
 function setBackgroundInert(on){for(const el of document.querySelectorAll(".topbar,.app,footer"))el.inert=on;lockScroll(on);}
 // The page behind an open sheet does not move: a swipe that reaches the end of a list (the chat) no longer scrolls the
@@ -1092,14 +1125,15 @@ function renderSheet(kind,opener){
   set("Jouer",`Activités : ${R.actsToday(S)}/${XP.actsPerDay} aujourd'hui · ${XP.actsPerVisit} par visite`);
   // The rematch only shows while it is on offer: right after a debate, for one hour of game time.
   const rm=rematchBlock()?[]:[itemButton("Quitte ou double !",`Revanche immédiate, 1 chance sur 2 : moral +${R.DOUBLE.moral} et énergie +${R.DOUBLE.energy}… ou un stress ×${R.DOUBLE.stressFactor} (moral −${R.STRESS_HIT*R.DOUBLE.stressFactor}).`,"50/50",false,rematch)];
+  const f=fx(),side=(xp,k)=>f.xp[k]>1?`+${Math.round(xp*f.xp[k])} XP (×${frNum(f.xp[k])})`:`+${xp} XP`,manif=R.MINI[S.camp==="left"?"cortege":"epervier"].xp,rate=R.MINI.debate.bonusRate*f.xp.debate;
   body.append(list(...rm,
-   itemButton("Pong des arguments",err||`Renvoie les piques de l'adversaire pendant 20 s (doigt, souris ou flèches). +${R.PONG_RULES.bonusPerReturn} XP par renvoi (${R.PONG_RULES.bonusCap} au plus).`,`+${XP.activity} XP`,!!err,startPong),
-   itemButton("Débattre",err||`Débat chrono : ${R.MINI.debate.ms/1000} s pour enchaîner les réponses de ta ligne (doigt, souris ou 1-2-3). Énergie −8, moral +10, +${R.MINI.debate.bonusRate} XP par bonne réponse (${R.MINI.debate.bonusCap} max).`,`+${XP.activity} XP`,!!err,()=>startMini("debate")),
-   itemButton(`Manif : ${manifLabel(S.camp)}`,err||(S.camp==="left"
-    ?"Tiens le cortège jusqu'à Nation en 30 s : esquive LBD et lacrymo, ramasse les tracts. Doigt, souris ou flèches ; parapluie avec un deuxième doigt ou Espace."
-    :"Joue l'épervier 35 s avec un CRS : interpelle les manifestants, esquive pavés et molotovs. Gare aux journalistes et aux collègues infiltrés."),`+${XP.activity} XP`,!!err,()=>startMini("manifStart")),
+   boosted(itemButton("Pong des arguments",err||`Renvoie les piques de l'adversaire pendant 20 s (doigt, souris ou flèches). +${R.PONG_RULES.bonusPerReturn} XP par renvoi (${R.PONG_RULES.bonusCap} au plus).`,side(R.PONG_RULES.xp,"pong"),!!err,startPong),f.xp.pong>1),
+   boosted(itemButton("Débattre",err||`Débat chrono : ${R.MINI.debate.ms/1000} s pour enchaîner les réponses de ta ligne (doigt, souris ou 1-2-3). Une bonne réponse ajoute ${String(R.DEBATE.gain/1000).replace(".",",")} s, fin à ${R.DEBATE.maxPoints}. Énergie −8, moral +10.`,`+${frNum(rate)} XP/réponse${f.xp.debate>1?` (×${frNum(f.xp.debate)})`:""}`,!!err,()=>startMini("debate")),f.xp.debate>1),
+   boosted(itemButton(`Manif : ${manifLabel(S.camp)}`,err||(S.camp==="left"
+    ?"Tiens le cortège jusqu'à Nation en 30 s : esquive LBD et lacrymo, ramasse les tracts et les merguez. Doigt, souris ou flèches ; parapluie avec un deuxième doigt ou Espace."
+    :"Joue l'épervier 35 s avec un CRS : interpelle les manifestants, esquive pavés et molotovs, ramasse les rapports d'incident. Gare aux journalistes et aux collègues infiltrés."),side(manif,"manif"),!!err,()=>startMini("manifStart")),f.xp.manif>1),
    // Always open: even when he cannot duel now, the sheet shows the challenges, the results and why.
-   itemButton("Duels",`Défie un rival au Débat chrono : mêmes questions, meilleur score. ${R.DUEL.perDay} défis par jour.`,dn?`${dn} défi${dn>1?"s":""}`:"PvP",false,openDuels)
+   boosted(itemButton("Duels",`Défie un rival au Débat chrono : mêmes questions, meilleur score. ${R.DUEL.perDay+f.duels} défis par jour.`,`${dn?`${dn} défi${dn>1?"s":""}`:"PvP"}${f.duelMult>1?` (×${frNum(f.duelMult)})`:""}`,false,openDuels),f.duels>0||f.duelMult>1)
   ));
   renderBatonBlock(body);
   renderActivities(body);
@@ -1266,33 +1300,38 @@ function boardLook(r){
 }
 
 // ---------- missions, voter mail, daily goals (activities.mjs) ----------
-const dur=ms=>ms<R.H?`${Math.round(ms/60000)} min`:`${String(Math.round(ms/R.H*10)/10).replace(".",",")} h`;
 const leftLabel=ms=>{const m=Math.max(1,Math.ceil(ms/60000));return m>=60?`${Math.floor(m/60)} h ${pad2(m%60)}`:`${m} min`;};
 const plural=(n,w)=>`${n} ${w}${n>1?"s":""}`;
-async function missionStart(m){const r=await send({type:"missionStart",id:m.id});if(r?.ok)toast(`En mission : ${m[S.camp]}. Retour dans ${dur(m.ms)} (heure du jeu).`,true);liveSheet(true);}
+async function missionStart(m){const r=await send({type:"missionStart",id:m.id});if(r?.ok)toast(`En mission : ${m[S.camp]}. Retour dans ${A.missionTime(m.ms/fx().div)} (heure du jeu).`,true);liveSheet(true);}
 async function missionReport(){
  const r=await send({type:"missionReport"});if(!r?.ok||!r.report)return;
  const m=A.missionOf(r.report.id),how=m?.risk?(r.report.ok?" : coup réussi !":" : ça a mal tourné."):" :";
- toast(`Rapport${m?`, ${m[S.camp]}`:""}${how} ${R.fxText(r.report.fx||{})}, +1 bulletin.`,true);if(r.report.ok)playAnim("win",2000);liveSheet(true);
+ toast(`Rapport${m?`, ${m[S.camp]}`:""}${how} ${R.fxText(r.report.fx||{})}, ${A.payText(r.report)}.`,true);if(r.report.ok)playAnim("win",2000);liveSheet(true);
 }
 async function mailAnswer(id,choice){
  const a=A.letterOf(id)?.answers[choice],r=await send({type:"mailAnswer",id,choice});if(!r?.ok)return;
  toast(`${a?.reply||"Réponse envoyée."} (${R.fxText(r.fx||a?.fx||{})}${r.bulletin?", +1 bulletin":""})`,true);liveSheet(true);
 }
+// A mission's reward as the list shows it: the XP always, the bulletins or why there are none today.
+function missionReward(m){
+ const bm=fx().bulletins,p=A.missionPay(S,m,bm);
+ return `+${p.xp} XP · ${p.why==="repeat"?"bulletin déjà gagné aujourd'hui":p.why==="cap"?"plafond de bulletins atteint":`+${plural(p.bulletins,"bulletin").replace(" "," ")}${bm>1?` (×${bm})`:""}`}`;
+}
 function renderActivities(body){
- const c=S.camp,cur=S.missions.cur,ready=A.missionReady(S),n=A.missionsToday(S),max=A.MISSION_RULES.perDay;
- body.append(blockTitle("Missions"),fine(`Quelques heures sur le terrain, pendant que tu fais autre chose : des jauges en plus et 1 bulletin pour ${W.URN_NAME[c]} à chaque rapport. Une à la fois, ${max} par jour (${n}/${max} aujourd'hui).`));
+ const c=S.camp,f=fx(),cur=S.missions.cur,ready=A.missionReady(S),n=A.missionsToday(S),max=A.missionLimit(f);
+ body.append(blockTitle("Missions"),fine(`Quelques heures sur le terrain, pendant que tu fais autre chose : des jauges, de l'XP à chaque rapport et des bulletins pour ${W.URN_NAME[c]}, une fois par mission et par jour. Plus elle dure, plus elle rapporte. Une à la fois.`),
+  fine(`Missions ${n}/${max===Infinity?"∞":max} · Bulletins du jour ${A.bulletinsToday(S)}/${A.MISSION_RULES.bulletinsPerDay*f.bulletins}`));
  if(cur){
   const m=A.missionOf(cur.id);
   if(ready)body.append(list(itemButton(`Lire le rapport : ${m[c]}`,"Mission terminée : son rapport t'attend.","Rapport",false,missionReport,true)));
   else{const d=duelCard(`En mission : ${m[c]}`,`Retour dans ${leftLabel(A.missionLeft(S))}`);d.classList.add("mission-run");d.querySelector("small").className="mission-left";body.append(d);}
  }
- // A reason shared by every mission (one running, the day's four used) is said once, above the list.
- const shared=cur||n>=max?A.missionBlock(S,A.MISSIONS[0].id):"";
+ // A reason shared by every mission (one running, the day's missions used) is said once, above the list.
+ const shared=cur||n>=max?A.missionBlock(S,A.MISSIONS[0].id,f):"";
  if(shared&&!ready)body.append(Object.assign(fine(shared),{className:"fine warn"}));
  body.append(list(...A.MISSIONS.map(m=>{
-  const e=A.missionBlock(S,m.id),desc=`${R.fxText(m.fx)}${m.risk?` ; ou, une fois sur deux : ${R.fxText(m.risk.fx)}`:""}${m.night&&!e?" · le soir seulement, de 20 h à minuit":""}`;
-  return itemButton(m[c],e&&e!==shared?`${e} ${desc}`:desc,dur(m.ms),!!e,()=>missionStart(m));
+  const e=A.missionBlock(S,m.id,f),desc=`${R.fxText(m.fx)}${m.risk?` ; ou, une fois sur deux : ${R.fxText(m.risk.fx)}`:""}${m.night&&!e?" · le soir seulement, de 20 h à minuit":""} · ${missionReward(m)}`;
+  return boosted(itemButton(m[c],e&&e!==shared?`${e} ${desc}`:desc,`${A.missionTime(m.ms/f.div)}${f.div>1?` (÷${f.div})`:""}`,!!e,()=>missionStart(m)),f.div>1);
  })));
  body.append(blockTitle("Courrier"));
  const l=S.mail.letter&&A.letterOf(S.mail.letter.id);
@@ -1300,7 +1339,7 @@ function renderActivities(body){
   const d=document.createElement("div"),b=document.createElement("b"),q=document.createElement("q");d.className="dossier letter";
   b.textContent=`✉️ ${l.from}`;q.textContent=l.text;d.append(b,q);
   body.append(d,list(...l.answers.map((a,i)=>itemButton(a.text,R.fxText(a.fx),"Répondre",false,()=>mailAnswer(l.id,i)))));
- }else body.append(fine(R.clockOf(vnow()).hour<A.MAIL.quietTo?`Le facteur passe à partir de ${A.MAIL.quietTo} h.`:"Pas de lettre pour l'instant : les électeurs écrivent toutes les 30 à 60 minutes (heure du jeu)."));
+ }else body.append(fine(R.clockOf(vnow()).hour<A.MAIL.quietTo?`Le facteur passe à partir de ${A.MAIL.quietTo} h.`:`Pas de lettre pour l'instant : les électeurs écrivent toutes les ${f.mailGap?`${f.mailGap}`:"30 à 60"} minutes (heure du jeu).`));
  const lt=A.lettersToday(S);
  body.append(fine(`${plural(lt,"lettre")} répondue${lt>1?"s":""} aujourd'hui · 1 bulletin toutes les ${A.MAIL.bulletinEvery} lettres.`));
  body.append(blockTitle("Objectifs du jour"));
@@ -1316,7 +1355,7 @@ function renderActivities(body){
   }
   body.append(ul);
  }
- body.append(fine(`🎟️ ${plural(S.wardrobe.bulletins,"bulletin")} en poche : à jouer dans Dossier → ${W.URN_NAME[c]}. Rien de tout ça ne rapporte d'XP : seulement des jauges et des bulletins.`));
+ body.append(fine(`🎟️ ${plural(S.wardrobe.bulletins,"bulletin")} en poche : à jouer dans Dossier → ${W.URN_NAME[c]}. Les missions rapportent aussi de l'XP ; le courrier et les objectifs, seulement des jauges et des bulletins.`));
 }
 
 // ---------- the wardrobe (wardrobe.mjs, looks.mjs) ----------
@@ -1447,6 +1486,7 @@ function renderUrn(body,set){
  if(urnHint){const h=fine("Une odeur de merguez s'échappe de l'urne…");h.classList.add("urn-hint");body.append(h);}
  const act=document.createElement("div");act.className="btn-row urn-actions";
  act.append(smallButton(drawing?"L'urne s'agite…":"Tirage gratuit","go",()=>drawUrn("free"),drawing||!free),smallButton("Tirer · 1 bulletin","",()=>drawUrn("bulletin"),drawing||w.bulletins<1));
+ const offered=W.bonusDraws(S,fx());if(offered)act.append(smallButton(`Tirage offert (${offered})`,"go",()=>drawUrn("bonus"),drawing));
  body.append(act);
  if(!free&&w.bulletins<1&&!urnLast)body.append(fine(W.drawBlock(S,"bulletin")));
  if(urnLast&&W.ITEMS[urnLast.id])body.append(revealCard());
@@ -1670,8 +1710,8 @@ const remain=x=>{const m=Math.max(1,Math.round((duelExp(x)-serverNow())/60000));
 // One line per finished duel, from this player's side.
 function duelResult(x){
  const vs=x.vs,a=x.mine??"?",b=x.theirs??"?";
- if(x.res==="win")return `Gagné ${a} à ${b} contre ${vs}`;
- if(x.res==="loss")return `Perdu ${a} à ${b} contre ${vs}`;
+ if(x.res==="win")return `Gagné ${a} à ${b} contre ${vs}${a===b?", avec moins d'erreurs":""}`;
+ if(x.res==="loss")return `Perdu ${a} à ${b} contre ${vs}${a===b?", avec plus d'erreurs":""}`;
  if(x.res==="tie")return `Match nul contre ${vs}, ${a} partout`;
  if(x.res==="chicken")return `${vs} a esquivé ton défi`;
  if(x.status==="refused")return x.role==="challenger"?`${vs} a esquivé ton défi`:`Refusé : le défi de ${vs}`;
@@ -1691,8 +1731,8 @@ function smallButton(label,cls,onClick,disabled=false){
  b.addEventListener("click",onClick);return b;
 }
 function renderDuels(body,set){
- const d=duelData,why=R.duelBlock(S,d?.minLevel??R.DUEL.minLevel),D=R.DUEL;
- set(hw()?"Duels de minuit":"Duels",d?`Débat chrono en face à face · défis aujourd'hui : ${d.sent??0}/${d.perDay??D.perDay}`:"Débat chrono en face à face");
+ const d=duelData,why=R.duelBlock(S,d?.minLevel??R.DUEL.minLevel),D=R.DUEL,f=fx(),perDay=D.perDay+f.duels,won=k=>Math.round(D.win[k]*f.duelMult);   // the event may start or stop after duelData was read
+ set(hw()?"Duels de minuit":"Duels",d?`Débat chrono en face à face · défis aujourd'hui : ${d.sent??0}/${perDay}`:"Débat chrono en face à face");
  if(!d){
   body.append(fine(duelErr||"Chargement des duels…"));
   if(duelErr){const row=document.createElement("div");row.className="btn-row";row.append(smallButton("Réessayer","",()=>duelsLoad()));body.append(row);}
@@ -1734,9 +1774,9 @@ function renderDuels(body,set){
   }
   body.append(ul);
  }
- body.append(blockTitle("Règles"),fine(`Victoire : +${D.win.xp} XP, moral +${D.win.moral}, énergie +${D.win.energy} (XP payée pour ${D.paidWins} victoires par jour). `+
+ body.append(blockTitle("Règles"),fine(`Victoire : +${won("xp")} XP, moral +${won("moral")}, énergie +${won("energy")}${f.duelMult>1?` (×${frNum(f.duelMult)} pendant l'événement)`:""} (XP payée pour ${D.paidWins} victoires par jour). `+
   `Défaite : −${-D.loss.xp} XP, moral −${-D.loss.moral}, énergie −${-D.loss.energy}, mais jamais de niveau perdu ni de jauge sous ${D.floor}. `+
-  `Match nul : moral +${D.tie.moral}. Refuser ne coûte rien. Dès le niveau ${D.minLevel}, ${D.perDay} défis par jour, ${Math.round(D.window/R.H)} h pour répondre.`));
+  `Match nul : moral +${D.tie.moral}. Refuser ne coûte rien. Dès le niveau ${D.minLevel}, ${perDay} défis par jour, ${Math.round(D.window/R.H)} h pour répondre.`));
 }
 // Live duel events. A result's journal entry (scores, XP) says more than the short notice: it is not overwritten.
 function duelEvent(v){
@@ -2003,7 +2043,7 @@ function tickFrame(now){
   // Full frame rate only while something moves fast; the idle screen is fine at ~8 fps and saves battery.
   if(bd.isOpen())bd.frame(now);
   else if(pong||mini||scene||anim||lvlFx||now-lastDraw>=120){lastDraw=now;render(now);}
-  if(now-lastHud>500){lastHud=now;refresh();liveSheet();missionClock();}
+  if(now-lastHud>500){lastHud=now;refresh();liveSheet();missionClock();eventBar();}
   portraitsTick(now);
   // After a game, in order: what the journal kept back (once the game's own result has been read), the news,
   // then the queued toasts one at a time.

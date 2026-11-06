@@ -93,6 +93,7 @@ test("D9 a loss never costs a level nor pushes a gauge under the floor",()=>{
 test("D10 tie and chicken raise the moral; an unknown outcome changes nothing",()=>{
  const S=game();S.moral=50;
  R.duelApply(S,"tie",{vs:"Bob",mine:12,theirs:12});assert.equal(S.moral,55);assert.match(S.journal[0].text,/12 partout/);
+ const T=game();R.duelApply(T,"loss",{vs:"Bob",mine:12,theirs:12});assert.match(T.journal[0].text,/12 à 12, avec plus d.erreurs/);
  R.duelApply(S,"chicken",{vs:"Bob"});assert.equal(S.moral,58);assert.match(S.journal[0].text,/Bob a esquivé/);
  const jn=S.jn;assert.equal(R.duelApply(S,"bogus"),false);assert.equal(S.jn,jn);
  const F=game();F.moral=100;R.duelApply(F,"chicken",{vs:"Bob"});assert.match(F.journal[0].text,/rien ne bouge/);

@@ -237,6 +237,8 @@ test("activity log and bot report: a headless script stands out from a player at
  const rb=items.find(x=>x.name==="Robot Zelé"),rh=items.find(x=>x.name==="Humaine");
  assert.equal(rb.actions14d,9,"8 actions and 1 duel request");assert.equal(rb.noLiveShare,1);assert.ok(rb.nonBrowserShare>0.8);
  assert.ok(rb.score>=40,JSON.stringify(rb));assert.ok(rb.reasons.some(x=>/sans écran/.test(x)));assert.ok(rb.reasons.some(x=>/curl/.test(x)));
+ assert.deepEqual(rb.kinds,[{kind:"rien",n:8,off:8},{kind:"duel:accept",n:1,off:1}],"what the script does, most frequent first");
+ assert.deepEqual(rh.kinds,[{kind:"rien",n:8,off:0}]);
  assert.equal(rh.score,0,JSON.stringify(rh));assert.equal(rh.noLiveShare,0);assert.equal(rh.nonBrowserShare,0);
  assert.equal(rh.byHour.reduce((a,b)=>a+b,0),8);assert.equal(rh.byHour.length,24);
  assert.ok(items.indexOf(rb)<items.indexOf(rh),"most suspicious first");

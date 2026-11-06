@@ -60,11 +60,13 @@ async function drawUntilWin(list,n=30){
  return all;
 }
 
-let hs=[],obs,mis,winner,draws;
+const BROWSER="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
+let hs=[],obs,mis,script,winner,draws;
 before(async()=>{
  dir=mkdtempSync(join(tmpdir(),"pgga-"));LOG=join(dir,"fetch.log");SOCK=join(dir,"admin.sock");writeFileSync(LOG,"");
  proc=await boot(PORT,dir,env());
- for(let i=0;i<H;i++)hs.push(await player(PORT,`Héritier ${i}`,i%2?"right":"left"));
+ for(let i=0;i<H;i++){const c=await player(PORT,`Héritier ${i}`,i%2?"right":"left");c.ua=BROWSER;hs.push(c);}
+ script=await player(PORT,"Scripteur");
  obs=await player(PORT,"Témoin");mis=await player(PORT,"Missionnaire","right");
  for(const c of [...hs,obs,mis])await subscribe(c,`g-${c.name.replace(/\W/g,"")}`);
  const r=await mis.call("POST","/api/action",{type:"missionStart",id:"tract"});
@@ -73,7 +75,7 @@ before(async()=>{
  // A month-old account and a bright Flamme for the heirs; the mission started two hours ago.
  db=new DatabaseSync(join(dir,"t.db"),{timeout:5000});
  const old=Date.now()-40*864e5;
- for(const c of hs)edit(c.name,S=>{S.flame.pts=500;S.wardrobe.bulletins=500;},{created:old});
+ for(const c of [...hs,script])edit(c.name,S=>{S.flame.pts=500;S.wardrobe.bulletins=500;},{created:old});
  edit(mis.name,S=>{S.missions.cur.start-=2*3600e3;S.missions.cur.end-=2*3600e3;});
  proc=await boot(PORT,dir,env());
 });
@@ -91,6 +93,13 @@ test("a finished mission is pushed once, then marked as told",async()=>{
 test("the urn hint shows for the eligible only",async()=>{
  assert.equal((await me(hs[0])).urnHint,true);
  assert.equal((await me(obs)).urnHint,false,"a fresh account");
+});
+
+test("a player scripting over a fifth of their actions is out of the Bâton's reach, under the bot alert",async()=>{
+ for(let i=0;i<5;i++)await script.call("POST","/api/action",{type:"rien"});
+ assert.equal((await me(script)).urnHint,false);
+ const rep=(await adm({cmd:"bots"})).items.find(x=>x.name===script.name);
+ assert.ok(rep.score<50,JSON.stringify(rep));assert.ok(rep.reasons.some(x=>/pas de Bâton de feu/.test(x)),JSON.stringify(rep.reasons));
 });
 
 test("the Bâton is claimed exactly once, even with dozens of eligible draws at once",async t=>{

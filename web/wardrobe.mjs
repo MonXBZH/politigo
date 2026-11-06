@@ -21,6 +21,16 @@ export const ITEMS={
  bobhuma:O("left","commun","Bob de la Fête de l'Huma","Bob rouge, tee-shirt de concert."),
  mariniere:O("left","commun","Marinière made in France","Le clin d'œil à la marinière de 2012."),
  kway:O("left","commun","K-way vert","Capuche relevée, prêt pour la marche climat."),
+ communard:O("left","legendaire","Le Communard, 1871","Képi de fédéré, vareuse de la Garde nationale, ceinture rouge : soixante-douze jours de Commune, et Le Temps des cerises pour la suite."),
+ mai68:O("left","epique","Mai 68","Béret, parka, écharpe rouge et affiche de l'Atelier populaire : la plage est sous les pavés, paraît-il."),
+ sansculotte:O("left","epique","Le Sans-culotte, 1793","Bonnet phrygien, carmagnole, pantalon rayé : pas de culotte, c'était tout le programme."),
+ zadiste:O("left","rare","Zadiste de Notre-Dame-des-Landes","Ciré, bonnet, bottes de pluie : l'aéroport a été abandonné en 2018, pas les bottes."),
+ hussard:O("left","rare","Hussard noir de la République","Redingote noire, lavallière et ardoise : l'instituteur de l'école laïque, vu par Péguy."),
+ blouseblanche:O("left","rare","Blouse blanche en grève","Blouse d'hôpital, « en grève » au marqueur, et le service assuré quand même."),
+ teeche:O("left","commun","Tee-shirt du Che","La photo de Korda, 1960, vendue par millions : le capitalisme a bien travaillé."),
+ pulllarzac:O("left","commun","Pull du Larzac","Laine du causse, gilet de berger : dix ans de lutte, de 1971 à 1981, contre l'extension du camp."),
+ salopette:O("left","commun","Salopette d'AMAP","Salopette, chemise à carreaux, et le poireau du mardi dans la poche."),
+ totebag:O("left","commun","Écharpe et tote bag","Écharpe en lin, sac de librairie indépendante, et un essai de 400 pages à finir."),
  // ---------------------------------------------------------------- outfits, right
  sacre:O("right","ultra","Le Sacre de Reims","Manteau bleu roi semé de fleurs de lys d'or et bordé d'hermine, couronne royale, cordon bleu du Saint-Esprit ; une lumière divine descend du ciel sur lui."),
  general58:O("right","epique","Le Général, 1958","Képi à deux étoiles, uniforme kaki, gants : un clin d'œil à la Ve République."),
@@ -32,6 +42,16 @@ export const ITEMS={
  doudoune:O("right","commun","Doudoune sans manches","La version « start-up nation », chemise bleu ciel."),
  chasse:O("right","commun","Veste de chasse","Veste huilée, col en velours."),
  blazer:O("right","commun","Blazer de club nautique","Boutons dorés, écusson."),
+ empereur:O("right","legendaire","L'Empereur, 1804","Bicorne en bataille, redingote grise, main dans le gilet : le soleil d'Austerlitz se lève et les abeilles d'or volent autour de lui."),
+ incroyable:O("right","epique","L'Incroyable, 1795","Cravate jusqu'au menton, habit à grands revers, canne noueuse : sous le Directoire, on bannit même le R de Révolution."),
+ immortel:O("right","epique","L'Immortel","L'habit vert est noir, brodé de feuilles d'olivier depuis 1801. Bicorne, épée, et immortel jusqu'à nouvel ordre."),
+ trader:O("right","rare","Trader de la Défense","Chemise à rayures, bretelles rouges, deux téléphones : un pour acheter, un pour rassurer."),
+ agriculteur:O("right","rare","Agriculteur en colère","Cotte verte, casquette de coopérative, et une botte de paille devant la préfecture."),
+ casoar:O("right","rare","Casoar de Saint-Cyr","Shako, gants blancs, plumet rouge et blanc depuis 1855 : surtout ne pas dire plumet, on dit casoar."),
+ pantalonrouge:O("right","commun","Pantalon rouge","Chino rouge, chemise claire, mocassins à glands : sans chaussettes, de Neuilly à l'île de Ré."),
+ loden:O("right","commun","Loden du dimanche","Le manteau vert des grandes occasions, sorti pour la messe de 11 h."),
+ serretete:O("right","commun","Serre-tête de Versailles","Serre-tête en velours, col Claudine, petit pull marine : rendez-vous sur le parvis."),
+ skicourchevel:O("right","commun","Combi de Courchevel","Combinaison fluo de 1985, masque sur les yeux, forfait à l'élastique : la droite décomplexée, en altitude."),
  // ---------------------------------------------------------------- outfit, both camps (the only shared one)
  giletjaune:O("all","rare","Gilet jaune 2018 · Macron démission !","Le gilet fluo des ronds-points de 2018, « Macron démission ! » écrit au marqueur dans le dos."),
  // ---------------------------------------------------------------- objects, both camps
@@ -60,6 +80,16 @@ export const ITEMS={
  drapeaurouge:B("left","epique","Drapeau soviétique","Faucille, marteau et nostalgie d'un pays qui n'existe plus depuis 1991."),
  marteau:B("left","legendaire","Marteau doré","Celui de la faucille, plaqué or : la contradiction est assumée."),
  transfugeL:B("left","legendaire","La carte du parti d'en face","Une carte d'adhérent de l'autre camp, glissée dans la poche. Pour voir."),
+ rosepantheon:B("left","legendaire","La rose du Panthéon","21 mai 1981 : une rose à la main dans la crypte, et la gauche à l'Élysée pour la première fois sous la Ve."),
+ livrerouge:B("left","epique","Le Petit Livre rouge","La lecture obligée des maoïstes de 1968, depuis rangée à côté des regrets."),
+ pvreims:B("left","epique","Le procès-verbal de Reims","Novembre 2008 : 42 voix d'écart au premier compte, 102 au dernier, et un parti entier pour commenter."),
+ thermos:B("left","rare","Thermos de piquet de grève","Café brûlant, 5 h du matin, devant le dépôt."),
+ caissegreve:B("left","rare","Caisse de grève","Une boîte de conserve fendue, qui tient parfois plus longtemps que le gouvernement."),
+ touchepas:B("left","rare","Badge « Touche pas à mon pote »","La petite main jaune de 1985, sur tous les blousons des lycées."),
+ sifflet:B("left","commun","Sifflet de manif","Deux notes, trois heures de cortège, plus de voix le lendemain."),
+ pancarte:B("left","commun","Pancarte en carton","Un carton de pizza, un feutre, et un jeu de mots qui a coûté deux heures de réunion."),
+ gourde:B("left","commun","Gourde en inox","Réutilisable, cabossée, couverte d'autocollants, et jamais lavée."),
+ doleances:B("left","commun","Cahier de doléances","Écrit en 1789, rouvert en 2019 : on note, on archive, on verra."),
  // ---------------------------------------------------------------- objects, right
  croissant:B("right","commun","Croissant au beurre","Pur beurre, de l'artisan du coin, jamais industriel."),
  mallette:B("right","commun","Mallette","Elle contient des dossiers. Que des dossiers."),
@@ -70,7 +100,17 @@ export const ITEMS={
  karcher:B("right","epique","Kärcher miniature","Le nettoyeur haute pression de 2005, en format de poche."),
  tricolore:B("right","epique","Drapeau tricolore XXL","Pour le meeting, le 14 Juillet et le match de rugby."),
  sceptre:B("right","legendaire","Sceptre de la Ve République","Un pouvoir fort, un sceptre lourd, une Constitution de 1958."),
- transfugeR:B("right","legendaire","La carte du parti d'en face","Une carte d'adhérent de l'autre camp, glissée dans la poche. Pour voir.")
+ transfugeR:B("right","legendaire","La carte du parti d'en face","Une carte d'adhérent de l'autre camp, glissée dans la poche. Pour voir."),
+ croixlorraine:B("right","legendaire","La croix de Lorraine","Choisie en juillet 1940 pour la France libre, ici en or : le gaullisme a fait du chemin."),
+ micro40:B("right","epique","Micro de la BBC, 1940","18 juin : peu de Français l'ont entendu ce soir-là, beaucoup s'en sont souvenus ensuite."),
+ montre50:B("right","epique","La montre des 50 ans","« Si à 50 ans on n'a pas de Rolex… » : février 2009, et la phrase colle encore au poignet."),
+ menufouquets:B("right","rare","Menu du Fouquet's","Le soir du 6 mai 2007, la carte a fait plus parler que le discours."),
+ housse:B("right","rare","Housse de costume","13 000 euros de costumes offerts, révélés en 2017, rendus depuis : il reste la housse."),
+ cigare:B("right","rare","Cigare du banquet","Allumé au dessert, éteint au deuxième tour."),
+ chevaliere:B("right","commun","Chevalière","Au petit doigt, gravée d'armoiries que personne n'a vérifiées."),
+ figaroplie:B("right","commun","Le journal plié","Sous le bras, ouvert aux pages saumon, celles de la Bourse."),
+ champagne:B("right","commun","Coupe de champagne","Tiède et sans bulles à la troisième estimation de 20 h."),
+ clevilla:B("right","commun","Clé de la résidence secondaire","À La Baule ou à l'île de Ré, on ne sait plus laquelle.")
 };
 export const URN_NAME={left:"La Tombola de la Fête",right:"La Loterie du Gala"};
 // Odds in %, from the bottom up; pity: the draw count without such a rarity that forces it (epique also counts
@@ -79,7 +119,7 @@ export const ODDS={commun:60,rare:28,epique:9.5,legendaire:2,ultra:0.5};
 export const PITY={epique:10,legendaire:50,ultra:80};
 export const CONFETTI={commun:5,rare:10,epique:25,legendaire:50,ultra:100,mythique:100};
 export const EXCHANGE={cost:100,rarities:["commun","rare","epique"]};
-export const MYTHIC={item:"baton",minDays:30,minFlame:300,base:0.01,step:0.001,per:10,cap:0.03};
+export const MYTHIC={item:"baton",minDays:21,minFlame:300,base:0.01,step:0.001,per:10,cap:0.03};
 const rank=r=>RARITIES.indexOf(r);
 const DRAWN=["commun","rare","epique","legendaire","ultra"];
 // The items a player of a camp can draw or exchange: the shared ones (pool "all") and the camp's own.
@@ -94,14 +134,20 @@ export function sanitizeWardrobe(w){
  if(Array.isArray(w.own))o.own=[...new Set(w.own.filter(id=>typeof id==="string"&&Object.hasOwn(ITEMS,id)))];
  for(const k of ["outfit","object"]){const id=w.worn?.[k];if(typeof id==="string"&&o.own.includes(id)&&ITEMS[id].kind===k)o.worn[k]=id;}
  o.confetti=int(w.confetti,0,1e6,0);o.bulletins=int(w.bulletins,0,9999,0);o.freeDay=int(w.freeDay,-1,1e9,-1);o.draws=int(w.draws,0,1e9,0);
+ if(w.ev&&Array.isArray(w.ev.ids)){const ids=w.ev.ids.filter(i=>Number.isSafeInteger(i)&&i>0).slice(-8);if(ids.length)o.ev={ids,n:int(w.ev.n,0,9,0)};}
  for(const k of Object.keys(PITY))o.pity[k]=int(w.pity?.[k],0,PITY[k]-1,0);
  return o;
 }
 
 // ---------- read-only checks ----------
 export const freeDrawToday=S=>S.wardrobe.freeDay!==dayKey(curIdx(S));
-export function drawBlock(S,pay){
+// Draws events still offer this player (they never roll the mythic): S.wardrobe.ev = {ids, n used}. Overlapping events
+// share one allowance, the strongest's: a draw taken under one counts under the others.
+const bonusUsed=(S,fx)=>S.wardrobe.ev?.ids.some(id=>fx.free.ids.includes(id))?S.wardrobe.ev.n:0;
+export const bonusDraws=(S,fx)=>fx?.free?Math.max(0,fx.free.n-bonusUsed(S,fx)):0;
+export function drawBlock(S,pay,fx=null){
  if(pay==="free")return freeDrawToday(S)?"":"Tirage gratuit déjà pris aujourd'hui : reviens demain, ou utilise un bulletin.";
+ if(pay==="bonus")return bonusDraws(S,fx)>0?"":"Pas de tirage offert pour l'instant.";
  if(pay==="bulletin")return S.wardrobe.bulletins>=1?"":"Pas de bulletin : missions, courrier et objectifs du jour en rapportent.";
  return "Mode de tirage inconnu.";
 }
@@ -124,10 +170,12 @@ function gain(S,id){
  return {dup,confetti};
 }
 // pay "free" (once per calendar day) or "bulletin". mythic: the server's {available, ageDays, clean, claim}.
-export function draw(S,pay,{random=Math.random,mythic=null}={}){
- const e=drawBlock(S,pay);if(e)return {ok:false,error:e};
+export function draw(S,pay,{random=Math.random,mythic=null,fx=null}={}){
+ const e=drawBlock(S,pay,fx);if(e)return {ok:false,error:e};
  const W=S.wardrobe,urn=URN_NAME[S.camp];
- if(pay==="free")W.freeDay=dayKey(curIdx(S));else W.bulletins--;
+ if(pay==="free")W.freeDay=dayKey(curIdx(S));
+ else if(pay==="bonus"){const n=bonusUsed(S,fx);W.ev={ids:[...new Set([...(n?W.ev.ids:[]),...fx.free.ids])].slice(-8),n:n+1};mythic=null;}
+ else W.bulletins--;
  W.draws++;
  // The staff is rolled before anything else and only taken when the server's claim (atomic) says it is still free.
  const p=mythicChance(S,mythic);

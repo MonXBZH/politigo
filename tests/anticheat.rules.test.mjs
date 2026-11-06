@@ -62,13 +62,13 @@ test("E3 seeded determinism: the same seed deals the same questions, another see
 test("E4 debateAnswer: right and wrong, the penalty, the reaction times, the next question",()=>{
  const st=R.debateNew(5,"right");R.debateReveal(st,0);
  let a=R.debateAnswer(st,right(st),800);
- assert.deepEqual(a,{right:true,points:1,errors:0,leftMs:MINI.debate.ms-800,done:false});
+ assert.deepEqual(a,{right:true,points:1,errors:0,leftMs:MINI.debate.ms-800+DEBATE.gain,done:false});
  assert.equal(st.idx,1);assert.equal(st.shownAt,null);assert.deepEqual(st.gaps,[800]);
  assert.equal(R.debateAnswer(st,0,900),null,"no question on screen: nothing to answer");
  R.debateReveal(st,800);
  a=R.debateAnswer(st,wrong(st),1700);
  assert.equal(a.right,false);assert.ok(a.miss==="decoy"||a.miss==="opponent");
- assert.equal(a.errors,1);assert.equal(st.lost,DEBATE.penalty);assert.equal(a.leftMs,MINI.debate.ms-1700-DEBATE.penalty);
+ assert.equal(a.errors,1);assert.equal(st.lost,DEBATE.penalty-DEBATE.gain);assert.equal(a.leftMs,MINI.debate.ms-1700-DEBATE.penalty+DEBATE.gain);
  assert.deepEqual(st.gaps,[800,900]);
  // The miss says which: the decoy, or the other camp's line.
  const s2=R.debateNew(5,"left");R.debateReveal(s2,0);const ord=R.debateRounds(R.seeded(5),1)[0].order;
@@ -120,8 +120,8 @@ test("E8 debateResult: the cap and the flags",()=>{
  // A metronome without a single error, faster than anyone: every flag but the cap.
  const b=R.debateNew(11,"left");playTurn(b,{gap:()=>650});
  const rb=R.debateResult(b);
- assert.equal(rb.points,Math.min(b.points,DEBATE.maxPoints));assert.deepEqual(rb.flags,["zero_erreur","rythme_regulier","reflexe","plafond"]);
- assert.ok(b.points>DEBATE.maxPoints,"23 answers in 15 s");assert.equal(rb.points,DEBATE.maxPoints);
+ assert.deepEqual(rb.flags,["zero_erreur","rythme_regulier","reflexe"]);
+ assert.equal(b.points,DEBATE.maxPoints,"the game stops at the cap");assert.equal(rb.points,DEBATE.maxPoints);
  // The thresholds themselves.
  const z=R.debateNew(1,"left");Object.assign(z,{points:DEBATE.zeroErrors,errors:0,gaps:[1000,1500,900]});
  assert.deepEqual(R.debateResult(z).flags,["zero_erreur"]);
@@ -140,9 +140,19 @@ test("E8 debateResult: the cap and the flags",()=>{
  assert.deepEqual(R.debateResult(c),{points:DEBATE.maxPoints,errors:2,flags:["plafond"]});
 });
 
-test("E9 a human pace stays playable: 1 s answers, a few errors, about a dozen points, no flag",()=>{
+test("E9 a human pace stays playable: no flag; a quick hand reaches the top, a slow one runs out of time",()=>{
  const st=R.debateNew(21,"left");playTurn(st,{gap:k=>900+((k*397)%700),miss:k=>k%4===3});
- const r=R.debateResult(st);assert.deepEqual(r.flags,[]);assert.ok(r.points>=7&&r.points<=14,String(r.points));
+ const r=R.debateResult(st);assert.deepEqual(r.flags,[]);assert.equal(r.points,DEBATE.maxPoints);
+ const s=R.debateNew(21,"left");playTurn(s,{gap:k=>2200+((k*397)%700),miss:k=>k%4===3});
+ const q=R.debateResult(s);assert.deepEqual(q.flags,[]);assert.ok(q.points>=5&&q.points<15,String(q.points));
+});
+
+test("E9b a right answer buys time, and the game ends at the cap with time left",()=>{
+ const st=R.debateNew(3,"left");R.debateReveal(st,0);
+ assert.equal(R.debateAnswer(st,right(st),1000).leftMs,MINI.debate.ms-1000+DEBATE.gain);
+ R.debateReveal(st,1000);st.points=DEBATE.maxPoints-1;
+ const a=R.debateAnswer(st,right(st),2000);assert.equal(a.points,DEBATE.maxPoints);assert.equal(a.done,true);assert.ok(a.leftMs>0);
+ assert.equal(R.debateReveal(st,2000),null,"no more questions");
 });
 
 test("E10 debateFinish: pays the referee's score once, for the game S.mini opened",()=>{
@@ -151,11 +161,11 @@ test("E10 debateFinish: pays the referee's score once, for the game S.mini opene
  let t=at(10)+DEBATE.intro;for(let k=0;k<6;k++){t+=1000+k*130;R.debateAnswer(st,k===2?wrong(st):right(st),t);R.debateReveal(st,t);}
  const xp0=S.xp,end=at(10)+DEBATE.intro+MINI.debate.ms;
  const r=R.debateFinish(S,st,{now:end,random:noRandom});
- assert.ok(r.ok);assert.deepEqual({...r},{ok:true,bonus:5,game:"debate",score:5,errors:1});
+ assert.ok(r.ok);assert.deepEqual({...r},{ok:true,bonus:12,game:"debate",score:5,errors:1});
  assert.deepEqual(r.audit,{game:"debate",score:5,secs:16.3,errors:1,flags:[]});assert.ok(!Object.keys(r).includes("audit"));
- assert.equal(S.xp-xp0,5);assert.equal(S.mini,null);
- assert.equal(S.journal[0].text,"Débat chrono : 5 arguments dans la ligne, bonus d'éloquence +5 XP.");
- assert.deepEqual(S.journal[0].d,{game:"debate",score:5,bonus:5,great:false});
+ assert.equal(S.xp-xp0,12);assert.equal(S.mini,null);
+ assert.equal(S.journal[0].text,"Débat chrono : 5 arguments dans la ligne, bonus d'éloquence +12 XP.");
+ assert.deepEqual(S.journal[0].d,{game:"debate",score:5,bonus:12,great:false});
  assert.equal(R.debateFinish(S,st,{now:end+1}).error,"Aucune partie en cours.","once");
  // Another game's turn, or no game: refused, nothing paid.
  const T=game();R.act(T,{type:"debate"},{now:at(10),random:noRandom});
@@ -164,7 +174,7 @@ test("E10 debateFinish: pays the referee's score once, for the game S.mini opene
  // A flagged game is paid (capped) but never announced.
  const B=game(),bs=R.act(B,{type:"debate"},{now:at(10),random:noRandom}).turn;playTurn(bs,{t:at(10)+DEBATE.intro,gap:()=>650});
  const rb=R.debateFinish(B,bs,{now:end});assert.equal(rb.bonus,MINI.debate.bonusCap);assert.equal(B.journal[0].d.great,false);
- assert.deepEqual(rb.audit.flags,["zero_erreur","rythme_regulier","reflexe","plafond"]);
+ assert.deepEqual(rb.audit.flags,["zero_erreur","rythme_regulier","reflexe"]);
  // A clean great game is announced.
  const G=game(),gs=R.act(G,{type:"debate"},{now:at(10),random:noRandom}).turn;
  Object.assign(gs,{points:MINI.debate.great,errors:2,gaps:[700,1500,900,2100,800,1300,1000,1800]});

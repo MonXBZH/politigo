@@ -175,3 +175,23 @@ test("malformed debate requests are 400/422, never a 500, and change nothing; ol
  assert.ok(!JSON.stringify(q.json).includes("seed"),"no seed in the reply");
  assert.equal((await client(PORT).call("GET","/api/health")).status,200);
 });
+
+test("tie-break: at equal scores the fewer errors win; equal errors, a forfeit or a duel without errors stay a tie",async()=>{
+ const names=["Egal A","Egal B","Egal C","Egal D","Egal E","Egal F","Egal G","Egal H"],[a,b,c,d,e,f,g,h]=await Promise.all(names.map(n=>player(n)));
+ // Each challenger's turn is written as 2 right answers with some errors; each defender plays 2 right and 1 wrong.
+ const setUp=async(x,y,errors)=>{const {id}=await challenged(x,y);DB.prepare("UPDATE duels SET c_score=2,c_errors=? WHERE id=?").run(errors,id);await accepted(y,id);return id;};
+ const [i1,i2,i3,i4]=[await setUp(a,b,0),await setUp(c,d,2),await setUp(e,f,1),await setUp(g,h,null)];
+ const play=(p,id)=>debateTurn(p,id,{n:3,wrong:[1]});
+ const [r1,r2,r3,r4]=await Promise.all([play(b,i1),play(d,i2),play(f,i3),play(h,i4)]);
+ for(const r of [r1,r2,r3,r4])assert.equal(r.json.result.score,2,JSON.stringify(r.json));
+ assert.equal(row(i1).winner,row(i1).challenger,"the challenger made fewer");assert.equal(r1.json.result.res,"loss");
+ assert.equal(row(i2).winner,row(i2).defender,"the defender made fewer");assert.equal(r2.json.result.res,"win");
+ assert.equal(row(i3).winner,null,"as many errors");assert.equal(r3.json.result.res,"tie");
+ assert.equal(row(i4).winner,null,"a turn from before the tie-break");assert.equal(r4.json.result.res,"tie");
+ const feed=(await a.call("GET","/api/board")).json.feed.map(x=>x.text);
+ assert.ok(feed.some(t=>t==="Egal A bat Egal B au Débat chrono, 2 à 2, avec moins d'erreurs."),JSON.stringify(feed));
+ // Forfeit: the clock closes the defender's turn, nothing to compare at 0-0.
+ const {id}=await challenged(b,c);DB.prepare("UPDATE duels SET c_score=0,c_errors=3 WHERE id=?").run(id);await accepted(c,id);
+ DB.prepare("UPDATE duels SET d_started=? WHERE id=?").run(Date.now()-DUEL_TURN_MS-1000,id);
+ assert.ok(await until(()=>row(id).status==="done"));assert.equal(row(id).winner,null);
+});

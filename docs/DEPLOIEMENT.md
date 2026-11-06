@@ -208,7 +208,8 @@ compose ; supprimer le bloc `admin` et ses volumes pour s'en passer, le jeu n'en
   (empreintes des mots de passe, clé des notifications) : à garder hors d'Internet.
 - **Détection de bots** : sur 14 jours, pour chaque joueur, ses résultats aux mini-jeux (part des parties au bonus maximum,
   régularité suspecte des scores, parties finies au plus tôt permis, signalements du serveur), puis ses actions heure par heure,
-  la part faite sans le jeu ouvert, depuis autre chose qu'un navigateur et la nuit, résumés en un score et des raisons.
+  la part faite sans le jeu ouvert, depuis autre chose qu'un navigateur et la nuit, résumés en un score et des raisons, et
+  le détail de ce qu'il a fait (missions, tirages, courrier…) avec la part hors navigateur.
   **Duels suspects** : paires de comptes créés ensemble qui se défient, rafales de comptes différents à quelques secondes
   d'intervalle, même perdant face au même gagnant, et joueur qui bat l'un après l'autre plusieurs rivaux qui ne jouent
   presque pas (une ferme de comptes). Chaque tour de duel compte aussi dans la détection de bots. Un duel terminé peut être **annulé** : XP, niveau, moral et énergie des deux
@@ -255,17 +256,41 @@ réseau local, ou derrière Nginx Proxy Manager en HTTPS (`POLITIGO_ADMIN_BIND=1
 - Limites : 8 messages par 20 s, 20 images par heure, 3 images en attente par joueur, 300 Mo d'images en tout.
 - Pas de notification ni de son : une pastille compte les non-lus, et rien ne s'affiche pendant un mini-jeu.
 
+### Événements (panneau Events)
+
+Le panneau **Events** de l'administration crée et gère des événements à durée limitée, sur chaque serveur : **Double XP**
+(×1,5, ×2 ou ×3, tous les mini-jeux ou certains), **Missions libres** (+3, +6 ou sans limite), **Mission express** (durée ÷2 ou
+÷3), **Pluie de bulletins** (×2 ou ×3, plafond du jour compris), **Tirage du peuple** (1 à 3 tirages offerts, une fois par
+événement), **Soldes à la Buvette** (−25 % ou −50 %, Soins compris), **Sac postal** (une lettre toutes les 10 ou 15 minutes, sans bulletin au-delà de 24 lettres dans la journée),
+**Nuit des duels** (défis en plus, gains ×1,5 ou ×2) et **Immunité parlementaire** (jauges ÷2 ou ÷3, pas de mort politique).
+
+- **Programmation** : de 5 minutes à 7 jours, pour tous ou un seul camp, une fois, chaque jour ou chaque semaine (à la même
+  heure, changement d'heure compris). Un événement se lance tout de suite ou à sa date, se modifie ou se supprime tant qu'il
+  n'a pas commencé, s'arrête à tout moment et se duplique. Arrêter une occurrence ne supprime pas les suivantes : la prochaine
+  se supprime dans « À venir ». 100 événements à venir au plus.
+- **Annonces** : bandeau permanent chez les joueurs ; en option, annonce (écrans ouverts, notification, fil s'il vise tout le
+  monde) au début et rappel 15 minutes avant. Un événement qui s'est déroulé serveur arrêté reste silencieux.
+- **Règles** : le serveur applique les effets. Deux événements du même type ne s'additionnent pas, le plus fort s'applique ;
+  deux types différents se cumulent. Une partie ou une mission lancée pendant l'événement garde son bonus. Aucun événement ne
+  modifie les points de Flamme, les chances de l'urne ni rien en argent réel, et les tirages offerts ne donnent jamais le Bâton.
+  L'Immunité parlementaire aide toutefois à garder les jauges à 50, un critère de la Flamme.
+- **Droits** : le profil **Modo événements** ouvre les panneaux Events et Annonces, avec les droits de créer et modifier, lancer
+  et arrêter, supprimer et d'envoyer des annonces. Chaque droit se coche aussi séparément pour un autre modérateur. Tout est
+  écrit dans le journal d'admin, au nom de son auteur.
+
 ### Activités, Flamme, Tombola et Garde-robe
 
-- **Missions, courrier, objectifs du jour** : effets sur les jauges seulement (satiété, moral, énergie, hygiène, bornées
-  à 0-100), **jamais d'XP ni de FM**. Missions : une à la fois, 4 par jour, énergie 15 au moins, la nuit seulement de 20 h
-  à minuit (heure du jeu) ; une notification « Mission terminée » part au retour (différée pendant un mini-jeu). Courrier :
+- **Missions, courrier, objectifs du jour** : effets sur les jauges (satiété, moral, énergie, hygiène, bornées à 0-100),
+  **jamais de FM** ; seules les missions donnent de l'XP. Missions : une à la fois, 6 par jour, énergie 15 au moins, la nuit
+  seulement de 20 h à minuit (heure du jeu). Récompense selon la durée, réussite ou non : jusqu'à 1 h, +10 XP et 1 bulletin ;
+  moins de 4 h, +20 XP et 2 bulletins ; à partir de 4 h, +30 XP et 3 bulletins. L'XP tombe à chaque rapport ; les bulletins
+  d'une même mission une fois par jour, 6 par jour au plus pour toutes les missions. Une notification « Mission terminée » part au retour (différée pendant un mini-jeu). Courrier :
   une lettre toutes les 30 à 60 minutes, de 7 h à minuit. Objectifs : 3 par jour, tirés au premier passage de la journée ;
   une mort politique ne les retire pas, et ne redonne ni missions ni bulletins.
-- **Flamme** : 10 points par jour au plus (jauges toutes ≥ 50 toute la journée +3, les 3 objectifs +3, au moins 4 visites
-  étalées sur 8 h +2, 2 missions +1, 3 lettres +1) ; ×0,9 par journée sans visite, ×0,75 à une mort politique.
+- **Flamme** : 15 points par jour au plus (jauges toutes ≥ 50 toute la journée +4, les 3 objectifs +4, au moins 4 visites
+  étalées sur 8 h +3, 2 missions +2, 3 lettres +2) ; ×0,9 par journée sans visite, ×0,75 à une mort politique.
 - **Tombola (gauche) / Loterie (droite)**, purement cosmétique, **jamais d'argent réel** : un tirage gratuit par jour,
-  puis un bulletin par tirage ; bulletins gagnés uniquement en jouant (+1 par mission rapportée, au plus 4 par jour ; +1 par
+  puis un bulletin par tirage ; bulletins gagnés uniquement en jouant (de 1 à 3 par mission, au plus 6 par jour ; +1 par
   objectif, 3 par jour ; +1 toutes les 3 lettres). Chances : commun 60 %, rare 28 %, épique 9,5 %, légendaire 2 %, ultra
   rare 0,5 % ; tirages garantis : épique au 10ᵉ, légendaire au 50ᵉ, ultra rare au 80ᵉ. Doublons → confettis (5, 10, 25,
   50, 100 selon la rareté) ; 100 confettis = une case commune, rare ou épique au choix. La fiche d'un joueur dans
@@ -276,7 +301,7 @@ réseau local, ou derrière Nginx Proxy Manager en HTTPS (`POLITIGO_ADMIN_BIND=1
 
 - **Le Bâton de feu des Apprix** : un seul exemplaire par partie, pour les deux camps, rareté « Mythique ». Il n'apparaît
   nulle part (ni Garde-robe, ni nouveautés, ni README) tant que personne ne l'a gagné. Pour avoir une chance à chaque
-  tirage : compte de 30 jours, Flamme ≥ 300, aucun soupçon de bot ni duel signalé sur 14 jours ; alors 1 % par tirage,
+  tirage : compte de 21 jours, Flamme ≥ 300, aucun soupçon de bot (score sous 50, au plus 20 % d'actions hors navigateur) ni duel signalé sur 14 jours ; alors 1 % par tirage,
   +0,1 % par tranche de 10 de Flamme au-delà de 300, 3 % au plus (compter 6 à 8 semaines pour un joueur très assidu).
   Le gagnant voit la légende en 14 tableaux ; tous les autres reçoivent une notification, et la console une alerte « Mythique ».
 - **Il retourne dans l'urne** à la mort politique de son porteur, quand sa Flamme passe sous 150 (avertissement unique
@@ -303,8 +328,8 @@ réseau local, ou derrière Nginx Proxy Manager en HTTPS (`POLITIGO_ADMIN_BIND=1
 
 - **Duels** (Débat chrono, en différé) : le joueur qui défie joue d'abord ; l'adversaire a 24 h pour relever le défi
   sur le même débat, ou le refuser. Comme en solo, c'est le serveur qui pose les questions une à une et chronomètre les
-  réponses : le navigateur ne connaît jamais le tirage, une réponse en moins de 0,6 s n'est pas comptée, un débat rapporte
-  20 points au plus, et un tour anormal (zéro erreur, rythme de machine, réflexes plus rapides qu'un humain) est signalé dans l'administration. Limites : niveau 5
+  réponses : le navigateur ne connaît jamais le tirage, une réponse en moins de 0,6 s n'est pas comptée, un débat s'arrête
+  à 30 bonnes réponses, à score égal le moins d'erreurs l'emporte, et un tour anormal (zéro erreur, rythme de machine, réflexes plus rapides qu'un humain) est signalé dans l'administration. Limites : niveau 5
   et compte d'au moins 12 h pour les deux joueurs, 3 défis envoyés par jour, un seul duel ouvert par paire, et pas de nouveau
   duel entre deux joueurs moins de 24 h après le précédent. Une victoire rapporte 3 fois par jour au plus, et 3 fois par jour
   au plus pour le défié ; au-delà elle ne rapporte rien. Une défaite ne fait jamais perdre de niveau ni descendre le moral ou
@@ -391,7 +416,7 @@ interdire la suppression et le force push, exiger une pull request (0 approbatio
 ## 6. Tests
 
 ```bash
-bash tests/run-server.sh                       # 412 tests : règles (dont l'équilibrage J15) + mini-jeux + activités + Tombola et Garde-robe + test politique + changelog + API + duels + notifications + chat + migrations + outils et interface d'admin, dans l'image Node de production
+bash tests/run-server.sh                       # 443 tests : règles (dont l'équilibrage J15) + mini-jeux + activités + Tombola et Garde-robe + test politique + changelog + API + duels + notifications + chat + migrations + outils et interface d'admin, dans l'image Node de production
 bash tests/run-server.sh tests/chat.test.mjs   # un seul fichier
 docker compose restart api                     # remet à zéro les limites d'inscription avant l'e2e
 powershell -ExecutionPolicy Bypass -File tests\e2e.ps1   # parcours complet dans Chrome (crée deux joueurs de test)

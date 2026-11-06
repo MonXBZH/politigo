@@ -87,19 +87,21 @@ const DUMMY_HASH=await hashPass(generate());
 // and actions (what they may do), on the servers checked. Kept in the admin volume (moderators.json: scrypt hashes
 // only). A password is 20 random bytes in base64 (openssl rand -base64 20), shown once. The owner alone manages them,
 // and keeps Réglages, Sauvegarde and the invite code's regeneration.
-const PANELS=[["tableau","Tableau de bord"],["traiter","À traiter"],["joueurs","Joueurs"],["annonces","Annonces"],["chat","Chat"],["fil","Fil"],
+const PANELS=[["tableau","Tableau de bord"],["traiter","À traiter"],["joueurs","Joueurs"],["annonces","Annonces"],["events","Events"],["chat","Chat"],["fil","Fil"],
  ["duels","Duels"],["bots","Détection de bots"],["journal","Journal d'admin"]];
 const ACTIONS=[["chat-delete","Supprimer un message du chat"],["chat-mute","Couper le chat d'un joueur"],["signout","Déconnecter un joueur"],
  ["rename","Renommer un joueur"],["suspend","Suspendre ou réactiver un compte"],["unlock","Débloquer la connexion d'un joueur"],
  ["reset-password","Réinitialiser le mot de passe d'un joueur"],["announce","Envoyer et planifier des annonces"],["feed-delete","Supprimer une ligne du fil"],
  ["duel-cancel","Annuler un duel en cours"],["duel-annul","Annuler un duel terminé (rendre les gains), arbitrer un duel du Bâton"],["alerts-ack","Marquer une alerte comme vue"],
+ ["events-edit","Créer et modifier un événement"],["events-run","Lancer et arrêter un événement"],["events-delete","Supprimer un événement"],
  ["invite","Voir et copier le code d'invitation"]];
 const PANEL_IDS=PANELS.map(x=>x[0]),ACTION_IDS=ACTIONS.map(x=>x[0]);
 const PRESETS=[{id:"chat",label:"Modo chat",panels:["traiter","chat"],actions:["chat-delete","chat-mute","alerts-ack"]},
+ {id:"events",label:"Modo événements",panels:["events","annonces"],actions:["events-edit","events-run","events-delete","announce"]},
  {id:"full",label:"Modo complet",panels:PANEL_IDS,actions:ACTION_IDS.filter(a=>a!=="invite")}];   // the code stays out of a player's hands unless checked
 // What each command asks of a moderator: one of these panels (p:) or actions (a:). Not listed: the owner's alone.
 const NEEDS={stats:PANEL_IDS.map(p=>"p:"+p),list:["p:tableau","p:joueurs","p:annonces"],player:["p:joueurs"],
- "schedule-list":["p:annonces"],"announce-history":["p:annonces"],"feed-list":["p:fil"],"duels-list":["p:duels"],"duels-suspects":["p:duels"],
+ "schedule-list":["p:annonces"],"events-list":["p:events"],"event-save":["a:events-edit"],"event-start":["a:events-run"],"event-stop":["a:events-run"],"event-delete":["a:events-delete"],"announce-history":["p:annonces"],"feed-list":["p:fil"],"duels-list":["p:duels"],"duels-suspects":["p:duels"],
  bots:["p:bots"],"chat-reports":["p:chat"],"chat-feed":["p:chat"],"chat-media":["p:chat"],alerts:["p:traiter"],audit:["p:journal"],"invite-get":["a:invite"],
  signout:["a:signout"],rename:["a:rename"],suspend:["a:suspend"],unlock:["a:unlock"],announce:["a:announce"],"schedule-add":["a:announce"],
  "schedule-delete":["a:announce"],"schedule-toggle":["a:announce"],"feed-delete":["a:feed-delete"],"duel-cancel":["a:duel-cancel"],
@@ -172,7 +174,7 @@ async function status(srv,full=false){
 const WHO=["name","id"];
 const CMDS={
  stats:[],list:[],player:WHO,signout:WHO,rename:[...WHO,"newName"],suspend:[...WHO,"on"],unlock:WHO,
- announce:["text","to","camp"],"schedule-list":[],"schedule-add":["text","target","kind","at","time","days","until"],
+ announce:["text","to","camp"],"events-list":[],"event-save":["id","type","name","msg","params","starts","ends","who","rep","push","remind","now"],"event-start":["id"],"event-stop":["id"],"event-delete":["id"],"schedule-list":[],"schedule-add":["text","target","kind","at","time","days","until"],
  "schedule-delete":["id"],"schedule-toggle":["id","enabled"],"announce-history":[],"feed-list":["limit"],"feed-delete":["id"],
  "duels-list":[],"duel-cancel":["id"],"duels-suspects":[],"duel-annul":["id"],"baton-judge":["id","accept"],alerts:[],"alerts-ack":["keys"],"invite-get":[],"invite-regenerate":[],"registrations-set":["open"],"event-set":["mode"],
  bots:[],"chat-reports":[],"chat-feed":["before","limit","room"],"chat-media":["id"],"chat-delete":["id"],"chat-mute":[...WHO,"hours"],"chat-set":["global","camp"],audit:["limit"],
@@ -380,6 +382,7 @@ async function route(req,res,path){
   const keys=Object.hasOwn(CMDS,b.cmd)?CMDS[b.cmd]:null;
   if(!keys)throw new HttpError(400,"Commande inconnue.");
   if(!may(mod,b.cmd)||(mod&&!NEEDS[b.cmd]))throw denied();
+  if(b.cmd==="event-save"&&b.now===true&&!may(mod,"event-start"))throw denied();   // saving and launching at once takes both rights
   const {ok,...r}=await cmd(srv,{cmd:b.cmd,...pick(b,keys),...actor});
   return send(res,200,{ok,...r});
  }

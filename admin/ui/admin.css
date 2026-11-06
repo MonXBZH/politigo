@@ -193,3 +193,10 @@ select.inline{width:auto;min-width:0;padding:6px 10px;margin:0}
 .chat-line .btn-row{gap:6px;margin-top:4px;align-items:center}
 .chat-line .btn-row .btn{padding:6px 12px}
 
+
+/* Events */
+.ev{border-top:1px solid var(--line);padding:12px 0}
+.ev:first-of-type{border-top:0}
+.ev p{margin:2px 0 0}
+.check{display:flex;align-items:center;gap:8px;margin-top:8px}
+.check input{width:auto;min-height:0}

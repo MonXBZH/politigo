@@ -84,7 +84,7 @@ test("the clock up on screen asks for the verdict; the end screen shows the refe
 
 test("a duel's end screen tells the outcome; a solo one the XP; a game given up waits for the referee",async()=>{
  for(const [duel,res,re] of [[true,{res:"win",mine:9,theirs:4},/Victoire 9 à 4/],[true,{res:"loss",mine:2,theirs:4},/Défaite 2 à 4/],
-  [true,{res:"tie",mine:4,theirs:4},/Match nul, 4 partout/],[true,{res:null,mine:5,score:5},/24 h/],[false,{score:2,bonus:2},/\+2 XP/]]){
+  [true,{res:"tie",mine:4,theirs:4},/Match nul, 4 partout/],[true,{res:"win",mine:30,theirs:30},/Victoire 30 à 30, moins d.erreurs/],[true,{res:null,mine:5,score:5},/24 h/],[false,{score:2,bonus:2},/\+2 XP/]]){
   let clock=0;const ref=referee(3,"left",()=>clock,{result:()=>res}),g=make({ask:ref.ask,duel});
   await drive(g,{answer:(g,now)=>{clock=now;}});
   texts.length=0;g.draw(g.endT+600);const all=texts.join(" | ");
@@ -133,4 +133,15 @@ test("the Manif games are dealt by the server's seed: same seed, same game; Math
   const r0=Math.random;Math.random=()=>{throw new Error("Math.random in a seeded game");};
   try{assert.equal(run(11),run(11),key);assert.notEqual(run(11),run(12),key);}finally{Math.random=r0;}
  }
+});
+
+test("L'Épervier: an incident report on the ground gives a life back, never above the start, and goes away",()=>{
+ const g=makeKey("epervier",{seed:7,camp:"right"});g.target=[g.x,g.y];
+ let now=100;
+ g.hp=1;g.reports=[{x:g.x,y:g.y-8,born:now}];g.step(now,.0167);assert.equal(g.hp,2);assert.equal(g.reports.length,0,"picked up");
+ g.hp=3;g.reports=[{x:g.x,y:g.y-8,born:now}];g.step(now+=16,.0167);assert.equal(g.hp,3);assert.equal(g.reports.length,0);
+ g.reports=[{x:g.x+150,y:g.y,born:now-6000}];g.step(now+=16,.0167);assert.equal(g.reports.length,0,"too late");
+ const f=makeKey("epervier",{seed:9,camp:"right"});f.target=[f.x,f.y];let seen=0;now=0;
+ for(let i=0;i<1800&&!f.endT;i++){f.hp=3;now+=16.7;f.step(now,.0167);f.draw(now);seen=Math.max(seen,f.reports.length);}
+ assert.ok(seen>=1,"reports show up during a game");
 });

@@ -159,7 +159,7 @@ export const SLIDES=[
  [errance,"Aujourd'hui encore, on dit que le Bâton de Feu erre à travers les mondes, passé de main en main parmi les âmes en colère."],
  [prison,"Certains prétendent l'avoir vu dans les mains d'un <b>groupe de punks nomades</b>, dont les concerts font s'effondrer les murs des prisons et s'embraser les cœurs des opprimés."],
  [ombre,"D'autres murmurent qu'il repose dans l'ombre, attendant le prochain révolté assez fou pour <b>allumer la mèche de l'anarchie</b>."],
- [chosen,"Car le Bâton ne choisit pas son maître. <b>C'est lui qui te choisit.</b>"],
+ [chosen,"Car on ne choisit pas le Bâton. <b>C'est lui qui te choisit.</b>"],
  [monde,"Et quand il le fait… <b>le monde brûle au rythme du hardcore.</b> 🔥🎸"]
 ];
 // A caption split into plain and bold runs: [{b:false,text:"…"},{b:true,text:"…"}].
@@ -192,7 +192,7 @@ export function createLegend({reduced=()=>false,drawWinner=()=>{},inert=()=>{},o
   film.append(cv,ttl,next,cap,count,hint,skip);
   const fin=el("div","legend-final");fin.hidden=true;
   const frame=el("div","legend-frame"),win=el("canvas","legend-win");win.width=win.height=256;win.setAttribute("aria-hidden","true");frame.append(win);
-  const h=el("h2","","Le Bâton de feu des Apprix"),p=el("p","");p.append("Il ne choisit pas son maître : c'est lui qui t'a choisi.",document.createElement("br"),"Tant qu'il est à toi, personne d'autre ne pourra l'avoir.");
+  const h=el("h2","","Le Bâton de feu des Apprix"),p=el("p","");p.append("On ne choisit pas le Bâton : c'est lui qui t'a choisi.",document.createElement("br"),"Il reste à toi tant que ta Flamme tient et que personne ne te bat en duel.");
   const row=el("div","btn-row"),wear=el("button","btn go","Le brandir"),again=el("button","btn","Lire la légende"),close=el("button","btn","Fermer");
   for(const b of [wear,again,close])b.type="button";row.append(wear,again,close);
   fin.append(el("span","legend-tag","Mythique · exemplaire unique"),frame,h,p,row);
