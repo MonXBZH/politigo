@@ -1133,7 +1133,7 @@ function renderSheet(kind,opener){
     ?"Tiens le cortège jusqu'à Nation en 30 s : esquive LBD et lacrymo, ramasse les tracts et les merguez. Doigt, souris ou flèches ; parapluie avec un deuxième doigt ou Espace."
     :"Joue l'épervier 35 s avec un CRS : interpelle les manifestants, esquive pavés et molotovs, ramasse les rapports d'incident. Gare aux journalistes et aux collègues infiltrés."),side(manif,"manif"),!!err,()=>startMini("manifStart")),f.xp.manif>1),
    // Always open: even when he cannot duel now, the sheet shows the challenges, the results and why.
-   itemButton("Duels",`Défie un rival au Débat chrono : mêmes questions, meilleur score. ${R.DUEL.perDay+f.duels} défis par jour.`,dn?`${dn} défi${dn>1?"s":""}`:"PvP",false,openDuels)
+   boosted(itemButton("Duels",`Défie un rival au Débat chrono : mêmes questions, meilleur score. ${R.DUEL.perDay+f.duels} défis par jour.`,`${dn?`${dn} défi${dn>1?"s":""}`:"PvP"}${f.duelMult>1?` (×${frNum(f.duelMult)})`:""}`,false,openDuels),f.duels>0||f.duelMult>1)
   ));
   renderBatonBlock(body);
   renderActivities(body);
@@ -1731,8 +1731,8 @@ function smallButton(label,cls,onClick,disabled=false){
  b.addEventListener("click",onClick);return b;
 }
 function renderDuels(body,set){
- const d=duelData,why=R.duelBlock(S,d?.minLevel??R.DUEL.minLevel),D=R.DUEL;
- set(hw()?"Duels de minuit":"Duels",d?`Débat chrono en face à face · défis aujourd'hui : ${d.sent??0}/${d.perDay??D.perDay}`:"Débat chrono en face à face");
+ const d=duelData,why=R.duelBlock(S,d?.minLevel??R.DUEL.minLevel),D=R.DUEL,f=fx(),perDay=D.perDay+f.duels,won=k=>Math.round(D.win[k]*f.duelMult);   // the event may start or stop after duelData was read
+ set(hw()?"Duels de minuit":"Duels",d?`Débat chrono en face à face · défis aujourd'hui : ${d.sent??0}/${perDay}`:"Débat chrono en face à face");
  if(!d){
   body.append(fine(duelErr||"Chargement des duels…"));
   if(duelErr){const row=document.createElement("div");row.className="btn-row";row.append(smallButton("Réessayer","",()=>duelsLoad()));body.append(row);}
@@ -1774,9 +1774,9 @@ function renderDuels(body,set){
   }
   body.append(ul);
  }
- body.append(blockTitle("Règles"),fine(`Victoire : +${D.win.xp} XP, moral +${D.win.moral}, énergie +${D.win.energy} (XP payée pour ${D.paidWins} victoires par jour). `+
+ body.append(blockTitle("Règles"),fine(`Victoire : +${won("xp")} XP, moral +${won("moral")}, énergie +${won("energy")}${f.duelMult>1?` (×${frNum(f.duelMult)} pendant l'événement)`:""} (XP payée pour ${D.paidWins} victoires par jour). `+
   `Défaite : −${-D.loss.xp} XP, moral −${-D.loss.moral}, énergie −${-D.loss.energy}, mais jamais de niveau perdu ni de jauge sous ${D.floor}. `+
-  `Match nul : moral +${D.tie.moral}. Refuser ne coûte rien. Dès le niveau ${D.minLevel}, ${D.perDay} défis par jour, ${Math.round(D.window/R.H)} h pour répondre.`));
+  `Match nul : moral +${D.tie.moral}. Refuser ne coûte rien. Dès le niveau ${D.minLevel}, ${perDay} défis par jour, ${Math.round(D.window/R.H)} h pour répondre.`));
 }
 // Live duel events. A result's journal entry (scores, XP) says more than the short notice: it is not overwritten.
 function duelEvent(v){

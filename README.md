@@ -7,7 +7,7 @@
   <img alt="Node 24" src="https://img.shields.io/badge/node-24%20LTS-5fa04e">
   <img alt="Aucune dépendance" src="https://img.shields.io/badge/d%C3%A9pendances-0-success">
   <img alt="Docker" src="https://img.shields.io/badge/docker-compose%20%7C%20Portainer-2496ed">
-  <img alt="441 tests" src="https://img.shields.io/badge/tests-441-brightgreen">
+  <img alt="443 tests" src="https://img.shields.io/badge/tests-443-brightgreen">
   <img alt="Satire" src="https://img.shields.io/badge/genre-satire-ff9db0">
 </p>
 
@@ -103,7 +103,7 @@ de renaissance propre à chaque camp (la *primaire unitaire* à gauche, *le part
 - 👋 **Passe le voir** : chaque visite rapporte de l'XP, une fois toutes les 2 heures, 8 fois par jour au maximum.
 - 🎮 **Trois mini-jeux** : 2 activités par visite, 8 par jour. Plus le jeu est difficile, plus il rapporte : **35 XP** au plus
   pour le Pong, **50** pour le Débat chrono, **70** pour la Manif, selon ton score.
-  - 🎤 **Débat chrono** : 15 secondes pour enchaîner les réponses de ta ligne, tirées dans le désordre parmi 54 questions.
+  - 🎤 **Débat chrono** : 15 secondes pour enchaîner les réponses de ta ligne, tirées dans le désordre parmi 64 questions.
     « Programme économique ? » : à gauche on taxe les riches, à droite les pauvres, et « taxer les politiques » est hors sujet pour tout le monde.
     Une bonne réponse ajoute 1,5 seconde, une erreur en coûte une, et la partie s'arrête à 30 bonnes réponses.
   - ✊ **Manif**, un jeu par camp. À gauche, **Le Cortège** : tiens le défilé de République à Nation en esquivant LBD et lacrymo,
@@ -163,8 +163,8 @@ dans la main. **Purement cosmétique** : aucun effet sur le jeu, et **jamais d'a
 - 🌈 **Cinq raretés** : commun (60 %), rare (28 %), épique (9,5 %), légendaire (2 %) et ultra rare (0,5 %). Un tirage
   garanti épique au 10ᵉ sans en voir, légendaire au 50ᵉ, ultra rare au 80ᵉ.
 - 🎊 **Les doublons deviennent des confettis**. 100 confettis s'échangent contre la case commune, rare ou épique de ton choix.
-- 👔 **La Garde-robe** (Dossier) : une dizaine de tenues par camp, du *Bleu de travail* au *Front populaire, 1936*,
-  du *Pull sur les épaules* au *Général, 1958*, et une bonne trentaine d'objets à brandir. La tenue se superpose à
+- 👔 **La Garde-robe** (Dossier) : une vingtaine de tenues par camp, du *Bleu de travail* au *Front populaire, 1936*,
+  du *Pull sur les épaules* au *Général, 1958*, et une cinquantaine d'objets à brandir. La tenue se superpose à
   tous les personnages de la collection.
 
 | La Tombola de la Fête | Un tirage | La Garde-robe, à gauche | La Garde-robe, à droite | Les objets |

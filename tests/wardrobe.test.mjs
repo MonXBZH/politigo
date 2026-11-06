@@ -29,11 +29,12 @@ test("the catalogue: every id of the contract, with its kind, pool and rarity",(
   assert.deepEqual([W.ITEMS[id].kind,W.ITEMS[id].pool,W.ITEMS[id].rarity],["outfit",camp,r],id);
  assert.deepEqual([W.ITEMS.giletjaune.kind,W.ITEMS.giletjaune.pool,W.ITEMS.giletjaune.rarity],["outfit","all","rare"]);
  for(const [pool,ids] of Object.entries(SPEC.objects))for(const id of ids.split(" "))assert.equal(W.ITEMS[id]?.kind+W.ITEMS[id]?.pool,"object"+pool,id);
- assert.equal(Object.keys(W.ITEMS).length,21+34);
+ assert.equal(Object.keys(W.ITEMS).length,41+54);
  assert.equal(W.ITEMS.baton.rarity,"mythique");assert.equal(W.ITEMS.grossesaucisse.rarity,"epique");
  for(const it of Object.values(W.ITEMS)){assert.ok(it.name&&it.desc);}
  assert.equal(W.ITEMS.camarade.name,"Le Camarade, 1917");assert.equal(W.ITEMS.blazer.desc,"Boutons dorés, écusson.");
- assert.ok(!Object.values(W.ITEMS).some(it=>it.kind==="outfit"&&it.rarity==="legendaire"),"no legendary outfit");
+ for(const camp of ["left","right"])for(const [kind,n] of [["outfit",{commun:8,rare:6,epique:4,legendaire:1}],["object",{commun:7,rare:6,epique:5-(camp==="right"),legendaire:3}]])for(const [r,c] of Object.entries(n))
+  assert.equal(Object.values(W.ITEMS).filter(it=>it.kind===kind&&it.pool===camp&&it.rarity===r).length,c,`${camp} ${kind} ${r}`);
 });
 
 test("the pools: shared items (the gilet jaune too) and the camp's own, never the other camp's nor the staff",()=>{

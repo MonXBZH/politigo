@@ -130,7 +130,17 @@ test("Immunité parlementaire: the gauges fall slower, the night's rest stays wh
  D.sat=D.moral=D.energy=D.hyg=0;R.advance(D,at(17),1,never);assert.equal(D.deaths,deaths+1,"the event is over");
  // Only the hours of the event count: a catch-up over a longer gap asks hour by hour.
  const C=game("left",10);C.sat=C.moral=C.energy=C.hyg=90;const seen=[];R.advance(C,at(13),1,never,t=>{seen.push(t);return E.NO_FX;});
- assert.deepEqual(seen.slice(0,3),[at(10),at(11),at(12)]);
+ assert.deepEqual(seen.slice(0,3),[at(11),at(12),at(13)]);
+});
+
+test("an event counts for the hours that land while it runs, and not one after",()=>{
+ const l=[ev("immunite",{slow:3},{starts:at(10)+45*6e4,ends:at(12)+45*6e4})],fxAt=t=>E.effectsOf(l,"left",t),day=R.ECO.awake;
+ const S=game("left",10);S.sat=S.moral=S.energy=S.hyg=90;
+ R.advance(S,at(11),1,never,fxAt);assert.equal(S.sat,90-Math.ceil(day.sat/3),"launched at 10:45, it covers 11:00");
+ R.advance(S,at(12),1,never,fxAt);assert.equal(S.sat,90-2*Math.ceil(day.sat/3));
+ R.advance(S,at(13),1,never,fxAt);assert.equal(S.sat,90-2*Math.ceil(day.sat/3)-day.sat,"over at 12:45: 13:00 is a normal hour");
+ const D=game("left",10);D.sat=D.moral=D.energy=D.hyg=0;D.zero=11;const deaths=D.deaths;
+ R.advance(D,at(11),1,never,fxAt);assert.equal(D.deaths,deaths,"no death in the first hour of the immunity");
 });
 
 test("no event reaches the Flamme or the mythic's odds",()=>{

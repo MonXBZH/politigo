@@ -163,7 +163,17 @@ export const QUESTIONS=[
  ["La TVA ?","Zéro sur l'essentiel","TVA sociale","Payable en nature"],
  ["Les écolos ?","L'avenir de la planète","Des Khmers verts","Des plantes vertes"],
  ["Les banlieues ?","Des moyens pour les quartiers","Le Kärcher","Un rond-point de plus"],
- ["Le Sénat ?","Le supprimer","Le respecter","En faire un Ehpad"]
+ ["Le Sénat ?","Le supprimer","Le respecter","En faire un Ehpad"],
+ ["L'audiovisuel public ?","Mieux le financer","Le privatiser","Que des rediffusions"],
+ ["Les pesticides ?","Interdire le glyphosate","Faire confiance aux paysans","Arroser au pastis"],
+ ["Le télétravail ?","Un droit pour tous","Retour au bureau","Par télépathie"],
+ ["Le 49.3 ?","L'abroger","Un outil bien pratique","Le jouer au Loto"],
+ ["Le référendum ?","À l'initiative citoyenne","Sur l'immigration","À pile ou face"],
+ ["La crèche de Noël ?","Pas en mairie","Dans chaque mairie","Avec un âne député"],
+ ["Le barbecue ?","Un symbole viril","Un droit sacré","Une discipline olympique"],
+ ["La vitesse ?","110 sur l'autoroute","Rendez-nous le 90","Priorité aux escargots"],
+ ["La capitalisation ?","Vive la répartition","Une dose pour tous","Tout miser au PMU"],
+ ["Les jours fériés ?","N'y touchez pas","En supprimer deux","Un par électeur"]
 ];
 // What each answer of a question is, in QUESTIONS order.
 export const ANSWER_KINDS=["left","right","decoy"];
@@ -488,7 +498,7 @@ export function advance(S,realNow,speed=1,random=Math.random,fxAt=NONE){
  if(realNow>S.lastReal){S.vclock+=(realNow-S.lastReal)*speed;S.lastReal=realNow;}
  const h0=S.hourIdx;
  while(Math.floor(S.vclock/H)>S.hourIdx){
-  tickHour(S,S.hourIdx,random,fxAt(realNow-(S.vclock-S.hourIdx*H)/speed));S.hourIdx++;
+  tickHour(S,S.hourIdx,random,fxAt(realNow-(S.vclock-(S.hourIdx+1)*H)/speed));S.hourIdx++;   // the events of the moment it lands, at the end of that hour
   if(S.zero>=XP.deathHours){die(S,"neglect",S.camp,random);break;}
   ACT.rollDay(S,dayKey(S.hourIdx),random);   // the hour that starts may open a new calendar day
  }

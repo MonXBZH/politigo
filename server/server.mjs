@@ -540,7 +540,8 @@ setInterval(()=>{
  for(const p of players.values()){
   // One broken player (or a full disk) is logged and skipped; it must not stop everyone else's clock.
   if(p.suspended)continue;   // frozen: their companion neither lives nor dies until the suspension is lifted
-  try{update(p,S=>R.advance(S,now,SPEED,rand,fxOf(p)));missionDue(p);if(p.id===hold)batonCheck(p,now);}
+  // A letter comes in mid-hour: it counts as a change, or an open screen would only see it after the player's next action.
+  try{update(p,S=>{const l=S.mail?.letter?.id;return R.advance(S,now,SPEED,rand,fxOf(p))||S.mail?.letter?.id!==l;});missionDue(p);if(p.id===hold)batonCheck(p,now);}
   catch(e){console.error(`sweep, player ${p.id}:`,e);}
  }
  try{sweepSchedules(now);}catch(e){console.error("sweep, schedules:",e);}

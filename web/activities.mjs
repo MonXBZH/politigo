@@ -62,7 +62,17 @@ export const LETTERS={
   L("l_ter","Yann, Quimper","Ma ligne de TER ferme, on me propose un car. Le car est en grève. Je fais comment ?",
    [["Exiger un plan rail",{moral:6},"Le plan est prêt. Le train, non."],["Prendre le car avec lui",{moral:8,energy:-5},"Deux heures de route : un vrai moment de lutte."]]),
   L("l_panier","Élodie, maraîchère bio","Mon panier coûte plus cher qu'au discount, et mes électeurs font leurs courses au discount.",
-   [["Défendre le bio à la cantine",{moral:6,sat:2},"Loi Egalim : 20 % de bio visés en cantine. L'objectif attend encore à table."],["Acheter un panier",{sat:8,moral:3},"Trois poireaux, une betterave et une grande conviction."]])
+   [["Défendre le bio à la cantine",{moral:6,sat:2},"Loi Egalim : 20 % de bio visés en cantine. L'objectif attend encore à table."],["Acheter un panier",{sat:8,moral:3},"Trois poireaux, une betterave et une grande conviction."]]),
+  L("l_zfe","Kévin, Grenoble","On va interdire ma vieille Clio diesel en ville. Je suis écolo, mais c'est elle qui m'emmène à l'usine.",
+   [["Défendre la ZFE",{moral:5,energy:-3},"Suppression votée en 2026, censurée par le Conseil constitutionnel. La Clio attend la suite."],["Lui proposer un vélo",{moral:6,energy:-4},"L'usine est à 24 km. Il a souri poliment."]]),
+  L("l_livreur","Mamadou, livreur à Bordeaux","Je livre des sushis à vélo à des gens qui ont signé votre pétition contre l'ubérisation. Ils ne laissent pas de pourboire.",
+   [["Promettre le statut de salarié",{moral:7},"Directive européenne de 2024, à transposer avant décembre 2026. Les sushis refroidissent."],["Commander avec un pourboire",{sat:6,moral:4},"Douze makis et cinq euros de bonne conscience."]]),
+  L("l_crous","Manon, étudiante à Toulouse","Le repas à 1 € au Crous, c'est bien. Mais avec la queue, je déjeune à l'heure du goûter.",
+   [["Saluer la mesure",{moral:6},"Ouvert à tous les étudiants depuis le 4 mai 2026. La file d'attente aussi."],["Faire la queue avec elle",{moral:8,energy:-4},"Quarante minutes, un plat, deux accompagnements."]]),
+  L("l_cortege","Thierry, délégué syndical à Saint-Nazaire","J'ai fait les quatorze journées de 2023 : deux paires de chaussures usées, et 64 ans quand même.",
+   [["Saluer la suspension de la réforme",{moral:7},"Suspendue jusqu'en 2028 par le budget de la Sécu pour 2026. Ses chaussures, non."],["Lui offrir des semelles",{moral:6,hyg:2},"Semelles syndiquées, garanties jusqu'à la prochaine réforme."]]),
+  L("l_livre","Antoine, libraire à Brest","Tout le monde m'achète Le Capital, personne ne le finit, et Amazon livre le lendemain.",
+   [["Défendre le prix unique du livre",{moral:6},"Loi Lang, 1981 : même prix partout. Même pour ceux qui s'arrêtent page 12."],["Acheter le Livre II",{moral:7,energy:-3},"Vous l'avez posé sur le Livre I. Encore sous plastique."]])
  ],
  right:[
   L("r_impots","Hervé, chef d'entreprise à Cholet","Je paie 45 % d'impôts sur le revenu et mon rond-point n'a toujours pas de sculpture.",
@@ -92,7 +102,17 @@ export const LETTERS={
   L("r_socio","Héloïse, Versailles","Ma fille veut faire sociologie. Où ai-je raté ?",
    [["Lui parler d'une école de commerce",{moral:6},"12 000 € l'année. Elle y lit Bourdieu dans le hall."],["La rassurer sur Sciences Po",{moral:7,hyg:2},"Ça forme des ministres, à droite comme à gauche. C'est bien le problème."]]),
   L("r_urssaf","Alain, restaurateur à Dijon","L'Urssaf m'a écrit pour mes charges, ma serveuse pour sa démission. Même recommandé.",
-   [["Promettre une baisse des charges",{moral:6},"Les allègements sur les bas salaires existent depuis 1993. Il en veut encore."],["Déjeuner chez lui",{sat:8,moral:4},"Bœuf bourguignon. Vous avez fini à la plonge."]])
+   [["Promettre une baisse des charges",{moral:6},"Les allègements sur les bas salaires existent depuis 1993. Il en veut encore."],["Déjeuner chez lui",{sat:8,moral:4},"Bœuf bourguignon. Vous avez fini à la plonge."]]),
+  L("r_vitesse","Roger, routier à la retraite","À 80 km/h, j'ai le temps de compter les radars. Mon département repasse à 90 ou je déménage ?",
+   [["Promettre le retour au 90",{moral:7},"La loi de 2019 laisse le choix aux départements, route par route. Roger a sorti sa carte."],["Faire un tour en voiture avec lui",{moral:8,energy:-5},"Deux heures de route. Il a compté les radars, vous les virages."]]),
+  L("r_coq","Odette, Charente-Maritime","Un Parisien a acheté la maison d'à côté et trouve que mon coq chante trop tôt. Le coq était là avant.",
+   [["Citer le coq Maurice",{moral:8},"Procès gagné en 2019 à Rochefort. Le Parisien a demandé l'adresse de l'avocat."],["Défendre le patrimoine sensoriel",{moral:6,energy:2},"Loi de 2021 : les sons et odeurs des campagnes. Le voisin garde ses boules Quies."]]),
+  L("r_uniforme","Capucine, Bordeaux","J'ai demandé l'uniforme à l'école. Mon fils porte le même sweat depuis septembre : ça compte ?",
+   [["Défendre l'expérimentation",{moral:6},"Testé depuis 2024 dans près de 90 établissements. Effets « assez inégaux », dit le ministre."],["Laver le sweat",{hyg:6,moral:3},"Il a fallu deux cycles et beaucoup d'autorité."]]),
+  L("r_passoire","Gonzague, propriétaire à Biarritz","Mon studio est classé G. Moi je dis G comme « grand cachet ». L'État dit interdit de louer.",
+   [["Promettre d'assouplir le DPE",{moral:6},"Classe G interdite à la location depuis 2025, F prévue en 2028. Gonzague cherche un pull."],["Lui conseiller d'isoler",{moral:4,energy:2},"Devis reçu : le prix du studio. Sans le cachet."]]),
+  L("r_solidarite","Pascal, patron de PME à Bourg-en-Bresse","La journée de solidarité, on la fait quand ? Mes salariés sont très solidaires, mais plutôt à la plage.",
+   [["Expliquer la loi de 2004",{moral:5},"Créée après la canicule de 2003. Depuis 2008, c'est à l'entreprise de choisir le jour."],["Proposer de supprimer deux fériés",{moral:6,energy:-3},"Bayrou a essayé en 2025. Même Pascal a trouvé ça risqué."]])
  ]
 };
 export const MAIL={gapMin:30*MIN,gapMax:60*MIN,quietTo:7,bulletinEvery:3,first:30*MIN,eventLetters:24};   // eventLetters: answered in a day, past which Sac postal pays no more bulletins

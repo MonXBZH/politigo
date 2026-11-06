@@ -7,10 +7,12 @@ import {cmpRelease} from "./rules.mjs";
 export const CHANGELOG=[
  {version:"1.7.0",date:"2026-11-06",help:["events"],
   added:[
-   "Les événements : pendant quelques heures, l'organisation peut doubler l'XP, lever la limite de missions, raccourcir les missions, faire pleuvoir les bulletins, offrir des tirages, solder la Buvette, multiplier le courrier, lancer une nuit des duels ou protéger tout le monde d'une mort politique. Un bandeau en haut de l'écran annonce ce qui est en cours et le temps restant."
+   "Les événements : pendant quelques heures, l'organisation peut doubler l'XP, lever la limite de missions, raccourcir les missions, faire pleuvoir les bulletins, offrir des tirages, solder la Buvette, multiplier le courrier, lancer une nuit des duels ou protéger tout le monde d'une mort politique. Un bandeau en haut de l'écran annonce ce qui est en cours et le temps restant.",
+   "10 nouvelles questions au Débat chrono et 10 nouvelles lettres d'électeurs.",
+   "20 nouvelles tenues et 20 nouveaux objets à gagner à la Tombola et à la Loterie, avec les premières tenues légendaires."
   ],
   changed:[],
-  fixed:[],
+  fixed:["La liste des adversaires n'est plus coupée à droite sur les petits écrans."],
   admin:[
    "Un panneau Events : créer, programmer, répéter, lancer, arrêter, modifier ou dupliquer un événement, pour tout le monde ou un seul camp, avec notification et rappel 15 minutes avant.",
    "Les modérateurs peuvent gérer les événements : un nouveau profil Modo événements, et des droits à cocher."

@@ -21,10 +21,11 @@ test("the catalogues: 11 missions with both camps' names, at least 8 letters a c
  assert.equal(A.missionOf("nuit").ms,8*H);assert.equal(A.missionOf("tract").ms,H/2);
  const ids=new Set();
  for(const camp of R.CAMPS){
-  assert.ok(A.LETTERS[camp].length>=8);
+  assert.ok(A.LETTERS[camp].length>=19);
   for(const l of A.LETTERS[camp]){assert.ok(!ids.has(l.id));ids.add(l.id);assert.ok(l.answers.length>=2&&l.answers.length<=3);
    for(const a of l.answers){assert.ok(a.text&&a.reply);for(const [k,v] of Object.entries(a.fx)){assert.ok(k in R.fxNames);assert.ok(Math.abs(v)<=10);}}}
  }
+ assert.equal(new Set(R.QUESTIONS.map(q=>q[0])).size,R.QUESTIONS.length,"a debate question twice");assert.ok(R.QUESTIONS.length>=64);
  assert.ok(A.GOALS.length>=6);for(const g of A.GOALS)assert.ok(g.left&&g.right&&g.desc&&Object.keys(g.need).length);
 });
 

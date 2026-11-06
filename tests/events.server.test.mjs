@@ -95,3 +95,16 @@ test("the duels' daily limit follows the event",async()=>{
  await live({type:"duels",params:{extra:5,mult:2}});
  assert.equal((await left.call("GET","/api/duels")).json.perDay,before+5);
 });
+
+test("Sac postal: the letter reaches the open screen by itself, before any action",async()=>{
+ await clear();await stop(proc);proc=await boot(PORT,dir,{...env(),POLITIGO_SPEED:"60"});   // the gap of 10 game minutes: 10 s
+ assert.equal((await me(left)).state.mail.letter,null);
+ const r=await fetch(`http://127.0.0.1:${PORT}/events`,{headers:{Cookie:left.cookie}}),read=r.body.getReader(),text=new TextDecoder();
+ await live({type:"courrier",params:{gap:10}});
+ let seen="",got=false;const end=Date.now()+25000,timer=setTimeout(()=>read.cancel(),25000);
+ while(!got&&Date.now()<end){
+  const {value,done}=await read.read();if(done)break;
+  seen=(seen+text.decode(value,{stream:true})).slice(-200000);got=/"letter":\{"id"/.test(seen);
+ }
+ clearTimeout(timer);await read.cancel();assert.ok(got,"pushed without a request from the player");
+});
