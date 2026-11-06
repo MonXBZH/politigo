@@ -67,6 +67,11 @@ export const HELP=[
    `Tirages garantis : ${RARITY_LABEL.epique.toLowerCase()} (ou mieux) au ${PITY.epique}ᵉ tirage sans en voir, ${RARITY_LABEL.legendaire.toLowerCase()} au ${PITY.legendaire}ᵉ, ${RARITY_LABEL.ultra.toLowerCase()} au ${PITY.ultra}ᵉ.`,
    `Un doublon devient des confettis (${rarities.map(r=>CONFETTI[r]).join(", ")} selon la rareté) ; ${EXCHANGE.cost} confettis s'échangent contre une pièce commune, rare ou épique de ton choix.`],
   "La Garde-robe range tes tenues et tes objets : touche-en un pour le porter, touche-le de nouveau pour l'enlever. Une tenue s'enfile par-dessus tous les personnages de la collection."]},
+ {id:"events",title:"Les événements",parts:[
+  "De temps en temps, l'organisation lance un événement pour quelques heures : XP doublée, missions sans limite, soldes à la Buvette, nuit des duels… Un bandeau l'annonce en haut de l'écran, avec le temps restant. Touche-le pour en lire le détail.",
+  ["Dans le jeu, les récompenses et les prix modifiés ressortent, par exemple « ×2 ».",
+   "Une partie ou une mission lancée pendant l'événement garde son bonus, même s'il se termine avant elle.",
+   "Deux événements du même type ne s'additionnent pas : le plus fort s'applique."]]},
  {id:"social",title:"Classement, fil, chat et notifications",parts:[
   ["Le classement en direct : score, niveau, série record, survie. Touche un élu pour ouvrir sa fiche et le défier.",
    "Le fil de la République raconte les évolutions, les morts politiques, les beaux scores et les duels de chacun.",

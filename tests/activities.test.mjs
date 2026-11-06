@@ -271,8 +271,8 @@ test("sanitize: old states get fresh fields, malformed ones are rebuilt",()=>{
  bad.flame={pts:-5,day:20260105,log:{hours:[8,"9",30,10.5,12],min:900,missions:"2",letters:3,goals:1e9}};
  const b=R.sanitize(bad,at(10));
  assert.deepEqual(b.missions.cur,{id:"tract",start:at(10),end:at(10.5),notified:false},"the end comes from the catalogue");
- assert.equal(b.missions.day,-1);assert.equal(b.missions.n,6);
- assert.equal(b.missions.b,6);assert.deepEqual(b.missions.paid,["tract"],"known missions only, once each");
+ assert.equal(b.missions.day,-1);assert.equal(b.missions.n,99,"an event may lift the limit");
+ assert.equal(b.missions.b,18);assert.deepEqual(b.missions.paid,["tract"],"known missions only, once each");
  assert.equal(b.mail.next,at(11));assert.equal(b.mail.letter,null);assert.equal(b.mail.n,0);
  assert.deepEqual(b.goals,{day:-1,list:[]},"an incomplete list is drawn again");
  assert.equal(b.flame.pts,0);assert.deepEqual(b.flame.log.hours,[8,12]);assert.equal(b.flame.log.min,100);assert.equal(b.flame.log.missions,0);assert.equal(b.flame.log.goals,99);

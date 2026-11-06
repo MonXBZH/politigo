@@ -256,6 +256,28 @@ réseau local, ou derrière Nginx Proxy Manager en HTTPS (`POLITIGO_ADMIN_BIND=1
 - Limites : 8 messages par 20 s, 20 images par heure, 3 images en attente par joueur, 300 Mo d'images en tout.
 - Pas de notification ni de son : une pastille compte les non-lus, et rien ne s'affiche pendant un mini-jeu.
 
+### Événements (panneau Events)
+
+Le panneau **Events** de l'administration crée et gère des événements à durée limitée, sur chaque serveur : **Double XP**
+(×1,5, ×2 ou ×3, tous les mini-jeux ou certains), **Missions libres** (+3, +6 ou sans limite), **Mission express** (durée ÷2 ou
+÷3), **Pluie de bulletins** (×2 ou ×3, plafond du jour compris), **Tirage du peuple** (1 à 3 tirages offerts, une fois par
+événement), **Soldes à la Buvette** (−25 % ou −50 %, Soins compris), **Sac postal** (une lettre toutes les 10 ou 15 minutes, sans bulletin au-delà de 24 lettres dans la journée),
+**Nuit des duels** (défis en plus, gains ×1,5 ou ×2) et **Immunité parlementaire** (jauges ÷2 ou ÷3, pas de mort politique).
+
+- **Programmation** : de 5 minutes à 7 jours, pour tous ou un seul camp, une fois, chaque jour ou chaque semaine (à la même
+  heure, changement d'heure compris). Un événement se lance tout de suite ou à sa date, se modifie ou se supprime tant qu'il
+  n'a pas commencé, s'arrête à tout moment et se duplique. Arrêter une occurrence ne supprime pas les suivantes : la prochaine
+  se supprime dans « À venir ». 100 événements à venir au plus.
+- **Annonces** : bandeau permanent chez les joueurs ; en option, annonce (écrans ouverts, notification, fil s'il vise tout le
+  monde) au début et rappel 15 minutes avant. Un événement qui s'est déroulé serveur arrêté reste silencieux.
+- **Règles** : le serveur applique les effets. Deux événements du même type ne s'additionnent pas, le plus fort s'applique ;
+  deux types différents se cumulent. Une partie ou une mission lancée pendant l'événement garde son bonus. Aucun événement ne
+  modifie les points de Flamme, les chances de l'urne ni rien en argent réel, et les tirages offerts ne donnent jamais le Bâton.
+  L'Immunité parlementaire aide toutefois à garder les jauges à 50, un critère de la Flamme.
+- **Droits** : le profil **Modo événements** ouvre les panneaux Events et Annonces, avec les droits de créer et modifier, lancer
+  et arrêter, supprimer et d'envoyer des annonces. Chaque droit se coche aussi séparément pour un autre modérateur. Tout est
+  écrit dans le journal d'admin, au nom de son auteur.
+
 ### Activités, Flamme, Tombola et Garde-robe
 
 - **Missions, courrier, objectifs du jour** : effets sur les jauges (satiété, moral, énergie, hygiène, bornées à 0-100),
@@ -394,7 +416,7 @@ interdire la suppression et le force push, exiger une pull request (0 approbatio
 ## 6. Tests
 
 ```bash
-bash tests/run-server.sh                       # 421 tests : règles (dont l'équilibrage J15) + mini-jeux + activités + Tombola et Garde-robe + test politique + changelog + API + duels + notifications + chat + migrations + outils et interface d'admin, dans l'image Node de production
+bash tests/run-server.sh                       # 441 tests : règles (dont l'équilibrage J15) + mini-jeux + activités + Tombola et Garde-robe + test politique + changelog + API + duels + notifications + chat + migrations + outils et interface d'admin, dans l'image Node de production
 bash tests/run-server.sh tests/chat.test.mjs   # un seul fichier
 docker compose restart api                     # remet à zéro les limites d'inscription avant l'e2e
 powershell -ExecutionPolicy Bypass -File tests\e2e.ps1   # parcours complet dans Chrome (crée deux joueurs de test)

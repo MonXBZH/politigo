@@ -94,14 +94,20 @@ export function sanitizeWardrobe(w){
  if(Array.isArray(w.own))o.own=[...new Set(w.own.filter(id=>typeof id==="string"&&Object.hasOwn(ITEMS,id)))];
  for(const k of ["outfit","object"]){const id=w.worn?.[k];if(typeof id==="string"&&o.own.includes(id)&&ITEMS[id].kind===k)o.worn[k]=id;}
  o.confetti=int(w.confetti,0,1e6,0);o.bulletins=int(w.bulletins,0,9999,0);o.freeDay=int(w.freeDay,-1,1e9,-1);o.draws=int(w.draws,0,1e9,0);
+ if(w.ev&&Array.isArray(w.ev.ids)){const ids=w.ev.ids.filter(i=>Number.isSafeInteger(i)&&i>0).slice(-8);if(ids.length)o.ev={ids,n:int(w.ev.n,0,9,0)};}
  for(const k of Object.keys(PITY))o.pity[k]=int(w.pity?.[k],0,PITY[k]-1,0);
  return o;
 }
 
 // ---------- read-only checks ----------
 export const freeDrawToday=S=>S.wardrobe.freeDay!==dayKey(curIdx(S));
-export function drawBlock(S,pay){
+// Draws events still offer this player (they never roll the mythic): S.wardrobe.ev = {ids, n used}. Overlapping events
+// share one allowance, the strongest's: a draw taken under one counts under the others.
+const bonusUsed=(S,fx)=>S.wardrobe.ev?.ids.some(id=>fx.free.ids.includes(id))?S.wardrobe.ev.n:0;
+export const bonusDraws=(S,fx)=>fx?.free?Math.max(0,fx.free.n-bonusUsed(S,fx)):0;
+export function drawBlock(S,pay,fx=null){
  if(pay==="free")return freeDrawToday(S)?"":"Tirage gratuit déjà pris aujourd'hui : reviens demain, ou utilise un bulletin.";
+ if(pay==="bonus")return bonusDraws(S,fx)>0?"":"Pas de tirage offert pour l'instant.";
  if(pay==="bulletin")return S.wardrobe.bulletins>=1?"":"Pas de bulletin : missions, courrier et objectifs du jour en rapportent.";
  return "Mode de tirage inconnu.";
 }
@@ -124,10 +130,12 @@ function gain(S,id){
  return {dup,confetti};
 }
 // pay "free" (once per calendar day) or "bulletin". mythic: the server's {available, ageDays, clean, claim}.
-export function draw(S,pay,{random=Math.random,mythic=null}={}){
- const e=drawBlock(S,pay);if(e)return {ok:false,error:e};
+export function draw(S,pay,{random=Math.random,mythic=null,fx=null}={}){
+ const e=drawBlock(S,pay,fx);if(e)return {ok:false,error:e};
  const W=S.wardrobe,urn=URN_NAME[S.camp];
- if(pay==="free")W.freeDay=dayKey(curIdx(S));else W.bulletins--;
+ if(pay==="free")W.freeDay=dayKey(curIdx(S));
+ else if(pay==="bonus"){const n=bonusUsed(S,fx);W.ev={ids:[...new Set([...(n?W.ev.ids:[]),...fx.free.ids])].slice(-8),n:n+1};mythic=null;}
+ else W.bulletins--;
  W.draws++;
  // The staff is rolled before anything else and only taken when the server's claim (atomic) says it is still free.
  const p=mythicChance(S,mythic);

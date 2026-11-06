@@ -508,3 +508,16 @@ footer{max-width:1120px;margin:0 auto;padding:0 max(16px,env(safe-area-inset-rig
 #announce-go{flex:none;align-self:center;padding:8px 14px;font-size:13px}#announce-go[hidden]{display:none}
 @media(prefers-reduced-motion:reduce){.bd-timer.rush,.bd-live::before{animation:none}.bd-tug b{transition:none}.bd-floaters span,.bd-judge.on{animation-name:bd-fade}}
 @keyframes bd-fade{0%,70%{opacity:1}100%{opacity:0}}
+
+/* Timed events: one bar above the game, kept over the sheets; the others under a touch. */
+.event-bar{position:fixed;top:0;left:0;right:0;z-index:21;padding:max(6px,env(safe-area-inset-top)) max(10px,env(safe-area-inset-right)) 6px max(10px,env(safe-area-inset-left));background:linear-gradient(100deg,#ffb36b,#ff8fa8);color:#2a1020;box-shadow:0 4px 16px #0006}
+.event-main{display:flex;align-items:center;gap:10px;width:100%;max-width:1120px;margin:0 auto;min-height:32px;padding:0;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.event-main b{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.event-clock{flex:none;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}
+.event-more{flex:none;font-size:12px;font-weight:700;padding:2px 8px;border-radius:99px;background:#2a102022}
+.event-list{list-style:none;max-width:1120px;margin:6px auto 2px;padding:0;display:grid;gap:8px}
+.event-list li{display:grid;gap:1px;padding-top:6px;border-top:1px solid #2a102033}
+.event-list small{font-size:12px}
+.has-event{padding-top:var(--event-h,46px)}
+.has-event .topbar{top:var(--event-h,46px)}
+.price.boost{color:#2a1c05;background:var(--accent-2,#ffd59a)}

@@ -194,6 +194,9 @@ test("moderators: chosen among a server's players, only their panels and actions
  const cat=(await b.req("/api/mods")).json;
  assert.ok(cat.presets.some(p=>p.id==="chat")&&cat.presets.some(p=>p.id==="full"));
  assert.ok(!cat.presets.find(p=>p.id==="full").actions.includes("invite"),"the invite code stays out of the full profile");
+ const evp=cat.presets.find(p=>p.id==="events");
+ assert.deepEqual([evp.label,evp.panels,evp.actions],["Modo événements",["events","annonces"],["events-edit","events-run","events-delete","announce"]]);
+ assert.ok(cat.presets.find(p=>p.id==="full").panels.includes("events"));
  const made=await b.req("/api/mods/save",{server:"prod",player:id,panels:["chat","joueurs","traiter"],actions:["chat-mute","alerts-ack"],servers:["test-e"]});
  assert.equal(made.status,200,JSON.stringify(made.json));
  assert.match(made.json.password,/^[A-Za-z0-9+/]{27}=$/,"20 random bytes in base64");
@@ -233,6 +236,30 @@ test("moderators: chosen among a server's players, only their panels and actions
  assert.equal((await b.req("/api/mods/delete",{id:made.json.mod.id})).status,200);
  assert.equal((await m.req("/api/me")).status,401,"removed: out at once");
  assert.equal((await b.req("/api/mods")).json.mods.length,0);
+});
+
+test("the Modo événements profile: the events, signed with their name, and nothing else",async()=>{
+ const b=browser();assert.equal((await b.login()).status,200);
+ await player(API1,"Modo Fete");
+ const id=(await b.call("prod","list")).json.players.find(p=>p.name==="Modo Fete").id;
+ const evp=(await b.req("/api/mods")).json.presets.find(p=>p.id==="events");
+ const made=await b.req("/api/mods/save",{server:"prod",player:id,panels:evp.panels,actions:evp.actions,servers:[]});assert.equal(made.status,200,JSON.stringify(made.json));
+ const m=browser();assert.equal((await m.req("/api/login",{name:"Modo Fete",password:made.json.password})).status,200);
+ const s=Date.now()+36e5,ev={type:"soldes",name:"Soldes du modo",msg:"Moitié prix.",params:{off:50},starts:s,ends:s+36e5,who:"all",rep:""};
+ const r=await m.call("prod","event-save",ev);assert.equal(r.status,200,JSON.stringify(r.json));assert.equal(r.json.event.by,"Modo Fete");
+ assert.equal((await m.call("prod","events-list")).status,200);
+ assert.equal((await m.call("prod","event-start",{id:r.json.event.id})).status,200);
+ assert.equal((await m.call("prod","event-stop",{id:r.json.event.id})).status,200);
+ assert.equal((await m.call("prod","bots")).status,403);assert.equal((await m.call("prod","player",{name:"Modo Fete"})).status,403);
+ const log=(await b.call("prod","audit")).json.items.find(x=>x.cmd==="event-create");assert.equal(log.actor,"Modo Fete");
+ // To edit is not to launch: saving with now:true takes the launch right too.
+ assert.equal((await b.req("/api/mods/save",{id:made.json.mod.id,panels:["events"],actions:["events-edit"]})).status,200);
+ const m3=browser();assert.equal((await m3.req("/api/login",{name:"Modo Fete",password:made.json.password})).status,200);
+ assert.equal((await m3.call("prod","event-save",{...ev,now:true})).status,403);assert.equal((await m3.call("prod","event-save",ev)).status,200);
+ // Without the action, the panel shows but nothing moves.
+ const made2=await b.req("/api/mods/save",{id:made.json.mod.id,panels:["events"],actions:[]});assert.equal(made2.status,200);
+ const m2=browser();assert.equal((await m2.req("/api/login",{name:"Modo Fete",password:made.json.password})).status,200);
+ assert.equal((await m2.call("prod","events-list")).status,200);assert.equal((await m2.call("prod","event-save",ev)).status,403);
 });
 
 test("health: 200 while one server answers, with each server's state; 503 when none does",async()=>{

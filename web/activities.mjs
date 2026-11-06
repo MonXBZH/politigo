@@ -2,6 +2,7 @@
 // the names change. Gauges (clamped 0-100) and bulletins for the Tombola / Loterie, never FM; only the missions pay XP.
 // rules.mjs bindings are only used inside functions (the modules import each other).
 import {clamp,dayKey,curIdx,hodOf,clockOf,isAsleep,fxText,logEntry,addXp} from "./rules.mjs";
+import {NO_FX} from "./events.mjs";
 
 const MIN=60000,HOUR=60*MIN;
 // ===================================================================== DATA
@@ -94,7 +95,7 @@ export const LETTERS={
    [["Promettre une baisse des charges",{moral:6},"Les allègements sur les bas salaires existent depuis 1993. Il en veut encore."],["Déjeuner chez lui",{sat:8,moral:4},"Bœuf bourguignon. Vous avez fini à la plonge."]])
  ]
 };
-export const MAIL={gapMin:30*MIN,gapMax:60*MIN,quietTo:7,bulletinEvery:3,first:30*MIN};
+export const MAIL={gapMin:30*MIN,gapMax:60*MIN,quietTo:7,bulletinEvery:3,first:30*MIN,eventLetters:24};   // eventLetters: answered in a day, past which Sac postal pays no more bulletins
 export const letterOf=id=>LETTERS.left.find(l=>l.id===id)||LETTERS.right.find(l=>l.id===id)||null;
 
 // Daily goals: three a day out of these, each progressing on one or two counters (need). A one-counter goal keeps
@@ -133,10 +134,13 @@ export function sanitizeActivities(s,o){
  const day=v=>int(v,-1,99991231,-1),V=o.vclock;
  const m=s.missions;
  if(m&&typeof m==="object"){
-  o.missions.day=day(m.day);o.missions.n=int(m.n,0,MISSION_RULES.perDay,0);o.missions.b=int(m.b,0,MISSION_RULES.bulletinsPerDay,0);
+  o.missions.day=day(m.day);o.missions.n=int(m.n,0,999,0);o.missions.b=int(m.b,0,MISSION_RULES.bulletinsPerDay*3,0);   // beyond the usual limits during an event
   o.missions.paid=Array.isArray(m.paid)?MISSIONS.map(x=>x.id).filter(id=>m.paid.includes(id)):[];
   const c=m.cur,def=c&&missionOf(c.id);
-  if(def&&Number.isFinite(c.start)&&c.start<=V&&c.start>=0)o.missions.cur={id:def.id,start:c.start,end:c.start+def.ms,notified:c.notified===true};
+  if(def&&Number.isFinite(c.start)&&c.start<=V&&c.start>=0){
+   const div=int(c.div,1,3,1),bm=int(c.bm,1,3,1);   // what the event it started in gave it
+   o.missions.cur={id:def.id,start:c.start,end:c.start+def.ms/div,notified:c.notified===true,...(div>1?{div}:{}),...(bm>1?{bm}:{})};
+  }
  }
  const ml=s.mail;
  if(ml&&typeof ml==="object"){
@@ -168,19 +172,20 @@ export const missionsToday=S=>S.missions.day===today(S)?S.missions.n:0;
 export const bulletinsToday=S=>S.missions.day===today(S)?S.missions.b:0;
 // What this mission's report would pay right now. why: "repeat" (its bulletins already won today), "cap" (the day's
 // bulletins all won), "" otherwise.
-export function missionPay(S,m){
- const xp=missionXp(m),left=Math.max(0,MISSION_RULES.bulletinsPerDay-bulletinsToday(S));
+export function missionPay(S,m,bm=1){
+ const xp=missionXp(m),left=Math.max(0,MISSION_RULES.bulletinsPerDay*bm-bulletinsToday(S));
  if(S.missions.day===today(S)&&S.missions.paid.includes(m.id))return {xp,bulletins:0,why:"repeat"};
- return {xp,bulletins:Math.min(missionTier(m),left),why:left?"":"cap"};
+ return {xp,bulletins:Math.min(missionTier(m)*bm,left),why:left?"":"cap"};
 }
 export const payText=({xp,bulletins})=>`+${xp} XP${bulletins?`, +${bulletins} bulletin${bulletins>1?"s":""}`:""}`;
 export const missionReady=S=>!!S.missions.cur&&S.vclock>=S.missions.cur.end;
 export const missionLeft=S=>S.missions.cur?Math.max(0,S.missions.cur.end-S.vclock):0;
 // Why this mission cannot start now ("" when it can).
-export function missionBlock(S,id){
+export const missionLimit=(fx=NO_FX)=>MISSION_RULES.perDay+fx.missions;
+export function missionBlock(S,id,fx=NO_FX){
  const m=missionOf(id);if(!m)return "Mission inconnue.";
  if(S.missions.cur)return missionReady(S)?"Lis d'abord le rapport de la mission précédente.":"Une mission à la fois : la précédente n'est pas finie.";
- if(missionsToday(S)>=MISSION_RULES.perDay)return `${MISSION_RULES.perDay} missions par jour maximum.`;
+ if(missionsToday(S)>=missionLimit(fx))return `${missionLimit(fx)} missions par jour maximum.`;
  if(m.night){const h=clockOf(S.vclock).hour;return h>=MISSION_RULES.nightFrom?"":"Celle-ci se lance le soir, de 20 h à minuit.";}
  if(isAsleep(S))return S.sleeping?"Il fait la sieste : rallume la lumière d'abord.":"Chut, il dort.";
  if(S.energy<MISSION_RULES.minEnergy)return "Trop fatigué pour partir en mission : un café ou une sieste d'abord.";
@@ -242,37 +247,38 @@ export function rollDay(S,d,random){
  }
 }
 // A letter comes in when the last one was answered long enough ago, never between midnight and 7:00.
-export function mailCheck(S,random){
+export function mailCheck(S,random,fx=NO_FX){
+ if(fx.mailGap)S.mail.next=Math.min(S.mail.next,S.vclock+fx.mailGap*MIN);
  if(S.mail.letter||S.vclock<S.mail.next||clockOf(S.vclock).hour<MAIL.quietTo)return false;
  const l=LETTERS[S.camp],x=l[Math.min(l.length-1,Math.floor(random()*l.length))];
  S.mail.letter={id:x.id,t:S.vclock};return true;
 }
 const fail=error=>({ok:false,error});
-export function missionStart(S,id){
- const e=missionBlock(S,id);if(e)return fail(e);
- const m=missionOf(id);
- S.missions.cur={id,start:S.vclock,end:S.vclock+m.ms,notified:false};S.missions.day=today(S);S.missions.n++;
- logEntry(S,"mission",`En mission : ${m[S.camp]} (${missionTime(m.ms)}).`,{id,start:true});
+export function missionStart(S,id,fx=NO_FX){
+ const e=missionBlock(S,id,fx);if(e)return fail(e);
+ const m=missionOf(id),ms=m.ms/fx.div;
+ S.missions.cur={id,start:S.vclock,end:S.vclock+ms,notified:false,...(fx.div>1?{div:fx.div}:{}),...(fx.bulletins>1?{bm:fx.bulletins}:{})};S.missions.day=today(S);S.missions.n++;
+ logEntry(S,"mission",`En mission : ${m[S.camp]} (${missionTime(ms)}).`,{id,start:true});
  return {ok:true,end:S.missions.cur.end};
 }
 export function missionReport(S,random){
  const c=S.missions.cur;if(!c)return fail("Aucune mission en cours.");
  if(S.vclock<c.end)return fail("La mission n'est pas finie : son rapport arrive bientôt.");
  const m=missionOf(c.id),ok=!m.risk||random()<m.risk.p,fx=ok?m.fx:m.risk.fx;
- const {xp,bulletins}=missionPay(S,m);
+ const {xp,bulletins}=missionPay(S,m,c.bm??1);
  applyFx(S,fx);addXp(S,xp);bulletin(S,bulletins);S.flame.log.missions++;S.missions.cur=null;S.missions.b+=bulletins;
  if(!S.missions.paid.includes(m.id))S.missions.paid.push(m.id);
  logEntry(S,"mission",`Rapport de mission, ${m[S.camp]}${m.risk?ok?" : coup réussi !":" : ça a mal tourné.":""} ${fxText(fx)}, ${payText({xp,bulletins})}.`,{id:m.id,ok});
  progress(S,"missions");
  return {ok:true,report:{id:m.id,fx,ok,xp,bulletins}};
 }
-export function mailAnswer(S,id,choice,random){
+export function mailAnswer(S,id,choice,random,fx=NO_FX){
  const l=S.mail.letter;if(!l||l.id!==id)return fail("Pas de lettre en attente.");
  const x=letterOf(id),ans=Number.isInteger(choice)?x.answers[choice]:null;if(!ans)return fail("Réponse inconnue.");
- applyFx(S,ans.fx);S.mail.letter=null;S.mail.next=S.vclock+MAIL.gapMin+Math.floor(random()*(MAIL.gapMax-MAIL.gapMin));
+ applyFx(S,ans.fx);S.mail.letter=null;S.mail.next=S.vclock+(fx.mailGap?fx.mailGap*MIN:MAIL.gapMin+Math.floor(random()*(MAIL.gapMax-MAIL.gapMin)));
  if(S.mail.day!==today(S)){S.mail.day=today(S);S.mail.n=0;}
  S.mail.n++;S.flame.log.letters++;
- const b=S.mail.n%MAIL.bulletinEvery===0;if(b)bulletin(S);
+ const b=S.mail.n%MAIL.bulletinEvery===0&&!(fx.mailGap&&S.mail.n>MAIL.eventLetters);if(b)bulletin(S);
  logEntry(S,"mail",`Courrier de ${x.from} : « ${ans.text} ». ${ans.reply} (${fxText(ans.fx)}${b?", +1 bulletin":""})`,{id,choice});
  progress(S,"letters");
  return {ok:true,fx:ans.fx,bulletin:b};

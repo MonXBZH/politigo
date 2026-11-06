@@ -9,6 +9,7 @@ import {DatabaseSync} from "node:sqlite";
 import {readFileSync,writeFileSync,lstatSync,unlinkSync,chmodSync,readdirSync,statSync} from "node:fs";
 import {dirname,join} from "node:path";
 import * as R from "./rules.mjs";
+import * as E from "./events.mjs";
 import * as P from "./push.mjs";
 import {createChat} from "./chat.mjs";
 import * as W from "./wardrobe.mjs";
@@ -82,6 +83,9 @@ let EVENT_MODE=R.EVENT_MODES.includes(env.POLITIGO_EVENT)?env.POLITIGO_EVENT:"au
 if(env.POLITIGO_EVENT&&EVENT_MODE!==env.POLITIGO_EVENT)console.error(`POLITIGO_EVENT must be one of ${R.EVENT_MODES.join(", ")}: using auto.`);
 if(EVENT_MODE!=="auto")console.warn(`Seasonal event forced: ${EVENT_MODE}.`);
 const eventNow=()=>R.eventAt(Date.now(),EVENT_MODE);
+// The timed events still to come or running (the table holds them all): read by every action and every clock tick.
+let EVENTS=[];
+const fxOf=p=>t=>E.effectsOf(EVENTS,p.state.camp,t);
 // Web Push: on unless POLITIGO_PUSH=off. The contact goes into every VAPID token, so a push service can reach the admin.
 const PUSH_ON=env.POLITIGO_PUSH!=="off",PUSH_DEFAULT_CONTACT="https://github.com/MonXBZH/politigo";
 let PUSH_CONTACT=(env.POLITIGO_PUSH_CONTACT||"").trim()||PUSH_DEFAULT_CONTACT;
@@ -110,6 +114,9 @@ CREATE TABLE IF NOT EXISTS push_subs(id INTEGER PRIMARY KEY,player_id INTEGER NO
 CREATE INDEX IF NOT EXISTS push_subs_player ON push_subs(player_id);
 CREATE TABLE IF NOT EXISTS admin_log(id INTEGER PRIMARY KEY,t INTEGER NOT NULL,via TEXT NOT NULL,cmd TEXT NOT NULL,target TEXT,detail TEXT);
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT);
+CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY,type TEXT NOT NULL,name TEXT NOT NULL,msg TEXT NOT NULL,params TEXT NOT NULL,starts INTEGER NOT NULL,ends INTEGER NOT NULL,
+ who TEXT NOT NULL,rep TEXT NOT NULL,push INTEGER NOT NULL,remind INTEGER NOT NULL,author TEXT,stopped INTEGER NOT NULL DEFAULT 0,started INTEGER NOT NULL DEFAULT 0,reminded INTEGER NOT NULL DEFAULT 0,
+ closed INTEGER NOT NULL DEFAULT 0,created INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS schedules(id INTEGER PRIMARY KEY,text TEXT NOT NULL,target TEXT NOT NULL,kind TEXT NOT NULL,at INTEGER,time TEXT,days TEXT,
  until INTEGER,next INTEGER,last INTEGER,enabled INTEGER NOT NULL DEFAULT 1,created INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS activity(player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,t INTEGER NOT NULL,kind TEXT NOT NULL,live INTEGER NOT NULL,ua TEXT NOT NULL);
@@ -200,6 +207,17 @@ const q={
  activitySince:db.prepare("SELECT player_id,t,kind,live,ua FROM activity WHERE t>? ORDER BY player_id,t"),
  activityOf:db.prepare("SELECT player_id,t,kind,live,ua FROM activity WHERE player_id=? AND t>? ORDER BY t"),
  activeSince:db.prepare("SELECT DISTINCT player_id AS id FROM activity WHERE t>?"),
+ eventsOpen:db.prepare("SELECT * FROM events WHERE closed=0 ORDER BY starts"),
+ eventsAll:db.prepare("SELECT * FROM events ORDER BY starts DESC LIMIT 200"),
+ eventOne:db.prepare("SELECT * FROM events WHERE id=?"),
+ eventInsert:db.prepare("INSERT INTO events(type,name,msg,params,starts,ends,who,rep,push,remind,author,created) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)"),
+ eventEdit:db.prepare("UPDATE events SET type=?,name=?,msg=?,params=?,starts=?,ends=?,who=?,rep=?,push=?,remind=?,reminded=0 WHERE id=? AND started=0 AND closed=0"),
+ eventTimes:db.prepare("UPDATE events SET starts=?,ends=? WHERE id=?"),
+ eventStopped:db.prepare("UPDATE events SET ends=?,stopped=1,rep='' WHERE id=?"),
+ eventDelete:db.prepare("DELETE FROM events WHERE id=? AND started=0 AND closed=0"),
+ eventStarted:db.prepare("UPDATE events SET started=1 WHERE id=?"),
+ eventReminded:db.prepare("UPDATE events SET reminded=1 WHERE id=?"),
+ eventClosed:db.prepare("UPDATE events SET closed=1 WHERE id=?"),
  schedules:db.prepare("SELECT * FROM schedules ORDER BY id"),
  schedule:db.prepare("SELECT * FROM schedules WHERE id=?"),
  dueSchedules:db.prepare("SELECT * FROM schedules WHERE enabled=1 AND next IS NOT NULL AND next<=?"),
@@ -513,14 +531,16 @@ function flushBoard(){
 }
 // The debate's seed deals its answers: it never leaves the server (the other games' seeds only shape what is drawn).
 const publicState=S=>S.mini?.k==="debate"&&"seed" in S.mini?{...S,mini:Object.fromEntries(Object.entries(S.mini).filter(([k])=>k!=="seed"))}:S;
-function mePayload(p){return {name:p.name,state:publicState(p.state),speed:SPEED,tz:R.timeZone(),serverNow:Date.now(),event:EVENT_MODE,version:VERSION,release:RELEASE,seenVersion:p.seen??null,chat:chatRooms(),urnHint:urnHintOf(p),baton:batonWon?batonView(p):null};}
+function mePayload(p){return {name:p.name,state:publicState(p.state),speed:SPEED,tz:R.timeZone(),serverNow:Date.now(),event:EVENT_MODE,events:publicEvents(Date.now()),version:VERSION,release:RELEASE,seenVersion:p.seen??null,chat:chatRooms(),urnHint:urnHintOf(p),baton:batonWon?batonView(p):null};}
 // The clock runs for everyone, connected or not: needs drain and deaths happen while the page is closed.
+loadEvents();
+setInterval(()=>{try{eventsTick(Date.now());}catch(e){console.error("events tick:",e);}},1000).unref();
 setInterval(()=>{
  const now=Date.now(),hold=q.mythicOf.get(MYTHIC)?.player_id;
  for(const p of players.values()){
   // One broken player (or a full disk) is logged and skipped; it must not stop everyone else's clock.
   if(p.suspended)continue;   // frozen: their companion neither lives nor dies until the suspension is lifted
-  try{update(p,S=>R.advance(S,now,SPEED,rand));missionDue(p);if(p.id===hold)batonCheck(p,now);}
+  try{update(p,S=>R.advance(S,now,SPEED,rand,fxOf(p)));missionDue(p);if(p.id===hold)batonCheck(p,now);}
   catch(e){console.error(`sweep, player ${p.id}:`,e);}
  }
  try{sweepSchedules(now);}catch(e){console.error("sweep, schedules:",e);}
@@ -588,8 +608,9 @@ const duelFeed=(player,text)=>feedLine(player,"duel",text);
 // Returns what really changed ({xp,lvl,moral,energy}, after the floors), kept with the duel so the admin can annul it.
 function duelFx(id,res,opts,now){
  const pl=players.get(id);if(!pl)return null;
+ opts={...opts,mult:fxOf(pl)(now).duelMult};
  let fx=null;
- try{update(pl,S=>{R.advance(S,now,SPEED,rand);const b={xp:S.xp,lvl:S.lvl,moral:S.moral,energy:S.energy},ok=R.duelApply(S,res,opts);
+ try{update(pl,S=>{R.advance(S,now,SPEED,rand,fxOf(pl));const b={xp:S.xp,lvl:S.lvl,moral:S.moral,energy:S.energy},ok=R.duelApply(S,res,opts);
   fx={xp:S.xp-b.xp,lvl:S.lvl-b.lvl,moral:S.moral-b.moral,energy:S.energy-b.energy};return ok;});}
  catch(e){fx=null;console.error(`duel result "${res}" NOT applied to player ${id} (the duel itself is closed):`,e);}
  return fx;
@@ -599,7 +620,7 @@ const playBlock=S=>R.duelBlock(S,DUEL_MIN_LEVEL);
 // Why this player cannot challenge anybody right now ("" when they can).
 function selfWhy(p,now){
  return playBlock(p.state)||(now-p.created<DUEL_MIN_AGE?"Ton compte est trop récent pour les duels":"")
-  ||(q.sentOn.get(p.id,dayNow(now)).n>=R.DUEL.perDay?"Plus de défis aujourd'hui":"");
+  ||(q.sentOn.get(p.id,dayNow(now)).n>=R.DUEL.perDay+fxOf(p)(now).duels?"Plus de défis aujourd'hui":"");
 }
 // The players p is already tied to: an open duel, or one started within the window, in either direction.
 function duelTies(p,now){
@@ -718,7 +739,7 @@ const debateReply=(tn,step,now)=>{const {done,...ans}=step;
 function soloFinish(p,tn,now){
  soloTurns.delete(p.id);
  const res=R.debateResult(tn.st),ours=miniKey(p.state.mini)===tn.t,t=p.state.mini?.t??p.state.mini?.t0??now;
- const r=update(p,S=>R.debateFinish(S,tn.st,{now,speed:SPEED,random:rand}));
+ const r=update(p,S=>R.debateFinish(S,tn.st,{now,speed:SPEED,random:rand,boost:fxOf(p)}));
  if(ours)recordMini(p,{game:"debate",score:res.points,secs:(now-t)/1000,errors:res.errors,flags:[...new Set([...(res.flags||[]),...(r.audit?.flags||[])])]},now);
  if(deferred.size)flushDeferred();
  const {audit:_,...out}=r;
@@ -777,7 +798,7 @@ async function debateRoute(req,res){
  const now=Date.now(),choice=b.choice??undefined;
  if(b.choice===undefined||b.choice===null)logActivity(p,req,"debate:next");   // one line per question shown would drown the log
  if(b.ref==="solo"){
-  update(p,S=>R.advance(S,now,SPEED,rand));
+  update(p,S=>R.advance(S,now,SPEED,rand,fxOf(p)));
   const tn=soloTurns.get(p.id);
   if(!tn||miniKey(p.state.mini)!==tn.t){soloTurns.delete(p.id);throw new HttpError(422,"Aucun débat en cours.");}
   const step=debateStep(tn,choice,now,b.idx);
@@ -797,7 +818,7 @@ async function duelRoute(req,res){
  logActivity(p,req,"duel:"+(typeof b.op==="string"?b.op:"?"));
  const now=Date.now(),refuse=m=>new HttpError(422,m.endsWith(".")?m:m+".");
  if(b.op==="challenge"){
-  update(p,S=>R.advance(S,now,SPEED,rand));
+  update(p,S=>R.advance(S,now,SPEED,rand,fxOf(p)));
   const row=typeof b.name==="string"&&q.playerByKey.get(nameKey(cleanName(b.name).slice(0,40))),o=row&&players.get(row.id);
   if(!o||o.id===p.id||o.suspended)throw refuse("Adversaire introuvable.");
   const why=selfWhy(p,now)||targetWhy(o,duelTies(p,now),now);if(why)throw refuse(why);
@@ -813,7 +834,7 @@ async function duelRoute(req,res){
  if(d.defender!==p.id||d.status!=="pending")throw refuse("Ce défi n'attend pas ta réponse.");
  if(b.op==="refuse"){closeDuel(d,"refused",now);return send(res,200,{ok:true,me:mePayload(p)});}
  if(now>=d.expires){closeDuel(d,"expired",now);throw refuse("Ce défi a expiré.");}
- update(p,S=>R.advance(S,now,SPEED,rand));
+ update(p,S=>R.advance(S,now,SPEED,rand,fxOf(p)));
  const e=playBlock(p.state);if(e)throw refuse(e);
  q.duelAccept.run(now,d.id);
  return send(res,200,{ok:true,duel:{id:d.id},me:mePayload(p)});
@@ -1215,7 +1236,7 @@ async function batonRoute(req,res){
  if(op!=="play"&&(op!=="cheer"||!limited("batoncheerlog:"+p.id,1,10e3)))logActivity(p,req,"baton:"+op);
  const done=extra=>send(res,200,{ok:true,...extra,baton:batonView(p,Date.now())});
  if(op==="challenge"){
-  update(p,S=>R.advance(S,now,SPEED,rand));
+  update(p,S=>R.advance(S,now,SPEED,rand,fxOf(p)));
   const why=batonWhy(p,now);if(why)throw refuse(why);
   const h=players.get(q.mythicOf.get(MYTHIC).player_id),live=onlineIds().has(h.id);
   const data={rounds:Array.from({length:BD.rounds},newRound),n:0,ready:{c:false,b:false}};
@@ -1312,7 +1333,7 @@ async function route(req,res){
  }
  if(path==="/api/me"&&method==="GET"){
   const p=auth(req);
-  update(p,S=>R.advance(S,Date.now(),SPEED,rand));
+  update(p,S=>R.advance(S,Date.now(),SPEED,rand,fxOf(p)));
   return send(res,200,mePayload(p));
  }
  // The client never chooses the version: it only says "I read it", and the server records its own release.
@@ -1331,7 +1352,7 @@ async function route(req,res){
   const now=Date.now(),ev=eventNow();
   // The debate's end is the server's (POST /api/debate): a score sent for it is not even looked at.
   if(b.type==="miniEnd"&&p.state.mini?.k==="debate")throw new HttpError(422,"Le Débat chrono se joue question par question.");
-  const opts={now,speed:SPEED,random:rand,event:ev},won={v:false};
+  const opts={now,speed:SPEED,random:rand,event:ev,boost:fxOf(p)},won={v:false};
   if(b.type==="draw")opts.mythic=mythicOpts(p,now,won);
   let r;
   // A claimed staff that did not end up in the saved game (a failed write, a refused draw) goes back to the urn.
@@ -1348,7 +1369,7 @@ async function route(req,res){
  if(path==="/api/duels"&&method==="GET"){
   const p=auth(req),now=Date.now();
   return send(res,200,{ok:true,duels:q.duelsOf.all(p.id,p.id).sort((a,b)=>b.id-a.id).map(d=>duelView(d,p.id)),opponents:duelOpponents(p,now),
-   sent:q.sentOn.get(p.id,dayNow(now)).n,perDay:R.DUEL.perDay,minLevel:DUEL_MIN_LEVEL,pushKey:VAPID?.publicKey??null});
+   sent:q.sentOn.get(p.id,dayNow(now)).n,perDay:R.DUEL.perDay+fxOf(p)(now).duels,minLevel:DUEL_MIN_LEVEL,pushKey:VAPID?.publicKey??null});
  }
  if(path==="/api/duel"&&method==="POST")return duelRoute(req,res).finally(()=>{if(deferred.size)flushDeferred();});
  if(path==="/api/baton"&&method==="POST")return batonRoute(req,res).finally(()=>{if(deferred.size)flushDeferred();});
@@ -1458,7 +1479,7 @@ function audit(via,cmd,target,detail=""){
 // one), a push to the subscribed devices (held during a game like the duel ones) and, sent to everyone, a line in
 // the public feed. Plain text only: control, bidi and invisible characters are dropped (not the joiner emoji
 // sequences need), the length is capped for the push.
-const ANNOUNCE_MAX=240;
+const ANNOUNCE_MAX=240,EVENTS_MAX=100;
 function announceText(t){
  const text=typeof t==="string"?t.normalize("NFC").replace(/[\p{Cc}\u061c\u200b\u200c\u200e\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/gu," ").replace(/\s+/g," ").trim():"";
  if(!text||text.length>ANNOUNCE_MAX)throw new HttpError(400,`Annonce : 1 à ${ANNOUNCE_MAX} caractères.`);
@@ -1543,6 +1564,80 @@ function scheduleAdd(b,via){
  return {schedule:scheduleView(row)};
 }
 // Due runs go out through announce(); one missed by more than 30 min (server down) is skipped, never sent late.
+// ---- Timed events (web/events.mjs says what they do). The rows live in the database; EVENTS keeps those not over yet.
+// One tick a second announces them, reminds, closes them and plans the next of a series. Marks are written before the
+// announcement: a restart never repeats one, and an event that ran its whole course while the server was down stays silent.
+function eventRow(r){return {...r,params:JSON.parse(r.params),push:!!r.push,remind:!!r.remind,stopped:!!r.stopped,started:!!r.started,reminded:!!r.reminded,closed:!!r.closed};}
+function loadEvents(){EVENTS=q.eventsOpen.all().map(eventRow);}
+const publicEvents=now=>E.activeEvents(EVENTS,null,now).map(({id,type,name,msg,params,starts,ends,who})=>({id,type,name,msg,params,starts,ends,who}));
+function eventSay(e,text){
+ try{announce({text:text.slice(0,ANNOUNCE_MAX),camp:e.who==="all"?null:e.who},"schedule");}catch(err){console.error(`event ${e.id}: announcement failed`,err);}
+}
+// The next run of a series, at the same wall time (a DST change does not move it), after now.
+function eventNext(e,now){
+ const step=e.rep==="week"?7:1,w=wall(e.starts),len=e.ends-e.starts;let starts=e.starts;
+ for(let k=step;starts<=now;k+=step)starts=wallToUtc(w.year,w.month,w.day+k,w.hour,w.minute);
+ q.eventInsert.run(e.type,e.name,e.msg,JSON.stringify(e.params),starts,starts+len,e.who,e.rep,e.push?1:0,e.remind?1:0,e.author??null,now);
+}
+function eventsTick(now){
+ let changed=false;
+ for(const e of EVENTS){
+  if(e.remind&&!e.reminded&&now>=e.starts-E.EVENT_REMIND_MS&&now<e.starts){q.eventReminded.run(e.id);e.reminded=true;eventSay(e,`Dans 15 minutes : ${e.name}. ${e.msg}`);}
+  if(!e.started&&now>=e.starts&&now<e.ends){q.eventStarted.run(e.id);e.started=true;changed=true;if(e.push)eventSay(e,`🎉 ${e.name} : ${e.msg}`);}
+  if(now>=e.ends){q.eventClosed.run(e.id);changed=true;if(e.rep)eventNext(e,now);}
+ }
+ if(changed){loadEvents();broadcast("events",publicEvents(now));}
+}
+function eventView(r,now){
+ const e=eventRow(r);
+ return {id:e.id,type:e.type,name:e.name,msg:e.msg,params:e.params,starts:e.starts,ends:e.ends,who:e.who,rep:e.rep,push:e.push,remind:e.remind,by:e.author??null,stopped:e.stopped,
+  state:e.closed||now>=e.ends?"past":e.started||now>=e.starts?"on":"soon",summary:E.eventSummary(e)};
+}
+function eventField(v,max,what){
+ const text=typeof v==="string"?v.normalize("NFC").replace(/[\p{Cc}\u061c\u200b\u200c\u200e\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/gu," ").replace(/\s+/g," ").trim():"";
+ if(!text||text.length>max)throw new HttpError(400,`${what} : 1 à ${max} caractères.`);
+ return text;
+}
+// Creates an event or changes one that has not started. now:true starts it at once.
+function eventSave(b,via,now){
+ const type=b.type,params=E.cleanParams(type,b.params);
+ if(!params)throw new HttpError(400,"Type ou réglages de l'événement non valables.");
+ const name=eventField(b.name,E.EVENT_NAME_MAX,"Nom"),msg=eventField(b.msg,E.EVENT_MSG_MAX,"Message");
+ if(!E.EVENT_WHO.includes(b.who))throw new HttpError(400,"Public : all, left ou right.");
+ const rep=b.rep??"";if(!E.EVENT_REPEAT.includes(rep))throw new HttpError(400,"Répétition : aucune, day ou week.");
+ const len=b.ends-b.starts,starts=b.now===true?now:b.starts,ends=starts+len;
+ if(!Number.isSafeInteger(b.starts)||!Number.isSafeInteger(b.ends))throw new HttpError(400,"Dates non valables.");
+ if(len<E.EVENT_MIN_MS||len>E.EVENT_MAX_MS)throw new HttpError(400,"Durée : de 5 minutes à 7 jours.");
+ if(rep&&len>(rep==="day"?864e5:7*864e5))throw new HttpError(400,"Un événement répété dure moins longtemps que l'écart entre deux répétitions.");
+ if(b.now!==true&&starts<now-60e3)throw new HttpError(400,"La date de début est passée.");
+ const row=[type,name,msg,JSON.stringify(params),starts,ends,b.who,rep,b.push===false?0:1,b.remind===true?1:0];
+ let id=b.id;
+ if(id!=null){
+  if(!Number.isSafeInteger(id)||!q.eventEdit.run(...row,id).changes)throw new HttpError(422,"Seul un événement qui n'a pas commencé se modifie.");
+ }else{
+  if(EVENTS.length>=EVENTS_MAX)throw new HttpError(422,`${EVENTS_MAX} événements à venir au plus.`);
+  id=Number(q.eventInsert.run(...row,adminActor.getStore()?.by??null,now).lastInsertRowid);
+ }
+ audit(via,b.id!=null?"event-edit":"event-create",`#${id}`,`${name} : ${E.eventSummary({type,params})}`);
+ loadEvents();eventsTick(now);
+ return {event:eventView(q.eventOne.get(id),now)};
+}
+function eventOf(b){const r=Number.isSafeInteger(b.id)?q.eventOne.get(b.id):null;if(!r)throw new HttpError(404,"Événement inconnu.");return r;}
+function eventStart(b,via,now){
+ const r=eventOf(b);if(r.started||r.closed)throw new HttpError(422,"Cet événement a déjà commencé.");
+ q.eventTimes.run(now,now+r.ends-r.starts,r.id);audit(via,"event-start",`#${r.id}`,r.name);
+ loadEvents();eventsTick(now);return {event:eventView(q.eventOne.get(r.id),now)};
+}
+function eventStop(b,via,now){
+ const r=eventOf(b);if(!r.started||r.closed)throw new HttpError(422,"Cet événement n'est pas en cours.");
+ if(r.rep)eventNext(eventRow(r),now);   // the series goes on, with its full length
+ q.eventStopped.run(now,r.id);audit(via,"event-stop",`#${r.id}`,r.name);
+ loadEvents();eventsTick(now);return {event:eventView(q.eventOne.get(r.id),now)};
+}
+function eventDelete(b,via){
+ const r=eventOf(b);if(!q.eventDelete.run(r.id).changes)throw new HttpError(422,"Seul un événement qui n'a pas commencé se supprime.");
+ audit(via,"event-delete",`#${r.id}`,r.name);loadEvents();return {};
+}
 function sweepSchedules(now){
  for(const r of q.dueSchedules.all(now)){
   let sent=null;
@@ -1739,7 +1834,7 @@ function annulDuel(d,now){
   const f=fx[side],pl=players.get(id);if(!f||!pl)continue;
   try{
    update(pl,S=>{
-    if(!pl.suspended)R.advance(S,now,SPEED,rand);   // a suspended clock stays frozen: resync skips the gap on unsuspend
+    if(!pl.suspended)R.advance(S,now,SPEED,rand,fxOf(pl));   // a suspended clock stays frozen: resync skips the gap on unsuspend
     S.lvl=Math.max(1,S.lvl-Math.max(0,f.lvl||0));S.xp=Math.max(R.xpFloor(S.lvl),S.xp-(f.xp||0));while(S.lvl<100&&S.xp>=R.xpFloor(S.lvl+1))S.lvl++;
     S.moral=R.clamp(S.moral-(f.moral||0));S.energy=R.clamp(S.energy-(f.energy||0));
     S.jn++;S.journal.unshift({n:S.jn,t:S.vclock,k:"duel",text:`Duel contre ${nameOf(side==="c"?d.defender:d.challenger)} annulé par l'organisation : ses effets sont retirés.`,d:{res:"annulled"}});
@@ -1756,7 +1851,7 @@ function suspend(p,on){
  if(on===p.suspended)return;
  if(on){
   // The time until now is played, then the clock stops where it is.
-  try{update(p,S=>R.advance(S,now,SPEED,rand));}catch(e){console.error(`suspend, player ${p.id}:`,e);}
+  try{update(p,S=>R.advance(S,now,SPEED,rand,fxOf(p)));}catch(e){console.error(`suspend, player ${p.id}:`,e);}
   q.setSuspended.run(1,p.id);p.suspended=true;q.deleteSessionsOf.run(p.id);closeStreamsOf(p.id);deferred.delete(p.id);
   for(const d of q.openDuelsOf.all(p.id,p.id)){try{voidDuel(d,now);}catch(e){console.error(`suspend, duel ${d.id}:`,e);}}
   for(const r of bq.open.all())if(r.challenger===p.id||r.bearer===p.id){try{voidBaton(bLoad(r),now);}catch(e){console.error(`suspend, baton duel ${r.id}:`,e);}}
@@ -1939,6 +2034,11 @@ async function adminCommand(b){
   REG_OPEN=b.open;setSetting("registrations",b.open?"open":"closed");audit(via,cmd,"",b.open?"Inscriptions ouvertes":"Inscriptions fermées");
   return {open:regOpen()};
  }
+ if(cmd==="events-list")return {types:E.eventCatalogue(),games:E.EVENT_GAMES,items:q.eventsAll.all().map(r=>eventView(r,now))};
+ if(cmd==="event-save")return eventSave(b,via,now);
+ if(cmd==="event-start")return eventStart(b,via,now);
+ if(cmd==="event-stop")return eventStop(b,via,now);
+ if(cmd==="event-delete")return eventDelete(b,via);
  if(cmd==="event-set"){
   if(!R.EVENT_MODES.includes(b.mode))throw new HttpError(400,`Mode : ${R.EVENT_MODES.join(", ")}.`);
   EVENT_MODE=b.mode;setSetting("event",b.mode);

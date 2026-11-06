@@ -162,7 +162,7 @@ $("#logout").addEventListener("click",async()=>{try{await api("/api/logout");}ca
 
 // ===================================================================== navigation
 const SECTIONS=[
- ["apercu","Vue d'ensemble",viewOverview],["tableau","Tableau de bord",viewDashboard],["traiter","À traiter",viewAlerts],["joueurs","Joueurs",viewPlayers],["annonces","Annonces",viewAnnounces],
+ ["apercu","Vue d'ensemble",viewOverview],["tableau","Tableau de bord",viewDashboard],["traiter","À traiter",viewAlerts],["joueurs","Joueurs",viewPlayers],["annonces","Annonces",viewAnnounces],["events","Events",viewEvents],
  ["chat","Chat",viewChat],["fil","Fil",viewFeed],["duels","Duels",viewDuels],["reglages","Réglages",viewSettings],
  ["sauvegarde","Sauvegarde",viewBackup],["bots","Détection de bots",viewBots],["journal","Journal d'admin",viewAudit],["modos","Modérateurs",viewMods],
 ];
@@ -526,6 +526,68 @@ async function viewAnnounces(){
    h("thead",{},h("tr",{},["Date","Par","Pour","Texte"].map(t=>h("th",{},t)))),
    h("tbody",{},items.map(i=>h("tr",{},h("td",{class:"nowrap"},fmt(i.t)),h("td",{},byWho(i.via,i.by)),h("td",{},i.target||"tous"),h("td",{class:"wrap"},i.text??"")))))):empty("Aucune annonce envoyée.")),
  ];
+}
+
+// ===================================================================== Events
+const EV_WHO={all:"Tout le monde",left:"La gauche",right:"La droite"},EV_REP={"":"",day:"Chaque jour",week:"Chaque semaine"};
+const EV_HOURS=[[1,"1 h"],[2,"2 h"],[4,"4 h"],[12,"12 h"],[24,"24 h"],[72,"3 jours"],[168,"7 jours (maximum)"]];
+const localInput=t=>new Date(t-new Date(t).getTimezoneOffset()*6e4).toISOString().slice(0,16);
+async function viewEvents(){
+ const {items,types,games}=await call("events-list"),H=36e5;
+ let editing=null;
+ const typeSel=h("select",{id:"ev-type",onchange:()=>typeChanged()},Object.entries(types).map(([k,t])=>h("option",{value:k},t.label)));
+ const desc=h("p",{class:"muted small"}),name=h("input",{type:"text",id:"ev-name",maxLength:50}),msg=h("textarea",{id:"ev-msg",maxLength:160}),params=h("div",{});
+ const start=h("input",{type:"datetime-local",id:"ev-start"}),len=h("select",{id:"ev-len"},EV_HOURS.map(([v,t])=>h("option",{value:v},t)));
+ const rep=h("select",{id:"ev-rep"},h("option",{value:""},"Une seule fois"),h("option",{value:"day"},"Chaque jour"),h("option",{value:"week"},"Chaque semaine"));
+ const who=h("select",{id:"ev-who"},Object.entries(EV_WHO).map(([k,t])=>h("option",{value:k},t)));
+ const push=h("input",{type:"checkbox",checked:true}),remind=h("input",{type:"checkbox"}),title=h("h2",{},"Nouvel événement");
+ function drawParams(p){
+  const t=types[typeSel.value];
+  params.replaceChildren(...t.params.flatMap(f=>f.games
+   ?[h("label",{},f.label),...games.map(([k,n])=>h("label",{class:"check"},h("input",{type:"checkbox","data-game":k,checked:p?p[f.k].includes(k):true}),n))]
+   :[h("label",{},f.label),h("select",{"data-k":f.k,"aria-label":f.label},f.opts.map(([v,n])=>h("option",{value:String(v),selected:String(p?.[f.k]??f.def)===String(v)},n)))]));
+ }
+ function typeChanged(){const t=types[typeSel.value];desc.textContent=t.desc;name.value=t.label;msg.value=t.msg;drawParams();}
+ function readParams(){
+  const p={};for(const s of params.querySelectorAll("select"))p[s.dataset.k]=s.value==="all"?"all":Number(s.value);
+  const g=[...params.querySelectorAll("[data-game]")];if(g.length)p.games=g.filter(c=>c.checked).map(c=>c.dataset.game);
+  return p;
+ }
+ const plan=h("button",{class:"btn go",type:"button",onclick:e=>save(e.currentTarget,false)},"Programmer");
+ const nowBtn=h("button",{class:"btn",type:"button",onclick:e=>save(e.currentTarget,true)},"Lancer maintenant");
+ const cancel=h("button",{class:"btn",type:"button",hidden:true,onclick:()=>reset()},"Annuler");
+ function reset(){editing=null;title.textContent="Nouvel événement";plan.textContent="Programmer";cancel.hidden=true;nowBtn.hidden=false;start.value=localInput(Date.now()+H);len.value="2";rep.value="";who.value="all";push.checked=true;remind.checked=false;typeSel.selectedIndex=0;typeChanged();}
+ function fill(e,edit){
+  editing=edit?e:null;typeSel.value=e.type;desc.textContent=types[e.type].desc;name.value=e.name;msg.value=e.msg;drawParams(e.params);
+  start.value=localInput(edit?e.starts:Date.now()+H);const hrs=(e.ends-e.starts)/H;len.value=String((EV_HOURS.find(([v])=>v>=hrs)??EV_HOURS.at(-1))[0]);
+  rep.value=e.rep;who.value=e.who;push.checked=e.push;remind.checked=e.remind;
+  title.textContent=edit?`Modifier « ${e.name} »`:`Dupliquer « ${e.name} »`;plan.textContent=edit?"Enregistrer":"Programmer";nowBtn.hidden=edit;cancel.hidden=false;
+  title.scrollIntoView({behavior:"smooth",block:"center"});
+ }
+ function save(btn,launch){
+  const t=new Date(start.value).getTime(),base=launch?Date.now():t;
+  act(btn,()=>call("event-save",{...(editing?{id:editing.id}:{}),type:typeSel.value,name:name.value,msg:msg.value,params:readParams(),starts:base,ends:base+Number(len.value)*H,who:who.value,rep:rep.value,push:push.checked,remind:remind.checked,now:launch}),
+   launch?"Événement lancé.":editing?"Événement modifié.":"Événement programmé.");
+ }
+ const row=e=>h("div",{class:"ev"},
+  h("div",{class:"btn-row"},h("b",{},e.name),e.state==="on"?h("span",{class:"badge good"},"En cours"):e.state==="soon"?h("span",{class:"badge warn"},"Programmé"):null,
+   e.who!=="all"?h("span",{class:"badge"},EV_WHO[e.who]):null,e.rep?h("span",{class:"badge"},EV_REP[e.rep]):null),
+  h("p",{class:"muted small"},`${e.summary} · ${fmt(e.starts)} → ${fmt(e.ends)}${e.by?` · par ${e.by}`:""}${e.stopped?" · arrêté avant la fin":""}`),
+  h("div",{class:"btn-row"},
+   e.state==="on"&&can("events-run")?h("button",{class:"btn small danger",type:"button",onclick:ev=>{const b=ev.currentTarget;confirmBox(`Arrêter « ${e.name} » ?`,"L'événement s'arrête pour tous les joueurs. Les parties et les missions déjà lancées gardent leur bonus.","Arrêter").then(ok=>ok&&act(b,()=>call("event-stop",{id:e.id}),"Événement arrêté."));}},"Arrêter"):null,
+   e.state==="soon"&&can("events-run")?h("button",{class:"btn small go",type:"button",onclick:ev=>act(ev.currentTarget,()=>call("event-start",{id:e.id}),"Événement lancé.")},"Lancer maintenant"):null,
+   e.state==="soon"&&can("events-edit")?h("button",{class:"btn small",type:"button",onclick:()=>fill(e,true)},"Modifier"):null,
+   e.state==="soon"&&can("events-delete")?h("button",{class:"btn small danger",type:"button",onclick:ev=>{const b=ev.currentTarget;confirmBox(`Supprimer « ${e.name} » ?`,e.rep?"La série s'arrête avec cet événement.":"Il ne sera pas lancé.","Supprimer").then(ok=>ok&&act(b,()=>call("event-delete",{id:e.id}),"Événement supprimé."));}},"Supprimer"):null,
+   can("events-edit")?h("button",{class:"btn small",type:"button",onclick:()=>fill(e,false)},"Dupliquer"):null));
+ const part=(t,s,none,sort)=>{const l=items.filter(e=>e.state===s).sort(sort);return h("div",{class:"card"},h("h2",{},t),l.length?l.map(row):empty(none));};
+ const up=(a,b)=>a.starts-b.starts;
+ const form=can("events-edit")&&h("div",{class:"card"},title,h("label",{for:"ev-type"},"Type"),typeSel,desc,h("label",{for:"ev-name"},"Nom vu par les joueurs"),name,h("label",{for:"ev-msg"},"Message"),msg,params,
+  h("label",{for:"ev-start"},"Début (heure de ce navigateur)"),start,h("label",{for:"ev-len"},"Durée"),len,h("label",{for:"ev-rep"},"Répétition"),rep,h("label",{for:"ev-who"},"Pour qui"),who,
+  h("label",{class:"check"},push,"Annonce au début (notification, et fil si l'événement vise tout le monde)"),h("label",{class:"check"},remind,"Rappel 15 minutes avant"),
+  h("div",{class:"btn-row"},plan,can("events-run")?nowBtn:null,cancel));
+ reset();
+ return [head("Events",refreshBtn()),h("div",{class:"grid wide"},h("div",{},part("En cours","on","Aucun événement en cours.",up),part("À venir","soon","Rien de programmé.",up)),form),
+  part("Passés","past","Aucun événement passé.",(a,b)=>b.ends-a.ends)];
 }
 
 // ===================================================================== Chat

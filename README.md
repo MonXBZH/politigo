@@ -7,7 +7,7 @@
   <img alt="Node 24" src="https://img.shields.io/badge/node-24%20LTS-5fa04e">
   <img alt="Aucune dépendance" src="https://img.shields.io/badge/d%C3%A9pendances-0-success">
   <img alt="Docker" src="https://img.shields.io/badge/docker-compose%20%7C%20Portainer-2496ed">
-  <img alt="421 tests" src="https://img.shields.io/badge/tests-421-brightgreen">
+  <img alt="441 tests" src="https://img.shields.io/badge/tests-441-brightgreen">
   <img alt="Satire" src="https://img.shields.io/badge/genre-satire-ff9db0">
 </p>
 
@@ -123,6 +123,12 @@ de renaissance propre à chaque camp (la *primaire unitaire* à gauche, *le part
 Chaque personnage traîne **deux casseroles** : des stress qui tombent au hasard, plus souvent quand son moral est bas.
 Chacune fait un clin d'œil à un **fait public** (un score électoral, une petite phrase, une procédure, avec son stade exact),
 et toutes sont recensées, avec leurs références, dans **[docs/SOURCES.md](docs/SOURCES.md)**.
+
+### Les événements
+
+Pour animer la partie, l'organisation lance des événements de quelques heures : XP doublée, missions sans limite, missions
+express, pluie de bulletins, tirages offerts, soldes à la Buvette, sac postal, nuit des duels ou immunité parlementaire. Un
+bandeau en haut de l'écran annonce ce qui est en cours et le temps restant.
 
 ### Entre deux visites
 
