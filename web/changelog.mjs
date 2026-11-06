@@ -11,7 +11,7 @@ export const CHANGELOG=[
    "10 nouvelles questions au Débat chrono et 10 nouvelles lettres d'électeurs.",
    "20 nouvelles tenues et 20 nouveaux objets à gagner à la Tombola et à la Loterie, avec les premières tenues légendaires."
   ],
-  changed:[],
+  changed:["L'échange de confettis suit la rareté : 100 pour une case commune, 200 pour une rare, 300 pour une épique."],
   fixed:["La liste des adversaires n'est plus coupée à droite sur les petits écrans."],
   admin:[
    "Un panneau Events : créer, programmer, répéter, lancer, arrêter, modifier ou dupliquer un événement, pour tout le monde ou un seul camp, avec notification et rappel 15 minutes avant.",

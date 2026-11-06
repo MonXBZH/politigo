@@ -118,7 +118,7 @@ export const URN_NAME={left:"La Tombola de la Fête",right:"La Loterie du Gala"}
 export const ODDS={commun:60,rare:28,epique:9.5,legendaire:2,ultra:0.5};
 export const PITY={epique:10,legendaire:50,ultra:80};
 export const CONFETTI={commun:5,rare:10,epique:25,legendaire:50,ultra:100,mythique:100};
-export const EXCHANGE={cost:100,rarities:["commun","rare","epique"]};
+export const EXCHANGE={cost:{commun:100,rare:200,epique:300},rarities:["commun","rare","epique"]};
 export const MYTHIC={item:"baton",minDays:21,minFlame:300,base:0.01,step:0.001,per:10,cap:0.03};
 const rank=r=>RARITIES.indexOf(r);
 const DRAWN=["commun","rare","epique","legendaire","ultra"];
@@ -200,9 +200,10 @@ export function exchange(S,id){
  const W=S.wardrobe,it=ITEMS[id];
  if(typeof id!=="string"||!it||!inPool(id,S.camp)||!EXCHANGE.rarities.includes(it.rarity))return {ok:false,error:"Cet objet ne s'échange pas."};
  if(W.own.includes(id))return {ok:false,error:"Déjà dans la garde-robe."};
- if(W.confetti<EXCHANGE.cost)return {ok:false,error:`Il faut ${EXCHANGE.cost} confettis (tu en as ${W.confetti}).`};
- W.confetti-=EXCHANGE.cost;W.own.push(id);
- logEntry(S,"draw",`Échange : ${EXCHANGE.cost} confettis contre ${it.name}.`,{id,rarity:it.rarity,exchange:true});
+ const cost=EXCHANGE.cost[it.rarity];
+ if(W.confetti<cost)return {ok:false,error:`Il faut ${cost} confettis (tu en as ${W.confetti}).`};
+ W.confetti-=cost;W.own.push(id);
+ logEntry(S,"draw",`Échange : ${cost} confettis contre ${it.name}.`,{id,rarity:it.rarity,exchange:true});
  return {ok:true,item:{id,kind:it.kind,rarity:it.rarity}};
 }
 // Wears an owned item of that kind, or takes it off (id null).
