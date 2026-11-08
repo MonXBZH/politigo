@@ -23,7 +23,7 @@ test("the settings: only the values on offer pass",()=>{
   const p=Object.fromEntries(t.params.map(f=>[f.k,f.games?E.EVENT_GAMES.map(g=>g[0]):f.def]));
   assert.deepEqual(E.cleanParams(k,p),p,k);assert.ok(E.eventSummary({type:k,params:p}).length>3,k);
  }
- assert.ok(!JSON.stringify(E.eventCatalogue()).includes("sum"));
+ assert.ok(!Object.values(E.eventCatalogue()).some(t=>"sum" in t));
 });
 
 test("what runs: within its hours, for its camp; two of a kind never add up, different kinds run together",()=>{
@@ -146,4 +146,54 @@ test("an event counts for the hours that land while it runs, and not one after",
 test("no event reaches the Flamme or the mythic's odds",()=>{
  const keys=Object.keys(E.NO_FX);assert.ok(!keys.some(k=>/flam|mythic|odds/i.test(k)));
  assert.equal(JSON.stringify(E.eventCatalogue()).includes("Flamme"),false);
+});
+
+test("the announcements: every type has its prepared text, within the limit with the longest settings",()=>{
+ const combos=(t,p={},i=0)=>{const f=t.params[i];if(!f)return [p];return (f.games?[E.EVENT_GAMES.map(g=>g[0]),["pong"]]:f.opts.map(o=>o[0])).flatMap(v=>combos(t,{...p,[f.k]:v},i+1));};
+ const cat=E.eventCatalogue();
+ for(const [type,t] of Object.entries(E.EVENT_TYPES)){
+  assert.equal(E.badTokens(t.ann),null,type);assert.ok(t.ann.includes("{fin}"),type);assert.equal(cat[type].ann,t.ann);assert.equal(cat[type].rem,E.EVENT_REMIND_TEXT);
+  for(const params of combos(t)){const e={type,params,name:"x".repeat(E.EVENT_NAME_MAX)};
+   for(const text of [t.ann,E.EVENT_REMIND_TEXT])assert.ok(E.fillEvent(text,E.eventLongest(e)).length<=240,`${type} ${JSON.stringify(params)}`);}
+ }
+ assert.equal(E.badTokens(E.EVENT_REMIND_TEXT),null);
+});
+
+test("the tokens: only the known ones, whole, and a value is never read again",()=>{
+ assert.equal(E.badTokens("Rien à remplacer"),null);assert.equal(E.badTokens("{nom} {fin} {debut} {delai} {resume}"),null);
+ for(const [t,bad] of [["{nom }","{nom }"],["{Nom}","{Nom}"],["{prix} et {nom}","{prix}"],["{nom","{"],["nom}","}"],["{}","{}"]])assert.equal(E.badTokens(t),bad,t);
+ assert.equal(E.fillEvent("{nom} jusqu'à {fin}",{nom:"Le {fin}",fin:"22 h"}),"Le {fin} jusqu'à 22 h");
+ const e={type:"soldes",params:{off:50},name:"Soldes"};
+ assert.equal(E.eventText(e,"ann"),E.EVENT_TYPES.soldes.ann);assert.equal(E.eventText({...e,ann:"À moi"},"ann"),"À moi");
+ assert.equal(E.eventText(e,"remind"),E.EVENT_REMIND_TEXT);assert.equal(E.eventText({...e,rtext:"Bientôt"},"remind"),"Bientôt");
+});
+
+test("the times in words: the same day, tomorrow, later, and across a month",()=>{
+ const w=(day,hour,minute=0,month=11,year=2026)=>({year,month,day,hour,minute}),ref=w(6,21,40);
+ assert.equal(E.eventWhen(w(6,22),ref),"22 h");assert.equal(E.eventWhen(w(6,22,5),ref),"22 h 05");assert.equal(E.eventWhen(w(6,0),ref),"0 h");
+ assert.equal(E.eventWhen(w(7,9,30),ref),"demain à 9 h 30");assert.equal(E.eventWhen(w(9,20),ref),"lundi 9 à 20 h");
+ assert.equal(E.eventWhen(w(1,8,0,12),w(30,20)),"demain à 8 h");assert.equal(E.eventWhen(w(1,8,0,1,2027),w(31,20,0,12)),"demain à 8 h");
+});
+
+test("the delay in words: what is really left, never less than a minute",()=>{
+ const m=6e4;
+ for(const [ms,t] of [[15*m,"15 minutes"],[15*m-400,"15 minutes"],[60*m,"1 heure"],[60*m-400,"1 heure"],[1440*m,"1 jour"],[1440*m-400,"1 jour"],[30*m,"30 minutes"],[1*m,"1 minute"],[20e3,"1 minute"],[90*m,"1 h 30"],[120*m,"2 heures"],[23*60*m,"23 heures"],[2880*m,"2 jours"]])
+  assert.equal(E.eventDelay(ms),t,String(ms));
+});
+
+test("the reminders: 15 minutes, 1 hour and 1 day only, sorted, each once",()=>{
+ assert.deepEqual(E.cleanReminds([15,1440,60,15]),[1440,60,15]);assert.deepEqual(E.cleanReminds([]),[]);
+ for(const bad of [[30],["15"],[15.5],"15",null,{}])assert.equal(E.cleanReminds(bad),null,JSON.stringify(bad));
+ assert.deepEqual(E.EVENT_REMINDS.map(r=>r[0]),[15,60,1440]);
+});
+
+test("reminders due: together when late, none after the start, none within five minutes of the last, and the legitimate ones are never held",()=>{
+ const m=6e4,starts=1e9,e={starts,reminds:[15,60,1440],sent:[]},at=x=>starts-x*m;
+ assert.deepEqual(E.dueReminds(e,at(1500)),[]);assert.deepEqual(E.dueReminds(e,at(1440)),[1440]);
+ assert.deepEqual(E.dueReminds(e,at(30)),[60,1440],"late: together");assert.deepEqual(E.dueReminds(e,starts),[],"too late");
+ assert.deepEqual(E.dueReminds({...e,sent:[1440]},at(60)),[60]);
+ assert.deepEqual(E.dueReminds({...e,sent:[1440]},at(60),at(62)),[],"within five minutes: held");
+ assert.deepEqual(E.dueReminds({...e,sent:[1440]},at(60),at(65)),[60],"five minutes on");
+ assert.deepEqual(E.dueReminds({...e,sent:[1440,60]},at(15),at(60)),[15],"the closest two are 45 minutes apart");
+ assert.ok(E.EVENT_REMINDS.every(([x],i,l)=>!i||x-l[i-1][0]>=E.EVENT_REMIND_GAP/m),"no two offered closer than the limit");
 });

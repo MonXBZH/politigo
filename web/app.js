@@ -11,7 +11,7 @@ import * as W from "./wardrobe.mjs";
 import * as E from "./events.mjs";
 import {outfitLook,drawObject,dressColors} from "./looks.mjs";
 import {createLegend,volcanoRoom} from "./legend.mjs";
-import {createBatonDuel,screenOf} from "./batonduel.mjs";
+import {createBatonDuel,screenOf,feedParts} from "./batonduel.mjs";
 const {people,personalItems,stresses,shop,fxNames,XP,xpCost,xpFloor,stage}=R;
 const $=s=>document.querySelector(s);
 const motionQuery=matchMedia("(prefers-reduced-motion: reduce)");
@@ -927,7 +927,8 @@ function renderBoard(){
 function renderFeed(){
  $("#feed").replaceChildren(...feed.slice(0,40).map(f=>{
   const li=document.createElement("li"),tm=document.createElement("time"),b=document.createElement("b");
-  tm.textContent=when(f.t);b.textContent=f.player;li.className=f.kind;li.append(tm,b," · ",f.text);return li;
+  const {pre,name,post}=feedParts(f);
+  tm.textContent=when(f.t);b.textContent=name;li.className=f.kind;li.append(tm,pre,b,post);return li;
  }));
 }
 

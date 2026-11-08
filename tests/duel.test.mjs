@@ -239,16 +239,19 @@ test("the clock closes duels: unanswered challenges expire, unfinished turns end
  assert.ok(await until(async()=>(await find(a,ch.json.duel.id)).status==="void"));
 });
 
-test("a deleted account mid-duel takes its duels away and breaks nothing",async()=>{
+test("a deleted account mid-duel voids its open duels, the rival is told, and nothing breaks",async()=>{
  const a=await player("Survivant"),b=await player("Partant"),c=await player("Fuyard"),d=await player("Restant");
  const {id}=await challenged(a,b);
  assert.equal((await b.call("DELETE","/api/account",{password:PW})).status,200);
- assert.equal(await find(a,id),undefined);
+ const left=await find(a,id);assert.equal(left.status,"void");assert.equal(left.vs,"Compte supprimé");
  assert.ok(!(await duels(a)).json.opponents.some(o=>o.name==="Partant"));
  const {id:id2}=await challenged(c,d);
  assert.equal((await duel(d,{op:"accept",id:id2})).status,200);
+ const sd=stream(d);await until(()=>sd.events.some(e=>e.ev==="me"));
  assert.equal((await c.call("DELETE","/api/account",{password:PW})).status,200);
- assert.equal((await debate(d,{ref:id2})).json.error,"Duel introuvable.");
+ const ev=await until(()=>sd.events.find(e=>e.ev==="duel"));sd.close();
+ assert.deepEqual(ev?.data,{id:id2,kind:"void",role:"defender",vs:"Fuyard"},"told in the middle of their turn");
+ assert.equal((await debate(d,{ref:id2})).status,422,"the turn is over");
  await sleep(500);
  assert.equal((await d.call("GET","/api/health")).status,200);
 });

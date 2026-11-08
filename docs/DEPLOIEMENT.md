@@ -50,6 +50,17 @@ sudo iptables -I DOCKER-USER -p tcp -m conntrack --ctorigdstport 8080 ! -s IP_DU
 Sans ce filtrage, quelqu'un sur le réseau pourrait joindre la pile sans passer par le reverse proxy, en HTTP clair,
 et inventer son adresse IP pour contourner les limites de tentatives.
 
+Le port **8090** de l'interface d'administration (HTTP clair, ouvert sur `0.0.0.0` par défaut) se filtre de la même façon :
+ne le laisser qu'au réseau local, ou le publier sur `127.0.0.1` (`POLITIGO_ADMIN_BIND=127.0.0.1`) s'il passe par le reverse proxy.
+
+```bash
+sudo iptables -I DOCKER-USER -p tcp -m conntrack --ctorigdstport 8090 ! -s 192.168.1.0/24 -j DROP   # votre réseau local
+```
+
+**IPv6** : les ports de `docker-compose.yml` sont publiés sur une adresse IPv4 (`POLITIGO_BIND`, `POLITIGO_ADMIN_BIND`) et
+n'écoutent donc pas en IPv6. Si vous mettez `::` ou retirez l'adresse, ou si l'hôte a une adresse IPv6 publique, vérifiez avec
+`sudo ss -ltn` et posez les mêmes règles avec `ip6tables` (chaîne `DOCKER-USER`, adresses IPv6 du reverse proxy et du réseau local).
+
 ### Variante Portainer (images prêtes, aucun build sur le serveur)
 
 Portainer déploie mieux une stack qui **tire** des images qu'une stack qui les construit. Les images sont donc
@@ -72,7 +83,7 @@ construites par GitHub et publiées sur son registre (ghcr.io) :
 
 4. **Mise à jour** : dans la stack, « Update the stack » en cochant « Re-pull image ». Le volume (les parties) est conservé.
    Portainer préfixe les volumes du nom de la stack : `<stack>_politigo-data` (à sauvegarder), `<stack>_politigo-admin-sock`
-   (le socket d'administration, rien à sauvegarder) et `<stack>_politigo-admin-data` (l'empreinte du mot de passe d'administration).
+   (le socket d'administration, rien à sauvegarder) et `<stack>_politigo-admin-data` (l'empreinte du mot de passe d'administration, les modérateurs et les sauvegardes automatiques).
 
 Sans GitHub, on peut aussi construire sur le serveur (`docker compose build`, qui crée `politigo-web` et `politigo-api`),
 puis déclarer dans Portainer `POLITIGO_IMAGES=politigo` et `POLITIGO_TAG=latest` : la stack utilise alors ces images locales.
@@ -149,7 +160,10 @@ Si l'un de ses `location` utilise `add_header`, recopier la ligne HSTS dedans : 
   (page Sauvegarde). Exemple en ligne de commande :
   `docker run --rm -v politigo_politigo-data:/d -v "$PWD":/b alpine tar czf /b/politigo-$(date +%F).tgz -C /d .`
   Les fichiers du volume sont privés (mode 0600, propriétaire `node`) : lis-les en root, comme dans cet exemple.
-- **Mise à jour** : `docker compose build --pull && docker compose up -d` (récupère aussi les correctifs de sécurité de nginx et Node). Les parties sont conservées. Pendant un arrêt, même de plusieurs jours, rien ne se joue : au redémarrage, chaque partie
+- **Mise à jour** : `docker compose build && docker compose up -d`. Les images de base (nginx, Node) sont épinglées par empreinte
+  (digest) dans les Dockerfile : `--pull` n'y change rien. Les correctifs de sécurité de nginx et de Node arrivent avec une nouvelle
+  version de PolitiGo (Dependabot propose chaque semaine la nouvelle empreinte) : mettez à jour le dépôt (`git pull`), puis
+  reconstruisez. Les parties sont conservées. Pendant un arrêt, même de plusieurs jours, rien ne se joue : au redémarrage, chaque partie
   revient sur l'heure réelle (jour et nuit restent justes), et ses jauges sont inchangées (personne ne meurt ni n'a faim parce que
   le serveur était éteint). Le journal du joueur l'indique (« Maintenance du serveur (3 h) : ce temps est sauté… »), et les logs aussi.
   Garde-fou : si l'horloge du serveur est en retard sur la dernière sauvegarde (heure pas encore synchronisée au démarrage)
@@ -206,6 +220,49 @@ compose ; supprimer le bloc `admin` et ses volumes pour s'en passer, le jeu n'en
   forcé), chat pour tous et chat de camp (fermés par défaut), à chaud. Ces réglages sont gardés dans la base et l'emportent ensuite sur `.env`.
 - **Sauvegarde** : télécharge une copie cohérente de la base (`VACUUM INTO`), et à part `vapid.json`. Fichiers sensibles
   (empreintes des mots de passe, clé des notifications) : à garder hors d'Internet.
+- **Sauvegardes automatiques** (panneau Sauvegarde, organisateur seul) : quotidienne, hebdomadaire le lundi et mensuelle le 1er,
+  à 4 h par défaut (heure du conteneur), 7, 4 et 12 gardées, dans `/data-admin/backups/<serveur>/` (volume `politigo-admin-data`),
+  avec une copie de `vapid.json`. Le bouton « Sauvegarder maintenant » en garde 5 de plus. Une sauvegarde manquée pendant un
+  arrêt est prise au redémarrage. Un échec s'affiche dans le panneau et dans À traiter jusqu'à la prochaine réussite. `chat-media/`
+  n'est pas inclus. Ces fichiers restent sur le même hôte que le jeu : gardez-en une copie ailleurs.
+  **Restaurer** (exemple pour la pile `politigo` à un seul serveur, dossier `jeu` ; avec `POLITIGO_ADMIN_SERVERS`, le dossier
+  porte le nom du serveur, par exemple `prod`). Les fichiers appartiennent à l'utilisateur `node` de l'API, qui n'existe pas dans
+  `alpine` : on donne son numéro, `1000:1000`. `vapid.json` doit être remis avec les mêmes droits que la base, sinon l'API démarre
+  avec une clé temporaire (une seule ligne `EACCES` dans ses logs) et les téléphones abonnés ne reçoivent plus rien.
+
+  ```bash
+  docker compose stop api
+  docker run --rm -v politigo_politigo-admin-data:/a:ro alpine ls -l /a/backups/jeu    # choisir le fichier
+  docker run --rm -v politigo_politigo-admin-data:/a:ro -v politigo_politigo-data:/d alpine sh -ec '
+    cp /a/backups/jeu/quotidienne-2026-11-08-0400.db /d/politigo.db
+    rm -f /d/politigo.db-wal /d/politigo.db-shm
+    cp /a/backups/jeu/vapid.json /d/vapid.json
+    chown 1000:1000 /d/politigo.db /d/vapid.json && chmod 600 /d/politigo.db /d/vapid.json
+    ls -ln /d'
+  docker compose start api
+  ```
+
+  Pour un fichier téléchargé depuis la page, montez son dossier à la place du volume admin (`-v "$PWD":/a:ro`) et adaptez les
+  noms. `ls -ln` doit montrer `1000 1000` et `-rw-------` pour les deux fichiers. Après la restauration :
+  - **Code d'invitation** : la base restaurée remet le code d'invitation de ce jour-là. Si vous l'aviez régénéré depuis (après
+    une fuite), régénérez-le de nouveau (Réglages) ou fermez les inscriptions.
+  - **`chat-media/`** : laissez le dossier tel quel. Au démarrage, l'API efface les images qui ne correspondent à aucun message
+    de la base restaurée ; une image d'un message restauré déjà effacée s'affiche comme indisponible.
+  - **Modérateurs** : un compte de joueur créé après la sauvegarde a disparu, et son numéro peut être redonné à un nouvel
+    inscrit. La console ne donne alors plus aucun droit au modérateur concerné sur ce serveur (son compte n'existe plus ou
+    porte un autre pseudo) et le signale sur la page Modérateurs : retirez-le, puis ajoutez-le de nouveau.
+- **Comptes (fiche joueur, « Zone sensible »)** : *Supprimer le compte* est définitif. Il faut retaper le pseudo, le Bâton
+  retourne dans l'urne, les duels du Bâton ouverts sont annulés et le pseudo reste bloqué 24 h. Le droit « Supprimer un joueur »
+  n'est dans aucun modèle : cochez-le pour chaque modérateur concerné. Un modérateur ne peut supprimer ni son compte ni celui
+  d'un autre modérateur, et l'organisateur non plus tant que ce compte est celui d'un modérateur : retirez d'abord le
+  modérateur (page Modérateurs). *Protéger le compte* est réservé à l'organisateur : aucun modérateur ne peut plus agir sur ce compte
+  (mot de passe, renommage, suspension, chat, duels, annonce ciblée, suppression), mais il peut toujours lire sa fiche.
+  **Protégez votre propre compte de joueur.** Retirez la protection avant de supprimer.
+- **Comptes abandonnés (Joueurs → Comptes abandonnés)** : un compte y apparaît après 3 morts d'affilée sans aucune action du
+  joueur et 5 jours sans connexion. Une seule alerte dans À traiter ; vue à N comptes, elle ne revient que s'il y en a plus.
+  *Ignorer* retire le compte de la liste jusqu'à son retour. Les comptes protégés et les joueurs en ligne n'y figurent pas.
+  Rien n'est supprimé automatiquement. La date de dernière connexion n'existait pas avant la 1.7.1 : les comptes existants
+  partent du premier démarrage de cette version, donc rien n'apparaît avant 5 jours.
 - **Détection de bots** : sur 14 jours, pour chaque joueur, ses résultats aux mini-jeux (part des parties au bonus maximum,
   régularité suspecte des scores, parties finies au plus tôt permis, signalements du serveur), puis ses actions heure par heure,
   la part faite sans le jeu ouvert, depuis autre chose qu'un navigateur et la nuit, résumés en un score et des raisons, et
@@ -229,7 +286,14 @@ compose ; supprimer le bloc `admin` et ses volumes pour s'en passer, le jeu n'en
   non plus les alertes et signalements qui le concernent). Changer ses droits, régénérer son mot de passe ou le retirer
   ferme ses sessions aussitôt. Restent à l'organisateur : Réglages, Sauvegarde, régénération du code d'invitation et
   gestion des modérateurs ; le code d'invitation n'est visible que si la case est cochée. Les modérateurs sont gardés
-  dans le volume `/data-admin` (`moderators.json`, empreintes scrypt seulement).
+  dans le volume `/data-admin` (`moderators.json`, empreintes scrypt seulement). Leur création, leurs changements de droits,
+  un nouveau mot de passe (jamais le mot de passe lui-même) et leur retrait s'inscrivent dans le Journal d'admin.
+  Les droits d'un modérateur sur un serveur tiennent à son compte de joueur là-bas : si ce compte n'existe plus, ou porte
+  un autre pseudo que celui connu de la console (renommé ailleurs que dans la console, base restaurée), il n'a plus aucun
+  droit sur ce serveur, et la page Modérateurs le signale. Un renommage depuis la console suit : il se connecte alors avec
+  son nouveau pseudo. Un modérateur fait au plus 30 actions par minute (au-delà : « Trop d'actions d'affilée ») et garde
+  5 sessions ouvertes au plus (l'organisateur : 20), la plus ancienne fermée d'abord : ses connexions ne ferment jamais
+  celles des autres.
 
 **Plusieurs parties sur le même hôte Docker** : chaque pile a son propre socket d'administration. Monter le volume du socket
 de l'autre pile dans le conteneur `admin` (volume externe `<autre-stack>_politigo-admin-sock`, exemple commenté dans le compose),
@@ -268,8 +332,13 @@ Le panneau **Events** de l'administration crée et gère des événements à dur
   heure, changement d'heure compris). Un événement se lance tout de suite ou à sa date, se modifie ou se supprime tant qu'il
   n'a pas commencé, s'arrête à tout moment et se duplique. Arrêter une occurrence ne supprime pas les suivantes : la prochaine
   se supprime dans « À venir ». 100 événements à venir au plus.
-- **Annonces** : bandeau permanent chez les joueurs ; en option, annonce (écrans ouverts, notification, fil s'il vise tout le
-  monde) au début et rappel 15 minutes avant. Un événement qui s'est déroulé serveur arrêté reste silencieux.
+- **Annonces** : bandeau permanent chez les joueurs, avec son propre message. Le bloc Annonces règle l'annonce du début et les
+  rappels (15 minutes, 1 heure, 1 jour, cumulables), envoyés aux écrans ouverts, en notification et au fil si l'événement vise
+  tout le monde. Le texte part d'un modèle par type ; `{nom}`, `{fin}`, `{debut}`, `{delai}` et `{resume}` sont remplacés à
+  l'envoi, à l'heure du serveur. Si plusieurs rappels sont déjà dépassés à la programmation, un seul part, avec la durée réelle
+  restante. Corriger un événement ne renvoie aucun rappel déjà parti ; déplacer son début les remet à zéro, à un rappel toutes
+  les 5 minutes au plus. Sur une série quotidienne, le rappel 1 jour ne part que pour la première édition. Un événement qui
+  s'est déroulé serveur arrêté reste silencieux.
 - **Règles** : le serveur applique les effets. Deux événements du même type ne s'additionnent pas, le plus fort s'applique ;
   deux types différents se cumulent. Une partie ou une mission lancée pendant l'événement garde son bonus. Aucun événement ne
   modifie les points de Flamme, les chances de l'urne ni rien en argent réel, et les tirages offerts ne donnent jamais le Bâton.
@@ -416,7 +485,7 @@ interdire la suppression et le force push, exiger une pull request (0 approbatio
 ## 6. Tests
 
 ```bash
-bash tests/run-server.sh                       # 443 tests : règles (dont l'équilibrage J15) + mini-jeux + activités + Tombola et Garde-robe + test politique + changelog + API + duels + notifications + chat + migrations + outils et interface d'admin, dans l'image Node de production
+bash tests/run-server.sh                       # 536 tests : règles (dont l'équilibrage J15) + mini-jeux + activités + Tombola et Garde-robe + test politique + changelog + API + duels + notifications + chat + migrations + outils et interface d'admin, dans l'image Node de production
 bash tests/run-server.sh tests/chat.test.mjs   # un seul fichier
 docker compose restart api                     # remet à zéro les limites d'inscription avant l'e2e
 powershell -ExecutionPolicy Bypass -File tests\e2e.ps1   # parcours complet dans Chrome (crée deux joueurs de test)

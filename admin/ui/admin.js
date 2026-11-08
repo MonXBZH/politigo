@@ -23,7 +23,7 @@ function ago(t){
  return s<60?"à l'instant":s<3600?`il y a ${Math.floor(s/60)} min`:s<86400?`il y a ${Math.floor(s/3600)} h`:`il y a ${Math.floor(s/86400)} j`;
 }
 const pct=x=>x==null?"—":`${Math.round(x*100)} %`;
-const bytes=n=>n==null?"—":n<1024?`${n} o`:n<1048576?`${(n/1024).toFixed(1)} Ko`:`${(n/1048576).toFixed(1)} Mo`;
+const bytes=n=>n==null?"—":n<1024?`${n} o`:n<1048576?`${(n/1024).toFixed(1)} Ko`:n<1073741824?`${(n/1048576).toFixed(1)} Mo`:`${(n/1073741824).toFixed(1)} Go`;
 const dur=s=>{if(s==null)return "—";s=Math.floor(s);const d=Math.floor(s/86400),hh=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return d?`${d} j ${hh} h`:hh?`${hh} h ${m} min`:`${m} min`;};
 const campBadge=c=>c?h("span",{class:`badge ${c}`},CAMP[c]||c):null;
 const who=a=>typeof a==="string"?a:a?.name??"?";
@@ -93,7 +93,7 @@ function drawSwitcher(){
 setInterval(()=>{if(!document.hidden&&!$("#app").hidden&&route().id!=="apercu")loadServers().catch(()=>{});},15000);
 // A file answer (backup): fetched as a blob, then handed to the browser as a download.
 async function download(path,body={}){
- const r=await fetch(sp(path),{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json","X-PolitiGo-Admin":"1"},body:JSON.stringify(body)});
+ const r=await fetch(path.startsWith("/")?path:sp(path),{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json","X-PolitiGo-Admin":"1"},body:JSON.stringify(body)});
  if(r.status===401){showLogin();throw new Unauthorized("Session expirée.");}
  if(!r.ok){let j=null;try{j=await r.json();}catch{}throw new Error(j?.error||`Erreur ${r.status}`);}
  const name=/filename="([^"]+)"/.exec(r.headers.get("content-disposition")||"")?.[1]||"politigo.bin";
@@ -195,8 +195,8 @@ document.addEventListener("visibilitychange",()=>{if(!document.hidden&&route().i
 // Polled every 20 s on every server, the page hidden or not: the count heads the menu and the tab's title, a new item
 // chimes (sound on) and, the console in the background, shows a system notification (HTTPS or localhost only: browsers
 // refuse it on plain http). "Vu" files an item away on its game server, for every console.
-const ALERT_MS=20000,KIND={chat:"Chat",duel:"Duel",bot:"Bot",suspect:"Comptes",mythic:"Mythique",baton:"Duel du Bâton"},BASE_TITLE=document.title,SOUND_KEY="politigo-admin-sound";
-const alertLink=a=>a.kind==="chat"?"#chat":a.kind==="suspect"?"#duels":`#joueurs/${a.ref}`;
+const ALERT_MS=20000,KIND={chat:"Chat",duel:"Duel",bot:"Bot",suspect:"Comptes",mythic:"Mythique",baton:"Duel du Bâton",abandoned:"Abandon",backup:"Sauvegarde"},BASE_TITLE=document.title,SOUND_KEY="politigo-admin-sound";
+const alertLink=a=>a.kind==="chat"?"#chat":a.kind==="suspect"?"#duels":a.kind==="abandoned"?"#joueurs/abandonnes":a.kind==="backup"?"#sauvegarde":`#joueurs/${a.ref}`;
 let alerts=new Map(),alertsKnown=null,alertsT=null,audio=null;   // server id -> {items,acked,error}; "server|key" seen so far (null: first poll)
 const soundOn=()=>{try{return localStorage.getItem(SOUND_KEY)!=="off";}catch{return true;}};
 const notifiable=()=>window.isSecureContext&&"Notification" in window;
@@ -250,18 +250,18 @@ async function viewAlerts(){
  const blocks=servers.map(s=>{
   const st=alerts.get(s.id)||{items:[],acked:0},items=st.items;
   return h("div",{class:"card"},
-   h("div",{class:"btn-row"},h("h2",{},multi()?s.name:"Alertes"),items.length>1&&can("alerts-ack")?h("button",{class:"btn small",type:"button",onclick:e=>ack(s.id,items.map(a=>a.key),e.currentTarget)},"Tout marquer comme vu"):null),
+   h("div",{class:"btn-row"},h("h2",{},multi()?s.name:"Alertes"),items.filter(a=>!a.noAck).length>1&&can("alerts-ack")?h("button",{class:"btn small",type:"button",onclick:e=>ack(s.id,items.filter(a=>!a.noAck).map(a=>a.key),e.currentTarget)},"Tout marquer comme vu"):null),
    st.error?h("p",{class:"err"},st.error):null,
    items.length?h("div",{class:"list"},items.map(a=>h("div",{class:"alert-item"},
     h("div",{class:"btn-row"},h("span",{class:`badge ${a.kind==="chat"?"warn":a.kind==="mythic"||a.kind==="baton"?"mythic":"bad"}`},KIND[a.kind]||a.kind),h("b",{},a.title),a.t?h("span",{class:"muted small"},fmt(a.t)):null),
     a.detail?h("p",{class:"wrap muted small"},a.detail):null,
-    h("div",{class:"btn-row"},h("button",{class:"btn small go",type:"button",onclick:()=>open(s.id,a)},"Ouvrir"),
-     can("alerts-ack")&&h("button",{class:"btn small",type:"button",onclick:e=>ack(s.id,[a.key],e.currentTarget)},"Vu"))))):empty("Rien à traiter."),
+    h("div",{class:"btn-row"},sees(alertLink(a).slice(1).split("/")[0])?h("button",{class:"btn small go",type:"button",onclick:()=>open(s.id,a)},"Ouvrir"):null,
+     can("alerts-ack")&&!a.noAck&&h("button",{class:"btn small",type:"button",onclick:e=>ack(s.id,[a.key],e.currentTarget)},"Vu"))))):empty("Rien à traiter."),
    st.acked?h("p",{class:"muted small"},`${st.acked} déjà vue${st.acked>1?"s":""} : elle${st.acked>1?"s":""} ne compte${st.acked>1?"nt":""} plus pendant 30 jours.`):null);
  });
  return [h("div",{class:"view-head"},h("h1",{},"À traiter"),h("div",{class:"btn-row"},h("span",{class:"muted small"},"vérifié toutes les 20 s, sur tous les serveurs"),refreshBtn())),
   h("div",{class:"card"},h("h2",{},"Me prévenir"),snd,perm,
-   h("p",{class:"muted small"},"Signalements du chat, duels signalés par l'anti-triche, joueurs au score de bot élevé (50/100 et plus), groupes de duels suspects et gain d'un objet mythique.")),
+   h("p",{class:"muted small"},"Signalements du chat, duels signalés par l'anti-triche, joueurs au score de bot élevé (50/100 et plus), groupes de duels suspects, gain d'un objet mythique et comptes qui semblent abandonnés.")),
   ...blocks];
 }
 
@@ -349,25 +349,50 @@ function dots(p){
  return h("span",{class:"dots"},h("i",{class:`dot${p.online?" on":""}`,title:p.online?"en ligne":"hors ligne"}),
   p.suspended?h("i",{class:"dot sus",title:"suspendu"}):null,p.chatMutedUntil>Date.now()?h("i",{class:"dot mute",title:"chat coupé"}):null);
 }
+// "Vu": the player's own last visit (lastSeen), never the time the server last saved their game (updated).
 function playerRow(p){
  return h("li",{},h("button",{class:"row",type:"button",onclick:()=>{location.hash=`#joueurs/${p.id}`;}},
-  dots(p),h("span",{class:"grow"},h("b",{},p.name),h("div",{class:"meta"},`niv. ${p.lvl??"?"} · vu ${ago(p.updated)} · inscrit le ${fmtDay(p.created)}`)),campBadge(p.camp)));
+  dots(p),h("span",{class:"grow"},h("b",{},p.name),h("div",{class:"meta"},`niv. ${p.lvl??"?"} · ${p.lastSeen?`vu ${ago(p.lastSeen)}`:"jamais vu"} · inscrit le ${fmtDay(p.created)}`)),campBadge(p.camp)));
 }
 let playerFilter="";
 async function viewPlayers(arg){
+ if(arg==="abandonnes")return viewAbandoned();
  if(arg)return viewPlayer(+arg);
- const {players}=await call("list");
+ const [{players},gone]=await Promise.all([call("list"),call("abandoned-list").catch(()=>({items:[]}))]);
  const list=h("ul",{class:"list"}),count=h("span",{class:"muted small"});
  const fold=s=>s.normalize("NFD").replace(/\p{M}/gu,"").toLowerCase();
  const draw=()=>{
-  const q=fold(playerFilter.trim()),rows=players.filter(p=>!q||fold(p.name).includes(q)).sort((a,b)=>(b.online-a.online)||(b.updated-a.updated));
+  const q=fold(playerFilter.trim()),rows=players.filter(p=>!q||fold(p.name).includes(q)).sort((a,b)=>(b.online-a.online)||((b.lastSeen??0)-(a.lastSeen??0)));
   list.replaceChildren(...(rows.length?rows.map(playerRow):[empty("Aucun joueur.")]));count.textContent=`${rows.length} / ${players.length}`;
  };
  const search=h("input",{type:"search",placeholder:"Rechercher un pseudo…",value:playerFilter,"aria-label":"Rechercher un pseudo",oninput:e=>{playerFilter=e.target.value;draw();}});
  draw();
- return [head("Joueurs",count,refreshBtn()),h("div",{class:"card"},search,
+ return [head("Joueurs",count,h("a",{class:"btn small",href:"#joueurs/abandonnes"},`Comptes abandonnés (${gone.items.length})`),refreshBtn()),h("div",{class:"card"},search,
   h("div",{class:"legend"},h("span",{},h("i",{class:"dot on"}),"en ligne"),h("span",{},h("i",{class:"dot sus"}),"suspendu"),h("span",{},h("i",{class:"dot mute"}),"chat coupé")),
   list)];
+}
+// Deleting an account: for good, so the name is typed again. p: {id, name, isMod, baton}.
+async function deleteAccount(btn,p,done){
+ const inp=h("input",{type:"text",maxLength:40,autocomplete:"off"});
+ const warn=[p.baton?"Il porte le Bâton de feu : le Bâton retourne dans l'urne.":null].filter(Boolean);
+ const v=await dialog({title:"Supprimer le compte ?",body:[`Le compte de ${p.name} est supprimé pour de bon : progression, garde-robe et lignes du fil. Son pseudo reste bloqué 24 h.`,...warn,h("label",{},`Retape le pseudo pour confirmer : ${p.name}`),inp],ok:"Supprimer",danger:true,value:()=>inp.value,focus:inp});
+ if(v==null)return;
+ if(v!==p.name){toast("Le pseudo ne correspond pas : rien n'a été supprimé.",true);return;}
+ act(btn,()=>call("player-delete",{id:p.id,confirm:v}),`Compte de ${p.name} supprimé.`,done);
+}
+// A moderator's own account: not even the owner deletes it while they are one (their console access stands on it).
+const mayDelete=p=>can("player-delete")&&!p.isMod;
+async function viewAbandoned(){
+ const {items}=await call("abandoned-list");
+ const row=x=>h("tr",{},h("td",{},h("a",{href:`#joueurs/${x.id}`},x.name),x.baton?h("span",{class:"badge mythic"},"🔥 Bâton"):null,x.isMod?h("span",{class:"badge warn"},"modo"):null),
+  h("td",{},h("div",{class:"btn-row"},
+   mayDelete(x)?h("button",{class:"btn small danger",type:"button",onclick:e=>deleteAccount(e.currentTarget,x,render)},"Supprimer"):null,
+   can("alerts-ack")?h("button",{class:"btn small",type:"button",onclick:e=>act(e.currentTarget,()=>call("abandoned-ignore",{id:x.id}),`${x.name} ignoré, jusqu'à son retour.`)},"Ignorer"):null)),
+  h("td",{},campBadge(x.camp)),
+  h("td",{class:"nowrap"},`${fmt(x.lastSeen)} (${ago(x.lastSeen)})`),h("td",{},String(x.idleDeaths)),h("td",{},String(x.best)),h("td",{},String(x.flame)));
+ return [head("Comptes abandonnés",h("a",{class:"btn small",href:"#joueurs"},"← Joueurs"),refreshBtn()),
+  h("div",{class:"card"},h("p",{class:"muted small"},"3 morts d'affilée sans jouer et 5 jours sans connexion. Rien n'est supprimé tout seul. Les comptes protégés n'apparaissent pas."),
+   items.length?h("div",{class:"table-wrap"},h("table",{},h("thead",{},h("tr",{},["Joueur","","Camp","Dernière connexion","Morts d'affilée","Meilleur niveau","Flamme"].map(t=>h("th",{},t)))),h("tbody",{},items.map(row)))):empty("Aucun compte abandonné."))];
 }
 const GAUGES=[["form","Forme"],["sat","Satiété"],["moral","Moral"],["energy","Énergie"],["hyg","Hygiène"]];
 async function viewPlayer(id){
@@ -375,9 +400,9 @@ async function viewPlayer(id){
  const by={id:p.id},muted=p.chatMutedUntil>Date.now();
  const muteSel=h("select",{"aria-label":"Durée"},[[1,"1 heure"],[24,"24 heures"],[72,"3 jours"],[168,"7 jours"],[720,"30 jours"]].map(([v,t])=>h("option",{value:v},t)));
  const btn=(label,cls,fn)=>h("button",{class:`btn small ${cls||""}`,type:"button",onclick:e=>fn(e.currentTarget)},label);
- const self=isMe(p.id),ok=a=>can(a)&&!self;
+ const locked=p.protected&&!owner(),self=isMe(p.id)||locked,ok=a=>can(a)&&!self;
  const actions=h("div",{class:"btn-row"},
-  self?h("p",{class:"muted small"},"C'est ton propre compte : aucune action possible dessus."):null,
+  self?h("p",{class:"muted small"},locked?"Compte protégé par l'organisateur : aucune action possible dessus.":"C'est ton propre compte : aucune action possible dessus."):null,
   ok("signout")&&btn("Déconnecter partout","",b=>confirmBox("Déconnecter partout ?",`${p.name} sera déconnecté de tous ses appareils.`,"Déconnecter").then(ok=>ok&&act(b,()=>call("signout",by),"Sessions fermées."))),
   ok("reset-password")&&btn("Réinitialiser le mot de passe","danger",b=>confirmBox("Réinitialiser le mot de passe ?",`Un nouveau mot de passe est généré pour ${p.name} ; ses sessions sont fermées partout.`,"Réinitialiser").then(ok=>ok&&act(b,
    async()=>{const r=await api(sp("reset-password"),{name:p.name});await secretBox("Nouveau mot de passe",`Mot de passe de ${r.name} :`,r.password);},null))),
@@ -389,14 +414,21 @@ async function viewPlayer(id){
   ok("chat-mute")&&btn("Couper le chat","danger",b=>{const hrs=+muteSel.value;confirmBox("Couper le chat ?",`${p.name} ne pourra plus écrire dans le chat pendant ${muteSel.selectedOptions[0].textContent}.`,"Couper").then(ok=>ok&&act(b,()=>call("chat-mute",{...by,hours:hrs}),"Chat coupé."));}),
   muted&&ok("chat-mute")?btn("Rétablir le chat","",b=>act(b,()=>call("chat-mute",{...by,hours:0}),"Chat rétabli.")):null);
  const kv=(...pairs)=>h("dl",{class:"kv"},pairs.filter(Boolean).flatMap(([k,v])=>[h("dt",{},k),h("dd",{},v??"—")]));
+ // At the bottom of the file: the protection is the owner's, and a protected account must be freed before it can go.
+ const account={...p,baton:!!p.wardrobe?.baton},del=ok("player-delete")&&mayDelete(account);
+ const sensitive=(owner()||del)?h("div",{class:"card"},h("h2",{},"Zone sensible"),h("div",{class:"btn-row"},
+  owner()?btn(p.protected?"Retirer la protection":"Protéger le compte","",b=>act(b,()=>call("player-protect",{...by,on:!p.protected}),p.protected?"Protection retirée.":"Compte protégé : aucun modo ne peut plus agir dessus.")):null,
+  del&&!p.protected?btn("Supprimer le compte","danger",b=>deleteAccount(b,account,()=>{location.hash="#joueurs";})):null),
+  p.protected&&owner()?h("p",{class:"muted small"},"Retire la protection pour pouvoir supprimer ce compte."):null,
+  p.isMod&&owner()?h("p",{class:"muted small"},"Compte d'un modérateur : retire-le d'abord des modérateurs (page Modérateurs) pour pouvoir le supprimer."):null):null;
  return [
-  h("div",{class:"view-head"},h("div",{class:"btn-row"},h("a",{class:"btn small",href:"#joueurs"},"← Joueurs"),h("h1",{},p.name),srvTag(),campBadge(p.camp),dots(p),p.suspended?h("span",{class:"badge bad"},"suspendu"):null),refreshBtn()),
+  h("div",{class:"view-head"},h("div",{class:"btn-row"},h("a",{class:"btn small",href:"#joueurs"},"← Joueurs"),h("h1",{},p.name),srvTag(),campBadge(p.camp),dots(p),p.suspended?h("span",{class:"badge bad"},"suspendu"):null,p.protected?h("span",{class:"badge good"},"Protégé"):null),refreshBtn()),
   h("div",{class:"card"},h("h2",{},"Actions"),actions,h("h2",{class:"sub"},"Chat"),chat),
   h("div",{class:"grid wide"},
-   h("div",{class:"card"},h("h2",{},"Compte"),kv(["Identifiant",String(p.id)],["Camp",CAMP[p.camp]||p.camp],["Candidat",p.candidate],["Inscrit le",fmt(p.created)],["Vu",`${fmt(p.updated)} (${ago(p.updated)})`],
+   h("div",{class:"card"},h("h2",{},"Compte"),kv(["Identifiant",String(p.id)],["Camp",CAMP[p.camp]||p.camp],["Candidat",p.candidate],["Inscrit le",fmt(p.created)],["Vu",p.lastSeen?`${fmt(p.lastSeen)} (${ago(p.lastSeen)})`:"jamais"],
     ["En ligne",p.online?"oui":"non"],["Sessions",String(p.sessions??"—")],["Abonnements notif.",String(p.pushSubs??"—")],["Suspendu",p.suspended?"oui":"non"])),
-   h("div",{class:"card"},h("h2",{},"Partie"),kv(["Niveau",String(p.lvl??"—")],["XP",String(p.xp??"—")],["Score",String(p.score??"—")],["Fonds (FM)",String(p.fm??"—")],["Morts",String(p.deaths??"—")],
-    ...GAUGES.map(([k,l])=>[l,p[k]==null?"—":String(Math.round(p[k]))])))),
+   h("div",{class:"card"},h("h2",{},"Partie"),kv(["Niveau",String(p.lvl??"—")],["XP",String(p.xp??"—")],["Score",String(p.score??"—")],["Fonds (FM)",String(p.fm??"—")],["Morts",String(p.deaths??"—")],["Morts d'affilée sans jouer",String(p.idleDeaths??"—")],
+    ...GAUGES.map(([k,l])=>[l,p[k]==null?"—":typeof p[k]==="number"?String(Math.round(p[k])):String(p[k])])))),
   wardrobeCard(p),
   batonCard(p,self),
   h("div",{class:"card"},h("h2",{},"Derniers duels"),p.duels?.length?h("div",{class:"table-wrap"},h("table",{},
@@ -406,6 +438,7 @@ async function viewPlayer(id){
     h("td",{},d.status==="done"&&d.id!=null&&!self?annulBtn({id:d.id,label:`${p.name} contre ${who(d.vs)}`}):null)))))):empty("Aucun duel.")),
   p.games&&!p.activity?.games?h("div",{class:"card"},h("h2",{},"Mini-jeux (14 jours)"),gamesTable(p.games)):null,
   h("div",{class:"card"},h("h2",{},"Activité et mini-jeux (14 jours)"),p.activity?botReport(p.activity,false):empty("Pas de rapport d'activité.")),
+  sensitive,
  ];
 }
 
@@ -533,21 +566,49 @@ const EV_WHO={all:"Tout le monde",left:"La gauche",right:"La droite"},EV_REP={""
 const EV_HOURS=[[1,"1 h"],[2,"2 h"],[4,"4 h"],[12,"12 h"],[24,"24 h"],[72,"3 jours"],[168,"7 jours (maximum)"]];
 const localInput=t=>new Date(t-new Date(t).getTimezoneOffset()*6e4).toISOString().slice(0,16);
 async function viewEvents(){
- const {items,types,games}=await call("events-list"),H=36e5;
- let editing=null;
+ const {items,types,games,reminds,tokens}=await call("events-list"),H=36e5;
+ let editing=null,lastType=null,seenTimer=0,seenRun=0;
  const typeSel=h("select",{id:"ev-type",onchange:()=>typeChanged()},Object.entries(types).map(([k,t])=>h("option",{value:k},t.label)));
- const desc=h("p",{class:"muted small"}),name=h("input",{type:"text",id:"ev-name",maxLength:50}),msg=h("textarea",{id:"ev-msg",maxLength:160}),params=h("div",{});
- const start=h("input",{type:"datetime-local",id:"ev-start"}),len=h("select",{id:"ev-len"},EV_HOURS.map(([v,t])=>h("option",{value:v},t)));
- const rep=h("select",{id:"ev-rep"},h("option",{value:""},"Une seule fois"),h("option",{value:"day"},"Chaque jour"),h("option",{value:"week"},"Chaque semaine"));
+ const desc=h("p",{class:"muted small"}),name=h("input",{type:"text",id:"ev-name",maxLength:50,oninput:()=>texts()}),msg=h("textarea",{id:"ev-msg",maxLength:160}),params=h("div",{onchange:()=>texts()});
+ const start=h("input",{type:"datetime-local",id:"ev-start",onchange:()=>texts()}),len=h("select",{id:"ev-len",onchange:()=>texts()},EV_HOURS.map(([v,t])=>h("option",{value:v},t)));
+ const rep=h("select",{id:"ev-rep",onchange:()=>texts()},h("option",{value:""},"Une seule fois"),h("option",{value:"day"},"Chaque jour"),h("option",{value:"week"},"Chaque semaine"));
  const who=h("select",{id:"ev-who"},Object.entries(EV_WHO).map(([k,t])=>h("option",{value:k},t)));
- const push=h("input",{type:"checkbox",checked:true}),remind=h("input",{type:"checkbox"}),title=h("h2",{},"Nouvel événement");
+ const push=h("input",{type:"checkbox",checked:true,onchange:()=>texts()}),title=h("h2",{},"Nouvel événement");
+ // The announcements: the prepared texts fill the boxes; the server stores a text only when it differs from them.
+ const annBox=h("textarea",{id:"ev-ann",maxLength:240,oninput:()=>texts()}),remBox=h("textarea",{id:"ev-rem",maxLength:240,oninput:()=>texts()});
+ const remChecks=reminds.map(([m,t])=>[h("input",{type:"checkbox",onchange:()=>texts()}),m,t]);
+ const dayNote=h("p",{class:"muted small",hidden:true},"Sur une série quotidienne, le rappel 1 jour ne part que pour la première édition.");
+ const annSeen=h("p",{class:"ev-seen"}),remSeen=h("p",{class:"ev-seen"}),seenBad=h("p",{class:"ev-bad small",role:"alert",hidden:true});
+ const restore=(box,key)=>h("button",{class:"btn small",type:"button",onclick:()=>{box.value=types[typeSel.value][key];texts();}},"Rétablir le texte préfait");
+ const annPart=h("div",{},h("label",{for:"ev-ann"},"Texte de l'annonce"),annBox,h("div",{class:"btn-row"},restore(annBox,"ann")),annSeen);
+ const remPart=h("div",{},h("label",{for:"ev-rem"},"Texte des rappels"),remBox,h("div",{class:"btn-row"},restore(remBox,"rem")),remSeen);
+ const picked=()=>remChecks.filter(([c])=>c.checked).map(([,m])=>m);
+ // What will go out, as the server words it (the summary and the times are its own), a moment after the last key.
+ function texts(){
+  dayNote.hidden=!(rep.value==="day"&&picked().includes(1440));
+  annPart.hidden=!push.checked;remPart.hidden=!picked().length;
+  clearTimeout(seenTimer);const run=++seenRun;
+  seenTimer=setTimeout(async()=>{
+   const t=new Date(start.value).getTime();if(!Number.isSafeInteger(t))return;
+   try{
+    const r=await call("event-preview",{type:typeSel.value,name:name.value,params:readParams(),starts:t,ends:t+Number(len.value)*H,ann:annBox.value,rtext:remBox.value});
+    if(run!==seenRun)return;
+    annSeen.textContent=`Aperçu : ${r.ann}`;remSeen.textContent=`Aperçu, 15 minutes avant : ${r.remind}`;seenBad.hidden=true;
+   }catch(e){if(run!==seenRun)return;seenBad.textContent=e.message;seenBad.hidden=false;}
+  },300);
+ }
  function drawParams(p){
   const t=types[typeSel.value];
   params.replaceChildren(...t.params.flatMap(f=>f.games
    ?[h("label",{},f.label),...games.map(([k,n])=>h("label",{class:"check"},h("input",{type:"checkbox","data-game":k,checked:p?p[f.k].includes(k):true}),n))]
    :[h("label",{},f.label),h("select",{"data-k":f.k,"aria-label":f.label},f.opts.map(([v,n])=>h("option",{value:String(v),selected:String(p?.[f.k]??f.def)===String(v)},n)))]));
  }
- function typeChanged(){const t=types[typeSel.value];desc.textContent=t.desc;name.value=t.label;msg.value=t.msg;drawParams();}
+ function typeChanged(){
+  const t=types[typeSel.value],was=types[lastType];desc.textContent=t.desc;name.value=t.label;msg.value=t.msg;drawParams();
+  if(!was||annBox.value===was.ann)annBox.value=t.ann;   // a text written by hand stays
+  if(!was||remBox.value===was.rem)remBox.value=t.rem;
+  lastType=typeSel.value;texts();
+ }
  function readParams(){
   const p={};for(const s of params.querySelectorAll("select"))p[s.dataset.k]=s.value==="all"?"all":Number(s.value);
   const g=[...params.querySelectorAll("[data-game]")];if(g.length)p.games=g.filter(c=>c.checked).map(c=>c.dataset.game);
@@ -556,23 +617,25 @@ async function viewEvents(){
  const plan=h("button",{class:"btn go",type:"button",onclick:e=>save(e.currentTarget,false)},"Programmer");
  const nowBtn=h("button",{class:"btn",type:"button",onclick:e=>save(e.currentTarget,true)},"Lancer maintenant");
  const cancel=h("button",{class:"btn",type:"button",hidden:true,onclick:()=>reset()},"Annuler");
- function reset(){editing=null;title.textContent="Nouvel événement";plan.textContent="Programmer";cancel.hidden=true;nowBtn.hidden=false;start.value=localInput(Date.now()+H);len.value="2";rep.value="";who.value="all";push.checked=true;remind.checked=false;typeSel.selectedIndex=0;typeChanged();}
+ function reset(){editing=null;title.textContent="Nouvel événement";plan.textContent="Programmer";cancel.hidden=true;nowBtn.hidden=false;start.value=localInput(Date.now()+H);len.value="2";rep.value="";who.value="all";push.checked=true;for(const [c] of remChecks)c.checked=false;lastType=null;typeSel.selectedIndex=0;typeChanged();}
  function fill(e,edit){
   editing=edit?e:null;typeSel.value=e.type;desc.textContent=types[e.type].desc;name.value=e.name;msg.value=e.msg;drawParams(e.params);
   start.value=localInput(edit?e.starts:Date.now()+H);const hrs=(e.ends-e.starts)/H;len.value=String((EV_HOURS.find(([v])=>v>=hrs)??EV_HOURS.at(-1))[0]);
-  rep.value=e.rep;who.value=e.who;push.checked=e.push;remind.checked=e.remind;
+  rep.value=e.rep;who.value=e.who;push.checked=e.push;for(const [c,m] of remChecks)c.checked=e.reminds.includes(m);
+  annBox.value=e.ann??types[e.type].ann;remBox.value=e.rtext??types[e.type].rem;lastType=e.type;texts();
   title.textContent=edit?`Modifier « ${e.name} »`:`Dupliquer « ${e.name} »`;plan.textContent=edit?"Enregistrer":"Programmer";nowBtn.hidden=edit;cancel.hidden=false;
   title.scrollIntoView({behavior:"smooth",block:"center"});
  }
  function save(btn,launch){
   const t=new Date(start.value).getTime(),base=launch?Date.now():t;
-  act(btn,()=>call("event-save",{...(editing?{id:editing.id}:{}),type:typeSel.value,name:name.value,msg:msg.value,params:readParams(),starts:base,ends:base+Number(len.value)*H,who:who.value,rep:rep.value,push:push.checked,remind:remind.checked,now:launch}),
+  act(btn,()=>call("event-save",{...(editing?{id:editing.id}:{}),type:typeSel.value,name:name.value,msg:msg.value,params:readParams(),starts:base,ends:base+Number(len.value)*H,who:who.value,rep:rep.value,push:push.checked,ann:annBox.value,rtext:remBox.value,reminds:picked(),now:launch}),
    launch?"Événement lancé.":editing?"Événement modifié.":"Événement programmé.");
  }
  const row=e=>h("div",{class:"ev"},
   h("div",{class:"btn-row"},h("b",{},e.name),e.state==="on"?h("span",{class:"badge good"},"En cours"):e.state==="soon"?h("span",{class:"badge warn"},"Programmé"):null,
    e.who!=="all"?h("span",{class:"badge"},EV_WHO[e.who]):null,e.rep?h("span",{class:"badge"},EV_REP[e.rep]):null),
   h("p",{class:"muted small"},`${e.summary} · ${fmt(e.starts)} → ${fmt(e.ends)}${e.by?` · par ${e.by}`:""}${e.stopped?" · arrêté avant la fin":""}`),
+  e.push||e.reminds.length?h("p",{class:"muted small"},[e.push?"Annonce au début":null,e.reminds.length?`Rappels : ${e.reminds.map(m=>reminds.find(r=>r[0]===m)?.[1]).join(", ")}`:null].filter(Boolean).join(" · ")):null,
   h("div",{class:"btn-row"},
    e.state==="on"&&can("events-run")?h("button",{class:"btn small danger",type:"button",onclick:ev=>{const b=ev.currentTarget;confirmBox(`Arrêter « ${e.name} » ?`,"L'événement s'arrête pour tous les joueurs. Les parties et les missions déjà lancées gardent leur bonus.","Arrêter").then(ok=>ok&&act(b,()=>call("event-stop",{id:e.id}),"Événement arrêté."));}},"Arrêter"):null,
    e.state==="soon"&&can("events-run")?h("button",{class:"btn small go",type:"button",onclick:ev=>act(ev.currentTarget,()=>call("event-start",{id:e.id}),"Événement lancé.")},"Lancer maintenant"):null,
@@ -581,9 +644,11 @@ async function viewEvents(){
    can("events-edit")?h("button",{class:"btn small",type:"button",onclick:()=>fill(e,false)},"Dupliquer"):null));
  const part=(t,s,none,sort)=>{const l=items.filter(e=>e.state===s).sort(sort);return h("div",{class:"card"},h("h2",{},t),l.length?l.map(row):empty(none));};
  const up=(a,b)=>a.starts-b.starts;
- const form=can("events-edit")&&h("div",{class:"card"},title,h("label",{for:"ev-type"},"Type"),typeSel,desc,h("label",{for:"ev-name"},"Nom vu par les joueurs"),name,h("label",{for:"ev-msg"},"Message"),msg,params,
+ const form=can("events-edit")&&h("div",{class:"card"},title,h("label",{for:"ev-type"},"Type"),typeSel,desc,h("label",{for:"ev-name"},"Nom vu par les joueurs"),name,h("label",{for:"ev-msg"},"Message du bandeau"),msg,params,
   h("label",{for:"ev-start"},"Début (heure de ce navigateur)"),start,h("label",{for:"ev-len"},"Durée"),len,h("label",{for:"ev-rep"},"Répétition"),rep,h("label",{for:"ev-who"},"Pour qui"),who,
-  h("label",{class:"check"},push,"Annonce au début (notification, et fil si l'événement vise tout le monde)"),h("label",{class:"check"},remind,"Rappel 15 minutes avant"),
+  h("h3",{},"Annonces"),h("label",{class:"check"},push,"Annonce au début (notification, et fil si l'événement vise tout le monde)"),annPart,
+  h("p",{class:"muted small"},"Rappels avant le début :"),remChecks.map(([c,,t])=>h("label",{class:"check"},c,`${t} avant`)),dayNote,remPart,
+  h("p",{class:"muted small"},`Remplacés à l'envoi : ${tokens.map(t=>`{${t}}`).join(", ")}.`),seenBad,
   h("div",{class:"btn-row"},plan,can("events-run")?nowBtn:null,cancel));
  reset();
  return [head("Events",refreshBtn()),h("div",{class:"grid wide"},h("div",{},part("En cours","on","Aucun événement en cours.",up),part("À venir","soon","Rien de programmé.",up)),form),
@@ -724,13 +789,35 @@ async function viewSettings(){
 }
 
 // ===================================================================== Sauvegarde
-function viewBackup(){
- const dl=(path,label)=>h("button",{class:"btn go",type:"button",onclick:e=>act(e.currentTarget,()=>download(path),r=>`${r.name} téléchargé (${bytes(r.size)}).`,null)},label);
- return [head("Sauvegarde"),h("div",{class:"grid wide"},
+// The automatic backups live in the admin volume, for every game server at once: a list, the settings, and what failed.
+const BK_FREQ=[["quotidienne","Quotidienne","chaque jour"],["hebdomadaire","Hebdomadaire","le lundi"],["mensuelle","Mensuelle","le 1er du mois"]],BK_LABEL={quotidienne:"Quotidienne",hebdomadaire:"Hebdomadaire",mensuelle:"Mensuelle",manuelle:"Manuelle"};
+function backupFiles(s){
+ const get=(name,label)=>h("button",{class:"btn small",type:"button",onclick:e=>act(e.currentTarget,()=>download("/api/backups/download",{server:s.id,name}),r=>`${r.name} téléchargé (${bytes(r.size)}).`,null)},label);
+ const row=f=>h("tr",{},h("td",{},BK_LABEL[f.freq]),h("td",{},fmt(f.t)),h("td",{},bytes(f.size)),h("td",{},h("div",{class:"btn-row"},get(f.name,"Télécharger"),
+  h("button",{class:"btn small danger",type:"button",onclick:e=>{const b=e.currentTarget;confirmBox("Supprimer cette sauvegarde ?",`${f.name} sera effacée pour de bon.`,"Supprimer").then(ok=>ok&&act(b,()=>api("/api/backups/delete",{server:s.id,name:f.name}),"Sauvegarde supprimée."));}},"Supprimer"))));
+ return h("div",{class:"card"},h("div",{class:"btn-row"},h("h2",{},multi()?s.name:"Sauvegardes gardées"),s.vapid?get("vapid.json","Télécharger vapid.json"):h("span",{class:"muted small"},"Pas encore de copie de vapid.json")),
+  s.files.length?h("div",{class:"table-wrap"},h("table",{},h("thead",{},h("tr",{},["Type","Date","Taille",""].map(t=>h("th",{},t)))),h("tbody",{},s.files.map(row)))):empty("Aucune sauvegarde pour l'instant."));
+}
+async function viewBackup(){
+ const s=await api("/api/backups/list"),dl=(path,label)=>h("button",{class:"btn go",type:"button",onclick:e=>act(e.currentTarget,()=>download(path),r=>`${r.name} téléchargé (${bytes(r.size)}).`,null)},label);
+ const hour=h("select",{id:"bk-hour"},Array.from({length:24},(_,i)=>h("option",{value:String(i),selected:i===s.config.hour},`${i} h`)));
+ const rows=BK_FREQ.map(([k,label,when])=>{
+  const on=h("input",{type:"checkbox",checked:s.config[k].on}),keep=h("input",{class:"bk-keep",type:"number",min:"1",max:"90",value:String(s.config[k].keep),"aria-label":`${label} : nombre gardé`});
+  return {k,on,keep,el:h("div",{class:"btn-row"},h("label",{class:"check"},on,`${label} (${when})`),keep,h("span",{class:"muted small"},`gardées · prochaine : ${fmt(s.next[k])}`))};
+ });
+ const saveBtn=h("button",{class:"btn go",type:"button",onclick:e=>act(e.currentTarget,()=>api("/api/backups/save",{config:{hour:Number(hour.value),...Object.fromEntries(rows.map(r=>[r.k,{on:r.on.checked,keep:Number(r.keep.value)}]))}}),"Réglages enregistrés.")},"Enregistrer");
+ const runBtn=h("button",{class:"btn",type:"button",disabled:s.running,onclick:e=>act(e.currentTarget,()=>api("/api/backups/run"),r=>{const ko=r.results.filter(x=>!x.ok).length;return ko?`${ko} serveur${ko>1?"s":""} en échec : voir ci-dessous.`:"Sauvegarde faite.";})},"Sauvegarder maintenant");
+ const failed=s.servers.filter(x=>x.failure).map(x=>h("div",{class:"card"},h("span",{class:"badge bad"},"Échec"),h("b",{},` ${multi()?`${x.name} : `:""}la dernière sauvegarde a échoué, le ${fmt(x.failure.t)}`),h("p",{class:"err"},x.failure.error)));
+ const auto=h("div",{class:"card"},h("h2",{},"Sauvegardes automatiques"),
+  h("p",{class:"muted small"},`Dans le volume politigo-admin-data (/data-admin/backups), pour tous les serveurs de jeu, avec une copie de vapid.json. Une sauvegarde manquée pendant un arrêt est prise au redémarrage. Dernière réussite : ${fmt(s.lastSuccess)}. Place utilisée : ${bytes(s.total)}${s.disk?`, libre : ${bytes(s.disk.free)}`:""}.`),
+  h("label",{for:"bk-hour"},"Heure (celle du conteneur)"),hour,rows.map(r=>r.el),h("div",{class:"btn-row"},saveBtn,runBtn),
+  h("p",{class:"muted small"},"Les 5 dernières sauvegardes manuelles sont gardées. Les images du chat (chat-media) ne sont pas incluses, et ces copies restent sur la même machine que le jeu : télécharges-en une de temps en temps."));
+ return [head("Sauvegarde",refreshBtn()),h("div",{class:"grid wide"},
   h("div",{class:"card"},h("h2",{},"Base de données"),h("p",{class:"muted small"},"Une copie cohérente de la base (VACUUM INTO), prise à chaud, téléchargée puis effacée du serveur. Elle contient les empreintes des mots de passe : garde-la en lieu sûr."),
    h("div",{class:"btn-row"},dl("backup","Télécharger la base (.db)"))),
   h("div",{class:"card"},h("h2",{},"Clé des notifications"),h("p",{class:"muted small"},"vapid.json : sans elle, une base restaurée perd tous les abonnements aux notifications. C'est une clé privée : ne la partage jamais."),
-   h("div",{class:"btn-row"},dl("backup-vapid","Télécharger vapid.json"))))];
+   h("div",{class:"btn-row"},dl("backup-vapid","Télécharger vapid.json")))),
+  ...failed,auto,...s.servers.map(backupFiles)];
 }
 
 // ===================================================================== Détection de bots
@@ -843,7 +930,11 @@ async function viewMods(){
    h("button",{class:"btn go small",type:"button",onclick:e=>act(e.currentTarget,()=>modApi("save",{id:m.id,...edit.get()}),"Droits enregistrés : ses sessions sont fermées.")},"Enregistrer"),
    h("button",{class:"btn small",type:"button",onclick:()=>{box.hidden=true;}},"Fermer")));
   return h("div",{class:"card"},
-   h("div",{class:"btn-row"},h("h2",{},m.name),h("span",{class:"muted small"},`joueur de ${srvName_(m.home)}`)),
+   h("div",{class:"btn-row"},h("h2",{},m.name),h("span",{class:"muted small"},`joueur de ${srvName_(m.home)}`),
+    m.account&&!m.account.ok?h("span",{class:"badge bad"},"compte de jeu introuvable"):null),
+   // Their account as it stands now: gone, or renamed outside this console (no rights there until removed and added again).
+   m.account&&!m.account.ok?h("p",{class:"err small"},m.account.name?`Ce compte s'appelle maintenant ${m.account.name} (renommé hors de cette console, ou base restaurée) : aucun droit sur ${srvName_(m.home)}. Retire ce modérateur puis ajoute-le de nouveau.`
+    :`Son compte de joueur n'existe plus sur ${srvName_(m.home)} : aucun droit sur ce serveur. Retire ce modérateur.`):null,
    h("dl",{class:"kv"},h("dt",{},"Panneaux"),h("dd",{},label(cat.panels,m.panels)),h("dt",{},"Actions"),h("dd",{},label(cat.actions,m.actions)),
     cat.servers.length>1?[h("dt",{},"Serveurs"),h("dd",{},m.servers.map(srvName_).join(", "))]:null,
     h("dt",{},"Créé le"),h("dd",{},fmt(m.created)),h("dt",{},"Dernière connexion"),h("dd",{},m.lastLogin?`${fmt(m.lastLogin)} (${ago(m.lastLogin)})`:"jamais")),

@@ -331,7 +331,7 @@ export function freshState(camp,now){
  const S={v:2,camp,vclock:now,lastReal:now,hourIdx:Math.floor(now/H),born:now,
   fm:10,sat:80,moral:80,energy:80,hyg:80,xp:0,lvl:1,best:1,streak:0,bestStreak:0,neg:0,zero:0,form:"Excellente",mult:1.25,
   lastVisit:-99,visitDay:-1,visitsToday:0,actsToday:0,actsVisit:0,actWindow:-99,breadIdx:-1,coffeeDay:-1,coffees:0,petIdx:-1,
-  sleeping:false,equipped:{},deaths:0,jn:0,journal:[],pong:null,mini:null,rematchT:-1,diedAt:-1,treatDay:-1};
+  sleeping:false,equipped:{},deaths:0,idleDeaths:0,played:false,jn:0,journal:[],pong:null,mini:null,rematchT:-1,diedAt:-1,treatDay:-1};
  return Object.assign(S,ACT.freshActivities(S,now),{wardrobe:WR.freshWardrobe()});
 }
 export function newGame(camp,now){
@@ -347,6 +347,7 @@ export function sanitize(s,now){
  o.vclock=num(s.vclock,0,8.64e15,now);o.born=num(s.born,0,o.vclock,o.vclock);
  o.lastReal=num(s.lastReal,0,now,now);o.hourIdx=int(s.hourIdx,Math.floor(o.vclock/H)-24*366,Math.floor(o.vclock/H),Math.floor(o.vclock/H));   // at most a year of ticks to replay
  for(const k of ["sat","moral","energy","hyg"])o[k]=num(s[k],0,100,80);
+ o.idleDeaths=int(s.idleDeaths,0,1e9,0);o.played=s.played!==false;   // a life from before the count is taken as played
  o.fm=int(s.fm,0,ECO.cap,10);o.lvl=int(s.lvl,1,100,1);o.best=int(s.best,o.lvl,100,o.lvl);
  o.xp=num(s.xp,xpFloor(o.lvl),1e7,xpFloor(o.lvl));
  if(o.lvl<100)o.xp=Math.min(o.xp,xpFloor(o.lvl+1)-1e-6);
@@ -478,7 +479,8 @@ function stressHit(S,random,factor=1){
 // letters answered) are kept: a resignation must not deal a fresh set of goals, nor more missions, hence more bulletins.
 function die(S,reason,camp=S.camp,random=Math.random){
  const day={goals:S.goals,mDay:S.missions.day,mN:S.missions.n,mPaid:S.missions.paid,mB:S.missions.b,lDay:S.mail.day,lN:S.mail.n};
- const name=person(S).name,keep={journal:S.journal,jn:S.jn,deaths:S.deaths+1,best:S.best,bestStreak:S.bestStreak,equipped:S.equipped,treatDay:S.treatDay,
+ // idleDeaths: deaths in a row of a life the player never touched. Not by the XP: the hour tick pays some on its own.
+ const name=person(S).name,keep={journal:S.journal,jn:S.jn,deaths:S.deaths+1,idleDeaths:reason==="neglect"&&!S.played?(S.idleDeaths||0)+1:0,best:S.best,bestStreak:S.bestStreak,equipped:S.equipped,treatDay:S.treatDay,
   wardrobe:S.wardrobe,flame:{...S.flame,pts:Math.round(S.flame.pts*ACT.FLAME.death*100)/100}};
  const fresh=Object.assign(freshState(camp,S.vclock),keep,{lastReal:S.lastReal,diedAt:S.vclock});
  for(const k of Object.keys(S))delete S[k];
@@ -510,13 +512,14 @@ export function advance(S,realNow,speed=1,random=Math.random,fxAt=NONE){
 // After the server was down: the game goes back on the real hour, and the downtime is skipped, not played.
 // No gauge drains, no FM or XP comes in, nobody dies because the server was off. Returns the skipped ms.
 // A test server running faster than real time is already ahead, and stays as it is.
-export function resync(S,realNow){
+// why: "suspension" when the skipped time is an account's suspension (lifted, or running across a restart).
+export function resync(S,realNow,why=""){
  if(!Number.isFinite(realNow))return 0;
  const target=Math.max(S.vclock,realNow),skipped=target-S.vclock;
  S.vclock=target;S.hourIdx=Math.max(S.hourIdx,Math.floor(target/H));S.lastReal=realNow;
  if(S.pong&&realNow-S.pong.t>PONG_RULES.timeoutSeconds*1000)S.pong=null;
  if(miniExpired(S,realNow))S.mini=null;
- if(skipped>=15*60000)log(S,"sync",`Maintenance du serveur (${duration(skipped)}) : ce temps est sauté, l'horloge est recalée sur l'heure réelle. Jauges inchangées.`,{skipped});
+ if(skipped>=15*60000)log(S,"sync",`${why==="suspension"?"Compte suspendu":"Maintenance du serveur"} (${duration(skipped)}) : ce temps est sauté, l'horloge est recalée sur l'heure réelle. Jauges inchangées.`,{skipped});
  return skipped;
 }
 function duration(ms){
@@ -544,7 +547,8 @@ const refused=audit=>hidden(fail("Score refusé."),"audit",audit);
 // Every player action goes through here, on the server, after bringing the state up to date. event: the seasonal
 // event running now on the server's clock (eventAt), "" outside one. mythic: the server's {available, ageDays, clean,
 // claim} for a draw (absent: the mythic roll is off). The lowest gauge of the day is tracked after every action.
-export function act(S,a,opts){const r=actOn(S,a,opts);ACT.trackMin(S);return r;}
+// A player who acts is back: their run of idle deaths is over too (the abandoned list forgets them at once).
+export function act(S,a,opts){const r=actOn(S,a,opts);if(r?.ok&&a?.type!=="restart"){S.played=true;S.idleDeaths=0;}ACT.trackMin(S);return r;}   // a resignation opens a life nobody has played yet
 function actOn(S,a,{now,speed=1,random=Math.random,event="",mythic=null,boost=NONE}){
  advance(S,now,speed,random,boost);
  const fx=boost(now);

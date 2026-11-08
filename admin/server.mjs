@@ -8,15 +8,16 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import {dirname,basename,resolve,join} from "node:path";
 import {fileURLToPath} from "node:url";
+import {createBackups} from "./backups.mjs";
 
 const env=process.env;
 const PORT=+env.PORT||8090,DATA=env.ADMIN_DATA||"/data-admin";
 const UI=env.ADMIN_UI||join(dirname(fileURLToPath(import.meta.url)),"ui");
 const PROXY_HOPS=Math.max(0,Math.min(5,+env.ADMIN_PROXY_HOPS||0)),FORCE_SECURE=env.ADMIN_COOKIE_SECURE==="1";
-const SESSION_MS=12*3600e3,MAX_SESSIONS=50,BODY_MAX=16*1024,REPLY_MAX=8*1024*1024,SOCKET_REQ_MAX=4096;
-const COOKIE="politigo_admin",WINDOW=15*60e3,IP_TRIES=5,ALL_TRIES=30;
+const SESSION_MS=12*3600e3,OWNER_SESSIONS=20,MOD_SESSIONS=5,BODY_MAX=16*1024,REPLY_MAX=8*1024*1024,SOCKET_REQ_MAX=4096;
+const COOKIE="politigo_admin",WINDOW=15*60e3,IP_TRIES=5,ALL_TRIES=30,MOD_RATE=30;
 
-class HttpError extends Error{constructor(status,msg){super(msg);this.status=status;}}
+class HttpError extends Error{constructor(status,msg,headers){super(msg);this.status=status;this.headers=headers;}}
 
 // ===================================================================== game servers
 // Several games on one Docker host, one admin socket each (mounted volumes): POLITIGO_ADMIN_SERVERS="Prod=/run/a/admin.sock;Test=/run/b/admin.sock".
@@ -92,20 +93,22 @@ const PANELS=[["tableau","Tableau de bord"],["traiter","À traiter"],["joueurs",
 const ACTIONS=[["chat-delete","Supprimer un message du chat"],["chat-mute","Couper le chat d'un joueur"],["signout","Déconnecter un joueur"],
  ["rename","Renommer un joueur"],["suspend","Suspendre ou réactiver un compte"],["unlock","Débloquer la connexion d'un joueur"],
  ["reset-password","Réinitialiser le mot de passe d'un joueur"],["announce","Envoyer et planifier des annonces"],["feed-delete","Supprimer une ligne du fil"],
- ["duel-cancel","Annuler un duel en cours"],["duel-annul","Annuler un duel terminé (rendre les gains), arbitrer un duel du Bâton"],["alerts-ack","Marquer une alerte comme vue"],
+ ["duel-cancel","Annuler un duel en cours"],["duel-annul","Annuler un duel terminé (rendre les gains), arbitrer un duel du Bâton"],["alerts-ack","Marquer une alerte comme vue, ignorer un compte abandonné"],["player-delete","Supprimer un joueur"],
  ["events-edit","Créer et modifier un événement"],["events-run","Lancer et arrêter un événement"],["events-delete","Supprimer un événement"],
  ["invite","Voir et copier le code d'invitation"]];
 const PANEL_IDS=PANELS.map(x=>x[0]),ACTION_IDS=ACTIONS.map(x=>x[0]);
 const PRESETS=[{id:"chat",label:"Modo chat",panels:["traiter","chat"],actions:["chat-delete","chat-mute","alerts-ack"]},
  {id:"events",label:"Modo événements",panels:["events","annonces"],actions:["events-edit","events-run","events-delete","announce"]},
- {id:"full",label:"Modo complet",panels:PANEL_IDS,actions:ACTION_IDS.filter(a=>a!=="invite")}];   // the code stays out of a player's hands unless checked
+ {id:"full",label:"Modo complet",panels:PANEL_IDS,actions:ACTION_IDS.filter(a=>a!=="invite"&&a!=="player-delete")}];   // the code and deleting a player stay out unless checked
 // What each command asks of a moderator: one of these panels (p:) or actions (a:). Not listed: the owner's alone.
 const NEEDS={stats:PANEL_IDS.map(p=>"p:"+p),list:["p:tableau","p:joueurs","p:annonces"],player:["p:joueurs"],
- "schedule-list":["p:annonces"],"events-list":["p:events"],"event-save":["a:events-edit"],"event-start":["a:events-run"],"event-stop":["a:events-run"],"event-delete":["a:events-delete"],"announce-history":["p:annonces"],"feed-list":["p:fil"],"duels-list":["p:duels"],"duels-suspects":["p:duels"],
+ "schedule-list":["p:annonces"],"events-list":["p:events"],"event-save":["a:events-edit"],"event-preview":["a:events-edit"],"event-start":["a:events-run"],"event-stop":["a:events-run"],"event-delete":["a:events-delete"],"announce-history":["p:annonces"],"feed-list":["p:fil"],"duels-list":["p:duels"],"duels-suspects":["p:duels"],
  bots:["p:bots"],"chat-reports":["p:chat"],"chat-feed":["p:chat"],"chat-media":["p:chat"],alerts:["p:traiter"],audit:["p:journal"],"invite-get":["a:invite"],
  signout:["a:signout"],rename:["a:rename"],suspend:["a:suspend"],unlock:["a:unlock"],announce:["a:announce"],"schedule-add":["a:announce"],
  "schedule-delete":["a:announce"],"schedule-toggle":["a:announce"],"feed-delete":["a:feed-delete"],"duel-cancel":["a:duel-cancel"],
- "duel-annul":["a:duel-annul"],"baton-judge":["a:duel-annul"],"chat-delete":["a:chat-delete"],"chat-mute":["a:chat-mute"],"alerts-ack":["a:alerts-ack"],"reset-password":["a:reset-password"]};
+ "duel-annul":["a:duel-annul"],"baton-judge":["a:duel-annul"],"chat-delete":["a:chat-delete"],"chat-mute":["a:chat-mute"],"alerts-ack":["a:alerts-ack"],"reset-password":["a:reset-password"],
+ "player-delete":["a:player-delete"],"abandoned-list":["p:joueurs","p:traiter"],"abandoned-ignore":["a:alerts-ack"]};   // player-protect: not listed, the owner's alone
+const WRITES=c=>c!=="invite-get"&&c!=="event-preview"&&(NEEDS[c]||[]).some(n=>n.startsWith("a:"));   // what changes the game: rate-limited for moderators
 const may=(mod,cmd)=>!mod||(NEEDS[cmd]||[]).some(n=>n.startsWith("p:")?mod.panels.includes(n.slice(2)):mod.actions.includes(n.slice(2)));
 const modKey=s=>String(s).normalize("NFC").trim().toLowerCase();
 const MODS_FILE=join(DATA,"moderators.json"),MODS_MAX=50;
@@ -119,6 +122,8 @@ function saveMods(){
 }
 const modView=m=>({id:m.id,name:m.name,home:m.home,servers:m.servers,panels:m.panels,actions:m.actions,created:m.created,lastLogin:m.lastLogin??null});
 const modPassword=()=>crypto.randomBytes(20).toString("base64");
+// The name their account on a server had when it was linked (or renamed from this console): names[server], else the login name.
+const linkName=(m,srvId)=>m.names?.[srvId]??m.key;
 
 // ===================================================================== API socket
 // One JSON line out, one JSON reply back (admin protocol). Replies can be big (lists, audit): capped at 8 MB.
@@ -169,16 +174,60 @@ async function status(srv,full=false){
   return o;
  }catch(e){return {id:srv.id,name:srv.label||"PolitiGo",up:false,error:e.message};}
 }
+// A moderator's rights on a server stand on their own account there: the same id, still carrying the name it was
+// linked with. Deleted, renamed outside this console, or that id now someone else's (a restored base): no rights there.
+// No account of theirs on that server: nothing to check. Kept 30 s; any rename, deletion or moderator change clears it.
+const LINK_MS=env.ADMIN_LINK_CACHE_MS!=null?+env.ADMIN_LINK_CACHE_MS:30e3,links=new Map();   // tests shorten it   // `${mod}:${server}` -> {t, ok, name: the account's current name}
+async function linkOf(m,srv){
+ const id=m.players?.[srv.id];if(!Number.isSafeInteger(id))return {ok:true,name:null};
+ const k=`${m.id}:${srv.id}`,c=links.get(k);if(c&&Date.now()-c.t<LINK_MS)return c;
+ let p=null;
+ try{p=(await cmd(srv,{cmd:"player",id},6000)).player;}
+ catch(e){if(e.status!==422||!/^Joueur introuvable/.test(e.message))throw e;}   // only "unknown player" means gone; any other failure is not cached as such
+ const v={t:Date.now(),ok:!!p&&p.id===id&&modKey(p.name)===linkName(m,srv.id),name:p?.name??null};
+ links.set(k,v);return v;
+}
+const LINK_GONE="Ton compte de joueur sur ce serveur n'existe plus ou a changé de pseudo : la console ne t'y donne plus aucun droit. Vois avec l'organisateur.";
+// The servers among list where that moderator keeps their rights (one that does not answer stays: its calls fail anyway).
+const usable=async(m,list)=>(await Promise.all(list.map(async s=>{try{return (await linkOf(m,s)).ok?s:null;}catch{return s;}}))).filter(Boolean);
+// Writes per moderator: 30 a minute at most (a flood would push the evidence out of the admin log). The owner is not limited.
+const rates=new Map();
+function rate(m){
+ const now=Date.now(),l=(rates.get(m.id)||[]).filter(t=>now-t<60e3);rates.set(m.id,l);
+ if(l.length>=MOD_RATE)throw new HttpError(429,`Trop d'actions d'affilée : ${MOD_RATE} par minute au plus. Réessaie dans un instant.`,{"Retry-After":String(Math.max(1,Math.ceil((l[0]+60e3-now)/1000)))});
+ l.push(now);
+}
+// A moderator's account renamed from this console: the link follows, and on their home server so does their login
+// name (unless another moderator already logs in with it: then the old one stays, the link still follows).
+function renamed(srv,id,oldName,newName){
+ let changed=false;
+ for(const m of MODS){
+  const pid=m.players?.[srv.id];
+  if(!Number.isSafeInteger(pid)||(id!=null&&pid!==id)||modKey(oldName)!==linkName(m,srv.id))continue;
+  (m.names??={})[srv.id]=modKey(newName);changed=true;
+  if(srv.id===m.home){
+   if(MODS.some(x=>x!==m&&x.key===modKey(newName)))console.warn(`admin web: moderator ${m.name} renamed ${newName} in the game, but that login name is taken: they keep logging in as ${m.name}`);
+   else{for(const sid of Object.keys(m.players||{}))m.names[sid]??=m.key;m.name=newName;m.key=modKey(newName);}   // their other accounts keep the name they were linked with
+  }
+ }
+ links.clear();
+ if(changed)try{saveMods();}catch{}
+}
+// A line in the game's admin log, on each server named (the moderators' management happens here, not in the API).
+function note(ids,detail){
+ for(const id of new Set(ids)){const s=SERVERS.find(x=>x.id===id);if(s)cmd(s,{cmd:"backup-note",detail:detail.slice(0,300)},4000).catch(e=>console.error(`admin web: log line on ${id}: ${e.message}`));}
+}
 
 // What the page may ask, with the fields passed through: anything else is dropped before reaching the socket.
 const WHO=["name","id"];
 const CMDS={
  stats:[],list:[],player:WHO,signout:WHO,rename:[...WHO,"newName"],suspend:[...WHO,"on"],unlock:WHO,
- announce:["text","to","camp"],"events-list":[],"event-save":["id","type","name","msg","params","starts","ends","who","rep","push","remind","now"],"event-start":["id"],"event-stop":["id"],"event-delete":["id"],"schedule-list":[],"schedule-add":["text","target","kind","at","time","days","until"],
+ announce:["text","to","camp"],"events-list":[],"event-save":["id","type","name","msg","params","starts","ends","who","rep","push","ann","rtext","reminds","now"],"event-preview":["type","name","params","starts","ends","ann","rtext"],"event-start":["id"],"event-stop":["id"],"event-delete":["id"],"schedule-list":[],"schedule-add":["text","target","kind","at","time","days","until"],
  "schedule-delete":["id"],"schedule-toggle":["id","enabled"],"announce-history":[],"feed-list":["limit"],"feed-delete":["id"],
  "duels-list":[],"duel-cancel":["id"],"duels-suspects":[],"duel-annul":["id"],"baton-judge":["id","accept"],alerts:[],"alerts-ack":["keys"],"invite-get":[],"invite-regenerate":[],"registrations-set":["open"],"event-set":["mode"],
  bots:[],"chat-reports":[],"chat-feed":["before","limit","room"],"chat-media":["id"],"chat-delete":["id"],"chat-mute":[...WHO,"hours"],"chat-set":["global","camp"],audit:["limit"],
  "mythic-reset":[],   // the owner's alone: not in NEEDS, so no moderator profile can ever grant it
+ "player-delete":[...WHO,"confirm"],"player-protect":[...WHO,"on"],"abandoned-list":[],"abandoned-ignore":["id"],
 };
 const pick=(b,keys)=>Object.fromEntries(keys.filter(k=>b[k]!==undefined).map(k=>[k,b[k]]));
 
@@ -246,15 +295,39 @@ for(const [route,file] of [["/","index.html"],["/admin.js","admin.js"],["/admin.
 }
 
 // ===================================================================== backup download
-// The API writes backup-<ts>.db next to ITS socket; only such a name in exactly that server's directory is read, then removed.
+// The API writes backup-<ts>.db next to ITS socket, under ITS own path (/run/politigo/... even when this container
+// mounts that volume elsewhere, /run/politigo-test): only the file name is kept, checked, and looked for in exactly
+// that server's directory here. Nothing outside it is ever read.
+const BACKUP_NAME=/^backup-\d+\.db$/;
 function backupPath(srv,r){
- const p=typeof r.path==="string"?resolve(r.path):"";
- if(!p||dirname(p)!==srv.dir||!/^backup-\d+\.db$/.test(basename(p)))throw new HttpError(502,"Chemin de sauvegarde inattendu.");
- return p;
+ const name=typeof r.path==="string"?basename(r.path):"";
+ if(!BACKUP_NAME.test(name))throw new HttpError(502,"Chemin de sauvegarde inattendu.");
+ return join(srv.dir,name);
+}
+// A copy the API could not finish (a full disk) leaves a partial backup-<ts>.db and its -journal next to the socket:
+// gone when older than 10 minutes, or at once for a journal whose base is gone. Only those names, only plain files.
+async function sweepSocketDir(srv){
+ let names=[];try{names=await fs.promises.readdir(srv.dir);}catch{return;}
+ for(const n of names){
+  const m=/^(backup-\d+\.db)(-journal)?$/.exec(n);if(!m)continue;
+  try{const st=await fs.promises.lstat(join(srv.dir,n));
+   if(st.isFile()&&(Date.now()-st.mtimeMs>10*60e3||(m[2]&&!names.includes(m[1]))))await fs.promises.unlink(join(srv.dir,n));}catch{}
+ }
+}
+// The API's copy, with a cause the owner can act on when it fails for want of room next to the socket.
+async function takeBackup(srv,req,timeout){
+ try{return await cmd(srv,req,timeout);}
+ catch(e){
+  if(e.status!==422)throw e;
+  let free=null;try{const s=await fs.promises.statfs(srv.dir);free=s.bavail*s.bsize;}catch{}
+  await sweepSocketDir(srv);
+  if(free!=null&&free<64*1024*1024)throw new HttpError(507,`Copie de la base impossible : le volume du socket d'administration est presque plein (${(free/1048576).toFixed(1)} Mo libres).`);
+  throw new HttpError(502,`Copie de la base refusée par le serveur de jeu (${e.message}). Détail dans les journaux de l'API.`);
+ }
 }
 const stamp=()=>new Date().toISOString().slice(0,16).replace(/[:T]/g,"-");
 async function sendBackup(srv,res){
- const p=backupPath(srv,await cmd(srv,{cmd:"backup"}));
+ const p=backupPath(srv,await takeBackup(srv,{cmd:"backup"}));sweepSocketDir(srv);
  let fh;
  try{
   fh=await fs.promises.open(p,fs.constants.O_RDONLY|(fs.constants.O_NOFOLLOW||0));
@@ -266,8 +339,27 @@ async function sendBackup(srv,res){
  }finally{await fh?.close().catch(()=>{});fs.promises.unlink(p).catch(()=>{});}
  console.log(`admin web: database backup downloaded (${srv.id})`);
 }
+// The automatic backups (backups.mjs), kept in the admin volume. A big base takes time to copy: the API gets two minutes.
+const BACKUP_TICK=env.ADMIN_BACKUP_TICK_MS!=null?+env.ADMIN_BACKUP_TICK_MS:60e3;   // 0: off (tests)
+const BACKUPS=createBackups({root:DATA,servers:SERVERS,Err:HttpError,
+ take:async srv=>{const r=await takeBackup(srv,{cmd:"backup",vapid:true},120e3);sweepSocketDir(srv);return {path:backupPath(srv,r),vapid:r.vapid};},
+ note:(srv,detail)=>cmd(srv,{cmd:"backup-note",detail},4000)});
+if(BACKUP_TICK>0)setInterval(()=>BACKUPS.tick().catch(e=>console.error("backups:",e)),BACKUP_TICK).unref();
+async function backupsRoute(res,path,b){
+ if(path==="/api/backups/list")return send(res,200,{ok:true,...BACKUPS.status(),disk:await BACKUPS.disk()});
+ if(path==="/api/backups/save")return send(res,200,{ok:true,config:await BACKUPS.saveConfig(b.config)});
+ if(path==="/api/backups/run")return send(res,200,{ok:true,results:await BACKUPS.runNow()});
+ if(path==="/api/backups/delete"){await BACKUPS.remove(b.server,b.name);return send(res,200,{ok:true});}
+ if(path!=="/api/backups/download")throw new HttpError(404,"Introuvable.");
+ const {fh,size,name}=await BACKUPS.open(b.server,b.name);
+ try{
+  res.writeHead(200,{...BASE_HEADERS,"Content-Type":name.endsWith(".json")?"application/json; charset=utf-8":"application/vnd.sqlite3","Content-Length":size,"Cache-Control":"no-store",
+   "Content-Disposition":`attachment; filename="politigo-${b.server}-${name}"`});
+  await new Promise((ok,ko)=>{const s=fh.createReadStream({autoClose:false});s.on("error",ko);res.on("close",()=>{s.destroy();ok();});s.pipe(res);});
+ }finally{await fh.close().catch(()=>{});}
+}
 async function sendVapid(srv,res){
- const r=await cmd(srv,{cmd:"backup",vapid:true});
+ const r=await takeBackup(srv,{cmd:"backup",vapid:true});
  fs.promises.unlink(backupPath(srv,r)).catch(()=>{});   // only the key was wanted: the database copy goes at once
  if(!r.vapid||typeof r.vapid!=="object")throw new HttpError(404,"Pas de vapid.json sur ce serveur (notifications désactivées ?).");
  const body=JSON.stringify(r.vapid,null,1);
@@ -280,18 +372,30 @@ async function sendVapid(srv,res){
 // ===================================================================== moderators' management (the owner only)
 // /api/mods: the list and what can be granted; save: create (a player of one server) or change; password: a new one;
 // delete. Any change of rights or password closes that moderator's sessions at once.
-async function playerOn(srv,q){try{return (await cmd(srv,{cmd:"player",...q},6000)).player;}catch{return null;}}
+// A player looked up for a moderator's link: null when that server says there is none; a server that does not answer
+// is an error (a missing answer must never be kept as "no account there").
+async function playerOn(srv,q){try{return (await cmd(srv,{cmd:"player",...q},6000)).player;}catch(e){if(e.status===422)return null;throw e;}}
 const ids=(v,all)=>Array.isArray(v)?[...new Set(v.filter(x=>all.includes(x)))]:[];
+const rights=r=>`panneaux : ${r.panels.join(", ")} ; actions : ${r.actions.join(", ")||"aucune"} ; serveurs : ${r.servers.join(", ")}`;
 async function modsRoute(res,path,b){
- if(path==="/api/mods")return send(res,200,{ok:true,mods:MODS.map(modView),panels:PANELS,actions:ACTIONS,presets:PRESETS,
-  servers:SERVERS.map(s=>({id:s.id,name:s.label||s.name||"PolitiGo"}))});
+ if(path==="/api/mods"){
+  // Their home account as it stands now: its current name, or gone (no rights there until the owner sorts it out).
+  const mods=await Promise.all(MODS.map(async x=>{const srv=SERVERS.find(s=>s.id===x.home);let account=null;
+   if(srv)try{const l=await linkOf(x,srv);account={ok:l.ok,name:l.name};}catch{}
+   return {...modView(x),account};}));
+  return send(res,200,{ok:true,mods,panels:PANELS,actions:ACTIONS,presets:PRESETS,servers:SERVERS.map(s=>({id:s.id,name:s.label||s.name||"PolitiGo"}))});
+ }
  const m=/^\/api\/mods\/(save|password|delete)$/.exec(path);if(!m)throw new HttpError(404,"Introuvable.");
  const old=typeof b.id==="string"?MODS.find(x=>x.id===b.id):null;
  if(m[1]!=="save"&&!old)throw new HttpError(404,"Modérateur introuvable.");
- if(m[1]==="delete"){MODS=MODS.filter(x=>x!==old);saveMods();dropSessionsOf(old.id);console.log(`admin web: moderator ${old.name} removed`);return send(res,200,{ok:true});}
+ if(m[1]==="delete"){
+  MODS=MODS.filter(x=>x!==old);saveMods();dropSessionsOf(old.id);links.clear();console.log(`admin web: moderator ${old.name} removed`);
+  note(old.servers,`Modérateur retiré : ${old.name}.`);
+  return send(res,200,{ok:true});
+ }
  if(m[1]==="password"){
   const password=modPassword();old.hash=await hashPass(password);saveMods();dropSessionsOf(old.id);
-  console.log(`admin web: new password for moderator ${old.name}`);
+  console.log(`admin web: new password for moderator ${old.name}`);note(old.servers,`Nouveau mot de passe généré pour le modérateur ${old.name}.`);
   return send(res,200,{ok:true,name:old.name,password});
  }
  const panels=ids(b.panels,PANEL_IDS),actions=ids(b.actions,ACTION_IDS);
@@ -307,12 +411,20 @@ async function modsRoute(res,path,b){
  }
  const servers=[...new Set([rec.home,...ids(b.servers,SERVERS.map(s=>s.id))])];
  // On the other servers, their own account (same name) is found once, so that it stays out of their reach there too.
- for(const id of servers)if(!(id in rec.players)){const p=await playerOn(serverById(id),{name:rec.name});rec.players[id]=p?.id??null;}
+ // A server that does not answer: refused, rather than kept as "no account there" for good.
+ const found={};
+ for(const id of servers)if(!(id in rec.players)){
+  const p=await playerOn(serverById(id),{name:rec.name}).catch(()=>{throw new HttpError(502,`Serveur ${id} injoignable : réessaie quand il répond.`);});
+  found[id]=p?{id:p.id,key:modKey(p.name)}:null;
+ }
+ const before=old?{servers:[...old.servers]}:null;
+ for(const [id,p] of Object.entries(found)){rec.players[id]=p?.id??null;if(p)(rec.names??={})[id]=p.key;}
  Object.assign(rec,{servers,panels,actions});
  let password=null;
  if(!old){password=modPassword();rec.hash=await hashPass(password);MODS.push(rec);}
- saveMods();if(old)dropSessionsOf(old.id);
+ saveMods();if(old)dropSessionsOf(old.id);links.clear();
  console.log(`admin web: moderator ${rec.name} ${old?"updated":"created"} (${servers.join(", ")})`);
+ note([...servers,...(before?.servers||[])],old?`Droits du modérateur ${rec.name} modifiés (${rights(rec)}).`:`Modérateur ajouté : ${rec.name} (${rights(rec)}).`);
  return send(res,200,{ok:true,mod:modView(rec),...(password?{password}:{})});
 }
 
@@ -352,9 +464,16 @@ async function route(req,res,path){
   let good=false;try{good=!!pw&&await checkPass(pw,name?mod?.hash??DUMMY_HASH:PASS_HASH)&&(!name||!!mod);}finally{inflight.delete(ip);}
   if(!good){console.log(`admin web: failed login from ${ip}`);return send(res,401,{ok:false,error:name?"Pseudo ou mot de passe incorrect.":"Mot de passe incorrect."});}
   bi.n--;ball.n--;
-  const t=crypto.randomBytes(32).toString("base64url");
-  if(sessions.size>=MAX_SESSIONS)sessions.delete(sessions.keys().next().value);   // oldest first
-  sessions.set(tokenKey(t),{exp:Date.now()+SESSION_MS,mod:mod?.id??null});
+  // A moderator whose own account is gone (or no longer theirs) on every server open to them has nothing left here.
+  if(mod){
+   const list=await usable(mod,SERVERS.filter(s=>mod.servers.includes(s.id)));
+   if(!list.length){console.log(`admin web: login refused for moderator ${mod.name} (player account gone)`);return send(res,403,{ok:false,error:LINK_GONE});}
+  }
+  const t=crypto.randomBytes(32).toString("base64url"),who=mod?.id??null,cap=mod?MOD_SESSIONS:OWNER_SESSIONS;
+  // A cap per account, oldest first: one account's logins never close another's sessions (a moderator, the owner's).
+  const theirs=[...sessions].filter(([,s])=>s.mod===who).map(([k])=>k);
+  for(const k of theirs.slice(0,Math.max(0,theirs.length-cap+1)))sessions.delete(k);
+  sessions.set(tokenKey(t),{exp:Date.now()+SESSION_MS,mod:who});
   if(mod){mod.lastLogin=Date.now();try{saveMods();}catch{}}
   console.log(`admin web: login from ${ip}${mod?` (moderator ${mod.name})`:""}`);
   return send(res,200,{ok:true},{"Set-Cookie":setCookie(req,t,SESSION_MS/1000)});
@@ -365,16 +484,23 @@ async function route(req,res,path){
  const mod=ses.mod,mine=SERVERS.filter(s=>!mod||mod.servers.includes(s.id));
  if(path==="/api/me")return send(res,200,{ok:true,...(mod?{role:"mod",name:mod.name,panels:mod.panels,actions:mod.actions,self:mod.players}:{role:"owner"})});
  if(path==="/api/servers"){
-  const list=await Promise.all(mine.map(s=>status(s,b.full===true)));
-  if(mod&&!mod.actions.includes("invite"))for(const s of list)delete s.invite;
+  const list=await Promise.all((mod?await usable(mod,mine):mine).map(s=>status(s,b.full===true)));
+  // What a panel would show, only to whoever has that panel.
+  if(mod)for(const s of list){
+   if(!mod.actions.includes("invite"))delete s.invite;
+   if(!mod.panels.includes("annonces"))delete s.nextAnnounce;
+   if(!mod.panels.includes("chat"))delete s.chatReports;
+  }
   return send(res,200,{ok:true,servers:list});
  }
  if(path.startsWith("/api/mods")){if(mod)throw new HttpError(403,"Réservé à l'organisateur.");return modsRoute(res,path,b);}
+ if(path.startsWith("/api/backups")){if(mod)throw new HttpError(403,"Réservé à l'organisateur.");return backupsRoute(res,path,b);}
  // Every game action names its server in the path: /api/s/<id>/<action>.
  const m=/^\/api\/s\/([a-z0-9-]{1,40})\/([a-z-]{1,30})$/.exec(path);
  if(!m)throw new HttpError(404,"Introuvable.");
  const srv=serverById(m[1]),action=m[2];
  if(mod&&!mod.servers.includes(srv.id))throw new HttpError(403,"Ce serveur ne t'est pas ouvert.");
+ if(mod&&!(await linkOf(mod,srv)).ok)throw new HttpError(403,LINK_GONE);
  const denied=()=>new HttpError(403,"Action non autorisée pour ton rôle.");
  // A moderator's name signs the game's admin log, and their own account there is out of their reach.
  const actor=mod?{by:mod.name,...(Number.isSafeInteger(mod.players?.[srv.id])?{self:mod.players[srv.id]}:{})}:{};
@@ -383,13 +509,31 @@ async function route(req,res,path){
   if(!keys)throw new HttpError(400,"Commande inconnue.");
   if(!may(mod,b.cmd)||(mod&&!NEEDS[b.cmd]))throw denied();
   if(b.cmd==="event-save"&&b.now===true&&!may(mod,"event-start"))throw denied();   // saving and launching at once takes both rights
-  const {ok,...r}=await cmd(srv,{cmd:b.cmd,...pick(b,keys),...actor});
+  // The moderators' accounts on this server: known here alone, sent by this process, never by the page, with every
+  // moderator's command so that none reaches another moderator's account.
+  const modIds=MODS.map(m=>m.players?.[srv.id]).filter(Number.isSafeInteger);
+  // A moderator's own account is not deleted, not even by the owner: their console access stands on it. Moderator first.
+  if(b.cmd==="player-delete"){
+   const id=Number.isSafeInteger(b.id)?b.id:typeof b.name==="string"?(await playerOn(srv,{name:b.name}))?.id:null;
+   const m=Number.isSafeInteger(id)?MODS.find(x=>x.players?.[srv.id]===id):null;
+   if(m&&!mod)throw new HttpError(409,`Ce compte est celui du modérateur ${m.name} : retire-le d'abord des modérateurs (page Modérateurs), puis supprime le compte.`);
+  }
+  if(mod&&WRITES(b.cmd))rate(mod);
+  const {ok,...r}=await cmd(srv,{cmd:b.cmd,...pick(b,keys),...actor,...(mod?{mods:modIds}:{})})
+   .catch(e=>{if(b.cmd==="alerts"&&!mod&&BACKUPS.alert(srv.id))return {ok:true,items:[],acked:0};throw e;});   // a game server down is the likeliest cause: its backup alert must still show
+  if(b.cmd==="rename"&&r.name)renamed(srv,Number.isSafeInteger(b.id)?b.id:null,r.old,r.name);
+  if(b.cmd==="player-delete")links.clear();
+  if(b.cmd==="player"&&r.player)r.player.isMod=modIds.includes(r.player.id);
+  if(b.cmd==="abandoned-list")for(const x of r.items||[])x.isMod=modIds.includes(x.id);
+  if(b.cmd==="alerts"&&!mod){const a=BACKUPS.alert(srv.id);if(a)r.items=[a,...(r.items||[])];}   // the owner's alone, and it stays until a backup works
   return send(res,200,{ok,...r});
  }
  // The new password is drawn here, sent once to the API and shown once to the admin: it is never logged nor kept.
  if(action==="reset-password"){
   if(!may(mod,"reset-password"))throw denied();
-  const password=generate(),r=await cmd(srv,{cmd:"reset-password",...pick(b,WHO),password,...actor});
+  if(mod)rate(mod);
+  const mods=MODS.map(m=>m.players?.[srv.id]).filter(Number.isSafeInteger);   // another moderator's account is out of reach
+  const password=generate(),r=await cmd(srv,{cmd:"reset-password",...pick(b,WHO),password,...actor,...(mod?{mods}:{})});
   return send(res,200,{ok:true,name:r.name,password});
  }
  if(mod)throw new HttpError(403,"Réservé à l'organisateur.");   // backups
@@ -404,7 +548,7 @@ const server=http.createServer(async(req,res)=>{
  catch(e){
   if(!(e instanceof HttpError))console.error("admin web:",e);
   if(res.headersSent)return res.destroy();
-  send(res,e instanceof HttpError?e.status:500,{ok:false,error:e instanceof HttpError?e.message:"Erreur interne."});
+  send(res,e instanceof HttpError?e.status:500,{ok:false,error:e instanceof HttpError?e.message:"Erreur interne."},e instanceof HttpError&&e.headers||{});
  }
 });
 server.headersTimeout=15000;server.requestTimeout=60000;   // a backup download can take a moment

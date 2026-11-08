@@ -13,6 +13,24 @@ export const CHEERS={fire:"🔥",swords:"⚔️",horns:"🤘",clap:"👏",saucis
 export const cheerSrc=e=>`/emoji/${e}.svg`;
 export const JUDGE={p:"PARFAIT",g:"BIEN",m:"RATÉ",x:"À CÔTÉ",e:"TROP TÔT"};
 
+// A round's start as the server gave it (ready's reply, SSE `round`), kept so a reload knows the round runs on.
+// Returns the ms left in that round at server time `now`, or null: another duel or round, not this player's turn, over.
+const PLAYS={live:null,c_play:"challenger",b_play:"bearer"};
+export function roundLeft(saved,d,now){
+ if(d&&Number.isFinite(d.roundStart))saved={id:d.id,n:d.n|0,start:d.roundStart};   // the server's word comes first (any device)
+ if(!saved||!d||saved.id!==d.id||saved.n!==(d.n|0)||!Number.isFinite(saved.start)||!Object.hasOwn(PLAYS,d.status))return null;
+ if(PLAYS[d.status]&&d.role!==PLAYS[d.status])return null;
+ const left=BD.round-Math.max(0,now-saved.start);
+ return left>0?left:null;
+}
+// The public feed's line: duel and wardrobe news are whole sentences that already name their player (server.mjs
+// feedLine), so the name is put in bold where it stands instead of in front ("X · X défie Y"), old lines included.
+const SENTENCE=new Set(["duel","baton","mythic","ultra","transfuge"]);
+export function feedParts(f){
+ const name=String(f?.player??""),text=String(f?.text??""),i=name&&SENTENCE.has(f?.kind)?text.indexOf(name):-1;
+ return i<0?{pre:"",name,post:` · ${text}`}:{pre:text.slice(0,i),name,post:text.slice(i+name.length)};
+}
+
 // Notes or presses arriving in pieces ([[t,lane],...]): merged by time, without repeats (a reload sends all again).
 export function mergeTimed(list,add){
  if(!Array.isArray(add)||!add.length)return list;
@@ -120,6 +138,12 @@ export function createBatonDuel(o){
  const view=()=>o.view()||null,duel=()=>view()?.duel||null;
  const names=()=>{const d=duel();return [d?.c||Wt?.names?.c||"Challenger",d?.b||Wt?.names?.b||"Porteur"];};
  let soundOn=false;try{soundOn=localStorage.getItem("politigo.duelSound")==="1";}catch{}
+ // The round under way, kept over a reload (roundLeft): the card then says how long it still runs, the clock too.
+ const RKEY="politigo.batonRound";
+ const keepRound=v=>{try{localStorage.setItem(RKEY,JSON.stringify(v));}catch{}};
+ const resumeLeft=()=>{let v=null;try{v=JSON.parse(localStorage.getItem(RKEY)||"null");}catch{}return roundLeft(v,duel(),o.serverNow());};
+ const secsLeft=ms=>`${Math.ceil(ms/1000)} s`;
+ let resumeShown=false;
 
  function build(){
   root=el("div","bd");root.hidden=true;root.setAttribute("role","dialog");root.setAttribute("aria-modal","true");root.setAttribute("aria-label","Le Duel du Bâton");root.tabIndex=-1;
@@ -209,7 +233,7 @@ export function createBatonDuel(o){
  // ---------------------------------------------------------------- the cards over the screen
  const tag=t=>el("span","tag",t);
  function setCard(key,make){
-  if(key===cardKey)return;cardKey=key;E.cardCv=null;E.cardDraw=null;
+  if(key===cardKey)return;cardKey=key;E.cardCv=null;E.cardDraw=null;resumeShown=false;
   if(!make){E.ov.hidden=true;E.ov.replaceChildren();return;}
   E.ov.replaceChildren(...make().filter(Boolean));E.ov.hidden=false;
   const f=E.ov.querySelector(".btn.go")||E.ov.querySelector(".btn");if(f&&isOpen())f.focus({preventScroll:true});
@@ -222,9 +246,16 @@ export function createBatonDuel(o){
   if(G&&G.id===d.id&&["count","play","break"].includes(G.phase))return;    // a round's own cards
   if(G&&G.id===d.id&&G.phase==="end")return;                                  // its result stays until closed
   const me=d.role==="challenger"?0:1,[c,b]=names(),other=me?c:b,now=o.serverNow(),exp=Number(d.expires)||0;
-  const key=`${d.id}|${d.status}|${d.role}|${G?.waiting?1:0}|${G?.phase||""}|${won}`;
+  const rl=resumeLeft(),key=`${d.id}|${d.status}|${d.role}|${G?.waiting?1:0}|${G?.phase||""}|${won}|${rl!=null?"r":""}`;
   if(key===cardKey&&d.status!=="invited")return;
   const res=d.result,how=res?.how==="flame"?"la flamme a touché":"au temps";
+  // Back after a reload in the middle of a round: it did not wait. Its time left, then straight back in.
+  if(rl!=null&&(!G||G.phase==="idle"||G.phase==="left"||G.waiting)){
+   const n=(d.n|0)+1,t=el("b","",secsLeft(rl));E.resumeLeft=t;
+   const p=el("p","");p.append("Le chrono a continué de tourner : il reste ",t," à cette manche. Les notes manquées comptent comme ratées.");
+   setCard(key,()=>[tag(`MANCHE ${n} EN COURS`),el("h3","","Ta manche est en cours"),p,G?.waiting?el("p","bd-small","La partition arrive…"):btn("▶ Reprendre la manche","go",ready)]);
+   resumeShown=true;return;
+  }
   switch(d.status){
    case "invited":
     if(me===0)return setCard(key,()=>[tag("DÉFI ENVOYÉ"),el("h3","",`${b} est en ligne`),el("p","",`On lui propose le duel en direct, tout de suite. Si ${b} préfère plus tard, ou ne répond pas dans les 5 minutes, tu joueras ta partie en différé.`),exp?el("p","bd-small",`Réponse attendue avant ${o.when(exp)}.`):null,btn("Fermer","",shut)]);
@@ -301,6 +332,7 @@ export function createBatonDuel(o){
   const g=session();if(!g||!v||!Number.isFinite(v.start)||!Number.isFinite(v.now))return;
   if((g.phase==="count"||g.phase==="play")&&v.n===g.n)return;
   const srv=v.now+rtt/2;
+  keepRound({id:g.id,n:v.n|0,start:v.start});
   Object.assign(g,{n:v.n|0,start:v.start,t0:performance.now()+(v.start-srv),phase:"count",notes:[],P:[[],[]],out:outbox(),up:0,from0:true,inflight:false,lastSend:0,mine:null,f:0,combo:0,heard:new Set()});
   if(isOpen())root.focus();                          // the countdown card replaces the current one on the next frame
  }
@@ -434,6 +466,12 @@ export function createBatonDuel(o){
   const [c,b]=names(),me=screen==="play"&&G?G.me:-1;
   E.nb.textContent=b+(me===1?" · toi":"");E.sb.textContent="🔥 porte le Bâton";E.nc.textContent=c+(me===0?" · toi":"");E.scn.textContent="⚔️ défie";
   dots(E.db,wins[1]);dots(E.dc,wins[0]);
+  // No round of its own on this page (a reload): the clock and the card follow the round kept from the server.
+  if(screen==="play"&&rt==null&&resumeShown){
+   const rl=resumeLeft();
+   if(rl==null){resumeShown=false;cardKey="";playerCard();}
+   else{rt=BD.round-rl;round=d.n|0;const s=secsLeft(rl);if(E.resumeLeft?.isConnected&&E.resumeLeft.textContent!==s)E.resumeLeft.textContent=s;}
+  }
   const lft=rt!=null&&rt>=0?Math.max(0,BD.round-rt):BD.round,secs=Math.ceil(lft/1000),txt=`${Math.floor(secs/60)}:${String(secs%60).padStart(2,"0")}`;
   if(E.timer.firstChild.nodeValue!==txt)E.timer.firstChild.nodeValue=txt;
   const sub=round>=0?`MANCHE ${round+1}`:"DUEL";if(E.tsub.textContent!==sub)E.tsub.textContent=sub;
