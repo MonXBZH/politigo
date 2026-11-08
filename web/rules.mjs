@@ -477,8 +477,9 @@ function stressHit(S,random,factor=1){
 // A death (or a resignation) restarts at level 1 in place: the object identity is kept for the server cache.
 // Cosmetics survive whole; the Flamme loses a quarter. The day's goals and its counters (missions started and paid,
 // letters answered) are kept: a resignation must not deal a fresh set of goals, nor more missions, hence more bulletins.
+// So is the letterbox with its calendar (no fresh letters either).
 function die(S,reason,camp=S.camp,random=Math.random){
- const day={goals:S.goals,mDay:S.missions.day,mN:S.missions.n,mPaid:S.missions.paid,mB:S.missions.b,lDay:S.mail.day,lN:S.mail.n};
+ const day={goals:S.goals,mDay:S.missions.day,mN:S.missions.n,mPaid:S.missions.paid,mB:S.missions.b,mail:S.mail};
  // idleDeaths: deaths in a row of a life the player never touched. Not by the XP: the hour tick pays some on its own.
  const name=person(S).name,keep={journal:S.journal,jn:S.jn,deaths:S.deaths+1,idleDeaths:reason==="neglect"&&!S.played?(S.idleDeaths||0)+1:0,best:S.best,bestStreak:S.bestStreak,equipped:S.equipped,treatDay:S.treatDay,
   wardrobe:S.wardrobe,flame:{...S.flame,pts:Math.round(S.flame.pts*ACT.FLAME.death*100)/100}};
@@ -488,7 +489,7 @@ function die(S,reason,camp=S.camp,random=Math.random){
  log(S,"death",reason==="resign"
   ?`Démission de ${name}. Nouveau départ au niveau 1 avec ${person(S).name}.`
   :`Mort politique de ${name} : ${XP.deathHours} h avec une jauge à zéro. Nouveau départ au niveau 1.`,{name,reason,camp});
- S.goals=day.goals;S.missions.day=day.mDay;S.missions.n=day.mN;S.missions.paid=day.mPaid;S.missions.b=day.mB;S.mail.day=day.lDay;S.mail.n=day.lN;
+ S.goals=day.goals;S.missions.day=day.mDay;S.missions.n=day.mN;S.missions.paid=day.mPaid;S.missions.b=day.mB;ACT.carryMail(S,day.mail);
  ACT.rollDay(S,dayKey(curIdx(S)),random);
 }
 // Brings a state up to real time (speed > 1 only on a test server). Returns true when an hour ticked.

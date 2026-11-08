@@ -5,9 +5,14 @@
 import {cmpRelease} from "./rules.mjs";
 
 export const CHANGELOG=[
- {version:"1.7.1",date:"2026-11-08",
-  added:[],
-  changed:[],
+ {version:"1.7.1",date:"2026-11-08",help:["activites","regle"],
+  added:[
+   "La règle du jeu, dans l'aide et à l'inscription : PolitiGo se joue à la main, sans script, sans robot ni second compte. Les robots ne votent pas."
+  ],
+  changed:[
+   "Le courrier devient une boîte aux lettres : une lettre arrive environ toutes les 45 minutes de 7 h à 23 h, que tu aies répondu ou non, et jusqu'à 3 t'attendent. Le courrier rapporte 2 bulletins par jour au plus, les jauges toujours.",
+   "L'inscription ne bloque plus après quelques fautes de frappe : le formulaire signale le champ à corriger, et seuls les codes d'invitation faux comptent dans la limite."
+  ],
   fixed:[
    "Un pseudo très long n'élargit plus la page : le fil, les classements, les duels et le chat restent dans l'écran, même sur un petit téléphone.",
    "Le nom n'apparaît plus deux fois sur les lignes de duel du fil.",
@@ -26,7 +31,8 @@ export const CHANGELOG=[
    "Un modérateur ne peut plus agir sur le compte d'un autre modérateur, ni lancer un événement sans le droit de lancer, et ses actions sont limitées à 30 par minute.",
    "Le journal regroupe les actions répétées (×N) et garde à part les actions sensibles, qu'une rafale ne peut plus effacer ; la gestion des modérateurs y apparaît aussi.",
    "Chaque compte de la console a ses propres sessions : un modérateur ne peut plus déconnecter l'organisation en se connectant trop souvent.",
-   "Les séries d'événements gardent leur heure, même après « Lancer maintenant » ou un changement d'heure."
+   "Les séries d'événements gardent leur heure, même après « Lancer maintenant » ou un changement d'heure.",
+   "Le rapport d'activité de la console est plus juste, avec moins de fausses alertes pour les joueurs très actifs."
   ]
  },
  {version:"1.7.0",date:"2026-11-06",help:["events"],

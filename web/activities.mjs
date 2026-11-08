@@ -115,7 +115,18 @@ export const LETTERS={
    [["Expliquer la loi de 2004",{moral:5},"Créée après la canicule de 2003. Depuis 2008, c'est à l'entreprise de choisir le jour."],["Proposer de supprimer deux fériés",{moral:6,energy:-3},"Bayrou a essayé en 2025. Même Pascal a trouvé ça risqué."]])
  ]
 };
-export const MAIL={gapMin:30*MIN,gapMax:60*MIN,quietTo:7,bulletinEvery:3,first:30*MIN,eventLetters:24};   // eventLetters: answered in a day, past which Sac postal pays no more bulletins
+// The letterbox (1.7.1): letters come on a calendar of their own for each player and each day, answered or not: one
+// in every slot of 45 min from 7:00 (at a fixed minute of its first 30), 22 slots, the last one before 23:15. The box
+// holds 3; a letter that finds it full is lost (nothing piles up for a script to cash). Every 3rd letter answered pays
+// a bulletin, at most 2 a day (6 a day during Sac postal, which also brings a letter every few minutes).
+export const MAIL={quietTo:7,slotMin:45,slotJitter:30,slots:22,box:3,bulletinEvery:3,bulletinsPerDay:2,eventBulletins:6};
+// A 32-bit mix of two integers: the calendar is the same on the server and in the browser, from the seed alone.
+const mix=(a,b)=>{let h=(a^Math.imul(b|0,0x9e3779b1))>>>0;h=Math.imul(h^h>>>16,0x85ebca6b)>>>0;h=Math.imul(h^h>>>13,0xc2b2ae35)>>>0;return (h^h>>>16)>>>0;};
+// Minute of the day (game clock) of slot i of day d.
+export const mailSlot=(seed,d,i)=>MAIL.quietTo*60+i*MAIL.slotMin+mix(mix(seed,d),i)%MAIL.slotJitter;
+// How many of day d's letters have come by minute m of that day.
+export function mailDue(seed,d,m){let k=0;while(k<MAIL.slots&&mailSlot(seed,d,k)<=m)k++;return k;}
+const minuteOf=t=>{const c=clockOf(t);return c.hour*60+c.minute;};
 export const letterOf=id=>LETTERS.left.find(l=>l.id===id)||LETTERS.right.find(l=>l.id===id)||null;
 
 // Daily goals: three a day out of these, each progressing on one or two counters (need). A one-counter goal keeps
@@ -145,7 +156,8 @@ const flameLog=S=>({hours:[],min:minGauge(S),missions:0,letters:0,goals:0});
 // The new fields of a fresh state (rules.mjs freshState); goals are drawn at the first advance (they need random).
 export function freshActivities(S,now){
  const d=dayKey(Math.floor(now/HOUR));
- return {missions:{cur:null,day:d,n:0,paid:[],b:0},mail:{next:now+MAIL.first,letter:null,day:d,n:0},goals:{day:-1,list:[]},
+ const cal=mix(Math.floor(now/1000),now%1000);   // a fresh life's calendar; a death or a resignation keeps the old one
+ return {missions:{cur:null,day:d,n:0,paid:[],b:0},mail:{cal,sd:d,k:mailDue(cal,d,minuteOf(now)),letter:null,queue:[],next:0,day:d,n:0,b:0},goals:{day:-1,list:[]},
   flame:{pts:0,day:d,log:flameLog(S)}};
 }
 // Re-derives the stored fields over o (a fresh state of the same camp): nothing malformed survives a load.
@@ -164,8 +176,14 @@ export function sanitizeActivities(s,o){
  }
  const ml=s.mail;
  if(ml&&typeof ml==="object"){
-  o.mail.next=num(ml.next,0,V+MAIL.gapMax,o.mail.next);o.mail.day=day(ml.day);o.mail.n=int(ml.n,0,99,0);
-  const l=ml.letter;if(l&&LETTERS[o.camp].some(x=>x.id===l.id)&&Number.isFinite(l.t))o.mail.letter={id:l.id,t:num(l.t,0,V,V)};
+  // 1.7.0 states have no calendar (it starts now: nothing comes in a burst), no queue and no b: the bulletins they
+  // already won today (one every 3rd letter) count against the new daily cap.
+  const om=o.mail;om.next=num(ml.next,0,V+HOUR,0);om.day=day(ml.day);om.n=int(ml.n,0,999,0);
+  om.b=int(ml.b??Math.floor(om.n/MAIL.bulletinEvery),0,MAIL.eventBulletins,0);
+  if(Number.isInteger(ml.cal)&&ml.cal>=0&&ml.cal<2**32)om.cal=ml.cal;
+  if(Number.isInteger(ml.sd)&&ml.sd>=0){om.sd=day(ml.sd);om.k=int(ml.k,0,MAIL.slots,MAIL.slots);}
+  else om.k=mailDue(om.cal,om.sd,minuteOf(V));
+  om.queue=[];om.letter=null;keepLetters(om,[ml.letter,...(Array.isArray(ml.queue)?ml.queue:[])],o.camp,V);
  }
  const g=s.goals;
  if(g&&typeof g==="object"&&Array.isArray(g.list)){
@@ -212,7 +230,11 @@ export function missionBlock(S,id,fx=NO_FX){
  return "";
 }
 export const mailWaiting=S=>!!S.mail.letter;
+// The letters in the box (the one shown and those behind it), and the bulletins the mail can still pay today.
+export const lettersWaiting=S=>S.mail.letter?1+(S.mail.queue?.length||0):0;
 export const lettersToday=S=>S.mail.day===today(S)?S.mail.n:0;
+export const mailBulletinLimit=(fx=NO_FX)=>fx.mailGap?MAIL.eventBulletins:MAIL.bulletinsPerDay;
+export const mailBulletinsLeft=(S,fx=NO_FX)=>Math.max(0,mailBulletinLimit(fx)-(S.mail.day===today(S)?S.mail.b||0:0));
 // Today's goals as the browser shows them.
 export const goalView=S=>S.goals.list.map(x=>{const G=goalOf(x.id);return {id:x.id,name:G[S.camp],desc:G.desc,fx:G.fx,have:goalHave(G,x.n),need:goalNeed(G),done:x.done};});
 
@@ -260,18 +282,45 @@ export function rollDay(S,d,random){
   f.day=d;f.log=flameLog(S);
  }
  if(S.missions.day!==d){S.missions.day=d;S.missions.n=0;S.missions.paid=[];S.missions.b=0;}
- if(S.mail.day!==d){S.mail.day=d;S.mail.n=0;}
+ if(S.mail.day!==d){S.mail.day=d;S.mail.n=0;S.mail.b=0;}
  if(S.goals.day!==d){
   const pool=GOALS.map(g=>g.id);for(let i=pool.length-1;i>0;i--){const j=Math.floor(random()*(i+1));[pool[i],pool[j]]=[pool[j],pool[i]];}
   S.goals={day:d,list:pool.slice(0,GOALS_PER_DAY).map(id=>({id,n:0,done:false}))};
  }
 }
-// A letter comes in when the last one was answered long enough ago, never between midnight and 7:00.
+// Valid letters of the camp, without twins, into the box (at most MAIL.box): the first shown, the others behind.
+const lettersIn=ml=>ml.letter?1+ml.queue.length:0;
+function keepLetters(ml,list,camp,V){
+ for(const l of list){
+  if(!l||typeof l!=="object"||!LETTERS[camp].some(x=>x.id===l.id)||!Number.isFinite(l.t))continue;
+  if(ml.letter?.id===l.id||ml.queue.some(q=>q.id===l.id)||lettersIn(ml)>=MAIL.box)continue;
+  const x={id:l.id,t:Math.min(V,Math.max(0,l.t))};if(ml.letter)ml.queue.push(x);else ml.letter=x;
+ }
+}
+// A death or a resignation keeps the box (of the new camp), its calendar and the day's counters: no fresh letters.
+export function carryMail(S,old){S.mail={...old,letter:null,queue:[]};keepLetters(S.mail,[old.letter,...(old.queue||[])],S.camp,S.vclock);}
+// The letters whose time has come, never between midnight and 7:00 (the slots start at 7:00); those of a day that
+// ended before they were checked come first, with their own time. A letter that finds the box full is lost.
+// Returns true when one came.
 export function mailCheck(S,random,fx=NO_FX){
- if(fx.mailGap)S.mail.next=Math.min(S.mail.next,S.vclock+fx.mailGap*MIN);
- if(S.mail.letter||S.vclock<S.mail.next||clockOf(S.vclock).hour<MAIL.quietTo)return false;
- const l=LETTERS[S.camp],x=l[Math.min(l.length-1,Math.floor(random()*l.length))];
- S.mail.letter={id:x.id,t:S.vclock};return true;
+ const ml=S.mail,d=today(S),m=minuteOf(S.vclock);let got=false;
+ const put=t=>{
+  if(lettersIn(ml)>=MAIL.box)return;
+  const ids=[ml.letter?.id,...ml.queue.map(q=>q.id)],free=LETTERS[S.camp].filter(x=>!ids.includes(x.id));
+  const x=free[Math.min(free.length-1,Math.floor(random()*free.length))];
+  keepLetters(ml,[{id:x.id,t}],S.camp,S.vclock);got=true;
+ };
+ if(ml.sd!==d){
+  if(ml.sd>=0)for(let i=ml.k;i<MAIL.slots&&lettersIn(ml)<MAIL.box;i++)put(S.vclock-(m+24*60-mailSlot(ml.cal,ml.sd,i))*MIN);
+  ml.sd=d;ml.k=0;
+ }
+ for(const k=mailDue(ml.cal,d,m);ml.k<k;ml.k++)put(S.vclock-(m-mailSlot(ml.cal,d,ml.k))*MIN);
+ // Sac postal: one more letter every few minutes, on top of the calendar.
+ if(fx.mailGap){
+  ml.next=Math.min(ml.next,S.vclock+fx.mailGap*MIN);
+  if(S.vclock>=ml.next&&clockOf(S.vclock).hour>=MAIL.quietTo){put(S.vclock);ml.next=S.vclock+fx.mailGap*MIN;}
+ }
+ return got;
 }
 const fail=error=>({ok:false,error});
 export function missionStart(S,id,fx=NO_FX){
@@ -292,13 +341,14 @@ export function missionReport(S,random){
  progress(S,"missions");
  return {ok:true,report:{id:m.id,fx,ok,xp,bulletins}};
 }
+// The letter shown is answered; the next one in the box takes its place.
 export function mailAnswer(S,id,choice,random,fx=NO_FX){
  const l=S.mail.letter;if(!l||l.id!==id)return fail("Pas de lettre en attente.");
  const x=letterOf(id),ans=Number.isInteger(choice)?x.answers[choice]:null;if(!ans)return fail("Réponse inconnue.");
- applyFx(S,ans.fx);S.mail.letter=null;S.mail.next=S.vclock+(fx.mailGap?fx.mailGap*MIN:MAIL.gapMin+Math.floor(random()*(MAIL.gapMax-MAIL.gapMin)));
- if(S.mail.day!==today(S)){S.mail.day=today(S);S.mail.n=0;}
+ applyFx(S,ans.fx);S.mail.letter=S.mail.queue.shift()||null;
+ if(S.mail.day!==today(S)){S.mail.day=today(S);S.mail.n=0;S.mail.b=0;}
  S.mail.n++;S.flame.log.letters++;
- const b=S.mail.n%MAIL.bulletinEvery===0&&!(fx.mailGap&&S.mail.n>MAIL.eventLetters);if(b)bulletin(S);
+ const b=S.mail.n%MAIL.bulletinEvery===0&&S.mail.b<mailBulletinLimit(fx);if(b){bulletin(S);S.mail.b++;}
  logEntry(S,"mail",`Courrier de ${x.from} : « ${ans.text} ». ${ans.reply} (${fxText(ans.fx)}${b?", +1 bulletin":""})`,{id,choice});
  progress(S,"letters");
  return {ok:true,fx:ans.fx,bulletin:b};

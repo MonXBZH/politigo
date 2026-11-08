@@ -325,7 +325,7 @@ réseau local, ou derrière Nginx Proxy Manager en HTTPS (`POLITIGO_ADMIN_BIND=1
 Le panneau **Events** de l'administration crée et gère des événements à durée limitée, sur chaque serveur : **Double XP**
 (×1,5, ×2 ou ×3, tous les mini-jeux ou certains), **Missions libres** (+3, +6 ou sans limite), **Mission express** (durée ÷2 ou
 ÷3), **Pluie de bulletins** (×2 ou ×3, plafond du jour compris), **Tirage du peuple** (1 à 3 tirages offerts, une fois par
-événement), **Soldes à la Buvette** (−25 % ou −50 %, Soins compris), **Sac postal** (une lettre toutes les 10 ou 15 minutes, sans bulletin au-delà de 24 lettres dans la journée),
+événement), **Soldes à la Buvette** (−25 % ou −50 %, Soins compris), **Sac postal** (une lettre de plus toutes les 10 ou 15 minutes, et jusqu'à 6 bulletins du courrier dans la journée),
 **Nuit des duels** (défis en plus, gains ×1,5 ou ×2) et **Immunité parlementaire** (jauges ÷2 ou ÷3, pas de mort politique).
 
 - **Programmation** : de 5 minutes à 7 jours, pour tous ou un seul camp, une fois, chaque jour ou chaque semaine (à la même
@@ -354,13 +354,13 @@ Le panneau **Events** de l'administration crée et gère des événements à dur
   seulement de 20 h à minuit (heure du jeu). Récompense selon la durée, réussite ou non : jusqu'à 1 h, +10 XP et 1 bulletin ;
   moins de 4 h, +20 XP et 2 bulletins ; à partir de 4 h, +30 XP et 3 bulletins. L'XP tombe à chaque rapport ; les bulletins
   d'une même mission une fois par jour, 6 par jour au plus pour toutes les missions. Une notification « Mission terminée » part au retour (différée pendant un mini-jeu). Courrier :
-  une lettre toutes les 30 à 60 minutes, de 7 h à minuit. Objectifs : 3 par jour, tirés au premier passage de la journée ;
+  une lettre environ toutes les 45 minutes, de 7 h à 23 h, qu'on ait répondu ou non, 3 au plus dans la boîte ; 2 bulletins par jour au plus. Objectifs : 3 par jour, tirés au premier passage de la journée ;
   une mort politique ne les retire pas, et ne redonne ni missions ni bulletins.
 - **Flamme** : 15 points par jour au plus (jauges toutes ≥ 50 toute la journée +4, les 3 objectifs +4, au moins 4 visites
   étalées sur 8 h +3, 2 missions +2, 3 lettres +2) ; ×0,9 par journée sans visite, ×0,75 à une mort politique.
 - **Tombola (gauche) / Loterie (droite)**, purement cosmétique, **jamais d'argent réel** : un tirage gratuit par jour,
   puis un bulletin par tirage ; bulletins gagnés uniquement en jouant (de 1 à 3 par mission, au plus 6 par jour ; +1 par
-  objectif, 3 par jour ; +1 toutes les 3 lettres). Chances : commun 60 %, rare 28 %, épique 9,5 %, légendaire 2 %, ultra
+  objectif, 3 par jour ; +1 toutes les 3 lettres, 2 par jour au plus). Chances : commun 60 %, rare 28 %, épique 9,5 %, légendaire 2 %, ultra
   rare 0,5 % ; tirages garantis : épique au 10ᵉ, légendaire au 50ᵉ, ultra rare au 80ᵉ. Doublons → confettis (5, 10, 25,
   50, 100 selon la rareté) ; une case au choix contre 100 confettis (commune), 200 (rare) ou 300 (épique). La fiche d'un joueur dans
   l'administration montre sa Flamme, ses bulletins, ses confettis, ce qu'il possède et ce qu'il porte.
@@ -426,7 +426,7 @@ Le panneau **Events** de l'administration crée et gère des événements à dur
   Pseudos en alphabet latin uniquement, et unicité sans tenir compte des majuscules ni des accents : personne ne peut se faire passer pour un autre avec un « о » cyrillique.
 - **Sessions** : cookie `__Host-` `HttpOnly` + `SameSite=Lax` + `Secure`, 10 appareils au plus par joueur, supprimées côté serveur à la déconnexion et à la suppression du compte.
 - **Requêtes** : écritures refusées hors JSON et hors origine du site ; limitation des tentatives par adresse, par adresse et pseudo,
-  et par pseudo, si bien qu'un inconnu ne peut pas bloquer le compte d'un ami ; 3 inscriptions par heure et par adresse ;
+  et par pseudo, si bien qu'un inconnu ne peut pas bloquer le compte d'un ami ; 4 inscriptions réussies et 5 codes d'invitation faux par heure et par adresse (les fautes de saisie ne comptent pas) ;
   un pseudo supprimé ne peut être repris qu'après 24 h ; 5 essais de suppression de compte par quart d'heure ; 3 flux en direct
   par joueur et 12 par adresse ; une démission par heure. Les vérifications de mot de passe passent par une file d'attente
   bornée (4 à la fois, une par adresse) : une rafale de tentatives ralentit, mais ne bloque plus les vraies connexions.
@@ -485,7 +485,7 @@ interdire la suppression et le force push, exiger une pull request (0 approbatio
 ## 6. Tests
 
 ```bash
-bash tests/run-server.sh                       # 536 tests : règles (dont l'équilibrage J15) + mini-jeux + activités + Tombola et Garde-robe + test politique + changelog + API + duels + notifications + chat + migrations + outils et interface d'admin, dans l'image Node de production
+bash tests/run-server.sh                       # 557 tests : règles (dont l'équilibrage J15) + mini-jeux + activités + Tombola et Garde-robe + test politique + changelog + API + duels + notifications + chat + migrations + outils et interface d'admin, dans l'image Node de production
 bash tests/run-server.sh tests/chat.test.mjs   # un seul fichier
 docker compose restart api                     # remet à zéro les limites d'inscription avant l'e2e
 powershell -ExecutionPolicy Bypass -File tests\e2e.ps1   # parcours complet dans Chrome (crée deux joueurs de test)

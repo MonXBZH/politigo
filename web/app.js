@@ -3,7 +3,7 @@
 import * as R from "./rules.mjs";
 import {createMini,manifLabel} from "./minigames.mjs";
 import {missedEntries,releasesUpTo} from "./changelog.mjs";
-import {HELP,helpOf,SHEET_HELP} from "./help.mjs";
+import {HELP,helpOf,SHEET_HELP,signupProblem} from "./help.mjs";
 import {drawTest,verdict,randomCamp} from "./politest.mjs";
 import {createChat} from "./chat.mjs";
 import * as A from "./activities.mjs";
@@ -867,11 +867,11 @@ function refresh(){
  // A red dot on "Jouer" while the quitte-ou-double is on offer, a count while challenges wait: a toast alone is
  // easily missed.
  // A mission's report or a voter's letter waiting: the same red dot.
- const rm=!rematchBlock(),dn=incoming().length,rep=A.missionReady(S),mail=A.mailWaiting(S),bt=!!batonTodo(),playBtn=$(".pad-btn[data-sheet=play]"),sig=`${rm}|${dn}|${rep}|${mail}|${bt}`;
+ const rm=!rematchBlock(),dn=incoming().length,rep=A.missionReady(S),mail=A.lettersWaiting(S),bt=!!batonTodo(),playBtn=$(".pad-btn[data-sheet=play]"),sig=`${rm}|${dn}|${rep}|${mail}|${bt}`;
  if(playBtn.dataset.sig!==sig){
   playBtn.dataset.sig=sig;playBtn.classList.toggle("alert",rm||dn>0||rep||mail||bt);playBtn.classList.toggle("clash",dn>0);   // a challenge waits: the icon wiggles
   if(dn)playBtn.dataset.count=String(Math.min(dn,9));else delete playBtn.dataset.count;
-  const why=[bt&&"duel du Bâton à jouer",dn&&`${dn} défi${dn>1?"s":""} en attente`,rep&&"rapport de mission à lire",mail&&"une lettre d'électeur",rm&&"quitte ou double disponible"].filter(Boolean).join(", ");
+  const why=[bt&&"duel du Bâton à jouer",dn&&`${dn} défi${dn>1?"s":""} en attente`,rep&&"rapport de mission à lire",mail&&(mail>1?`${mail} lettres d'électeurs`:"une lettre d'électeur"),rm&&"quitte ou double disponible"].filter(Boolean).join(", ");
   if(why)playBtn.setAttribute("aria-label",`Jouer (${why})`);else playBtn.removeAttribute("aria-label");
  }
  const label=`${p.name}, niveau ${S.lvl}. Satiété ${Math.round(S.sat)}, moral ${Math.round(S.moral)}, énergie ${Math.round(S.energy)}, hygiène ${Math.round(S.hyg)}. Entrée pour lui taper sur l'épaule.`;
@@ -1059,7 +1059,7 @@ function armedButton(label,armedLabel,cls,onConfirm){
 // What a sheet's content depends on: when this changes while it is open, the sheet is redrawn in place.
 // 1.6.0: the missions (a report ready), the letter, the goals' progress, the wardrobe and the urn.
 const sheetSig=()=>[S.fm,curIdx(),R.actsToday(S),R.actsThisVisit(S),S.energy<20,S.coffees,S.breadIdx,S.lvl,S.best,S.equipped[person().name]||0,isAsleep(),S.camp,!rematchBlock(),season(),S.treatDay,
- S.missions?.cur?.id,A.missionReady(S),A.missionsToday(S),S.energy<A.MISSION_RULES.minEnergy,S.mail?.letter?.id,A.lettersToday(S),S.goals?.list?.map(x=>`${x.n}${x.done?"d":""}`).join(),
+ S.missions?.cur?.id,A.missionReady(S),A.missionsToday(S),S.energy<A.MISSION_RULES.minEnergy,S.mail?.letter?.id,A.lettersWaiting(S),A.lettersToday(S),S.mail?.b,S.goals?.list?.map(x=>`${x.n}${x.done?"d":""}`).join(),
  running().map(e=>e.id).join(),S.wardrobe?.own?.length,worn().outfit,worn().object,S.wardrobe?.bulletins,S.wardrobe?.confetti,W.freeDrawToday(S),A.flameOf(S),urnHint,batonSig()].join("|");
 let shownSig="";
 function setBackgroundInert(on){for(const el of document.querySelectorAll(".topbar,.app,footer"))el.inert=on;lockScroll(on);}
@@ -1339,10 +1339,12 @@ function renderActivities(body){
  if(l){
   const d=document.createElement("div"),b=document.createElement("b"),q=document.createElement("q");d.className="dossier letter";
   b.textContent=`✉️ ${l.from}`;q.textContent=l.text;d.append(b,q);
+  const w=A.lettersWaiting(S);
+  if(w>1)body.append(fine(`📬 ${w} lettres t'attendent${w>=A.MAIL.box?" : ta boîte est pleine, réponds pour en recevoir d'autres":""}.`));
   body.append(d,list(...l.answers.map((a,i)=>itemButton(a.text,R.fxText(a.fx),"Répondre",false,()=>mailAnswer(l.id,i)))));
- }else body.append(fine(R.clockOf(vnow()).hour<A.MAIL.quietTo?`Le facteur passe à partir de ${A.MAIL.quietTo} h.`:`Pas de lettre pour l'instant : les électeurs écrivent toutes les ${f.mailGap?`${f.mailGap}`:"30 à 60"} minutes (heure du jeu).`));
- const lt=A.lettersToday(S);
- body.append(fine(`${plural(lt,"lettre")} répondue${lt>1?"s":""} aujourd'hui · 1 bulletin toutes les ${A.MAIL.bulletinEvery} lettres.`));
+ }else body.append(fine(R.clockOf(vnow()).hour<A.MAIL.quietTo?`Le facteur passe à partir de ${A.MAIL.quietTo} h.`:`Pas de lettre pour l'instant : les électeurs écrivent environ toutes les ${A.MAIL.slotMin} minutes${f.mailGap?`, et une lettre en plus toutes les ${f.mailGap} minutes pendant l'événement`:""} (heure du jeu).`));
+ const lt=A.lettersToday(S),bl=A.mailBulletinsLeft(S,f);
+ body.append(fine(`${plural(lt,"lettre")} répondue${lt>1?"s":""} aujourd'hui · 1 bulletin toutes les ${A.MAIL.bulletinEvery} lettres, ${bl?`encore ${plural(bl,"bulletin")} à gagner aujourd'hui`:"plus de bulletin du courrier aujourd'hui (les jauges, toujours)"}.`));
  body.append(blockTitle("Objectifs du jour"));
  const goals=A.goalView(S);
  if(!goals.length)body.append(fine("Les objectifs du jour arrivent à la prochaine heure de jeu."));
@@ -1942,23 +1944,26 @@ function armRestart(camp,text){
 
 // ---------- sign-in / sign-up ----------
 const authEl=$("#auth");
+// The sign-in error line moves under the field at fault (submitAuth); it goes back home whenever the screen changes.
+const authErr=$("#auth-error"),authErrHome=authErr.parentNode,authErrNext=authErr.nextSibling;
+const homeAuthErr=()=>{authErrHome.insertBefore(authErr,authErrNext);for(const i of authEl.querySelectorAll("input[aria-invalid]"))i.removeAttribute("aria-invalid");};
 let regCamp="left";
 function showAuth(message=""){
  closeSheet();chat.reset();chatFlags(null);es?.close();es=null;S=null;anim=pong=mini=scene=null;newsPending=false;toastQ.length=0;announceQ.length=0;$("#announce").hidden=true;$("#push-ask").hidden=true;pushAskWanted=pushAsked=false;duelData=null;duelErr="";duelSeq++;pushOn=null;pushSynced=false;setNet(true);$("#tips").hidden=true;urnLast=null;wardSwap=false;urnHint=false;batonV=null;bd.close();
  authEl.hidden=false;setBackgroundInert(true);
- $("#auth-error").textContent=message;regQuizShow(false);$("#camp-note").textContent="";document.body.dataset.camp=regCamp;
+ homeAuthErr();$("#auth-error").textContent=message;regQuizShow(false);$("#camp-note").textContent="";document.body.dataset.camp=regCamp;
  document.querySelectorAll(".camp").forEach(b=>{
   const f=people[b.dataset.camp][0];
   sprite(b.querySelector("canvas").getContext("2d"),{...f,prop:personalItems[f.name][0].prop},0,"win");
  });
  const first=authEl.querySelector("form:not([hidden]) input");first?.focus();
 }
-function hideAuth(){authEl.hidden=true;setBackgroundInert(false);$("#auth-error").textContent="";}
+function hideAuth(){authEl.hidden=true;setBackgroundInert(false);homeAuthErr();$("#auth-error").textContent="";}
 function switchTab(which){
  for(const t of ["login","register"]){
   $(`#tab-${t}`).setAttribute("aria-pressed",String(t===which));$(`#form-${t}`).hidden=t!==which;
  }
- $("#auth-error").textContent="";authEl.querySelector(`#form-${which} input`).focus();
+ homeAuthErr();$("#auth-error").textContent="";authEl.querySelector(`#form-${which} input`).focus();
 }
 $("#tab-login").addEventListener("click",()=>switchTab("login"));
 $("#tab-register").addEventListener("click",()=>switchTab("register"));
@@ -1989,10 +1994,21 @@ async function submitAuth(e,path,extra){
  e.preventDefault();
  const form=e.currentTarget,data=Object.fromEntries(new FormData(form)),btn=form.querySelector("button[type=submit]");
  const label=btn.textContent;
+ // A sign-up checks its fields here first: an empty form says what is missing, not « Code d'invitation incorrect ».
+ // The message goes right under the field at fault (marked invalid and focused), so it is on screen with it.
+ const fail=msg=>{
+  const name=/pseudo|nom/i.test(msg)?"name":/passe/i.test(msg)?"password":/invitation/i.test(msg)?"invite":"";
+  const field=(name&&form.querySelector(`input[name=${name}]`))||form.querySelector("input"),err=$("#auth-error");
+  for(const i of form.querySelectorAll("input"))i.removeAttribute("aria-invalid");
+  err.textContent=msg;field?.setAttribute("aria-invalid","true");(field?.closest("label")||field)?.after(err);field?.focus();
+ };
+ const bad=path==="/api/register"?signupProblem(data):"";
+ if(bad){fail(bad);return;}
  btn.disabled=true;btn.textContent=path==="/api/login"?"Connexion…":"Création du compte…";$("#auth-error").textContent="";
+ for(const i of form.querySelectorAll("input"))i.removeAttribute("aria-invalid");
  const r=await api("POST",path,{...data,...extra});
  btn.disabled=false;btn.textContent=label;
- if(!r.ok){$("#auth-error").textContent=r.error;form.querySelector("input")?.focus();return;}
+ if(!r.ok){fail(r.error);return;}
  form.reset();hideAuth();
  applyMe(r,{replay:path==="/api/login"});connectLive();showTips();
  cv.focus();                          // the focused button just disappeared with the sign-in screen

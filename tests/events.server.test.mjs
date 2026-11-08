@@ -192,8 +192,13 @@ test("the duels' daily limit follows the event",async()=>{
 });
 
 test("Sac postal: the letter reaches the open screen by itself, before any action",async()=>{
- await clear();await stop(proc);proc=await boot(PORT,dir,{...env(),POLITIGO_SPEED:"60"});   // the gap of 10 game minutes: 10 s
- assert.equal((await me(left)).state.mail.letter,null);
+ await clear();await stop(proc);
+ // An empty box (1.7.1: the calendar's letters come on their own too, and a full box would drop the event's).
+ for(const {id,state} of db.prepare("SELECT id,state FROM players").all()){
+  const S=JSON.parse(state);if(S.mail){S.mail.letter=null;S.mail.queue=[];db.prepare("UPDATE players SET state=? WHERE id=?").run(JSON.stringify(S),id);}
+ }
+ proc=await boot(PORT,dir,{...env(),POLITIGO_SPEED:"60"});   // the gap of 10 game minutes: 10 s
+ assert.ok(((await me(left)).state.mail.queue?.length??0)<2,"room left in the box");
  const r=await fetch(`http://127.0.0.1:${PORT}/events`,{headers:{Cookie:left.cookie}}),read=r.body.getReader(),text=new TextDecoder();
  await live({type:"courrier",params:{gap:10}});
  let seen="",got=false;const end=Date.now()+25000,timer=setTimeout(()=>read.cancel(),25000);

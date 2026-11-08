@@ -14,6 +14,8 @@ const full=S=>{S.sat=S.moral=S.energy=S.hyg=100;return S;};
 function game(camp="left",h=10){const S=R.newGame(camp,at(h));R.advance(S,at(h),1,never);return full(S);}
 const play=(S,a,h,random=never)=>R.act(S,a,{now:at(h),random});
 const setGoals=(S,ids)=>{S.goals.list=ids.map(id=>({id,n:0,done:false}));};
+// A letter in the box now, whatever the calendar says (mailbox.test.mjs tests the calendar).
+const give=(S,h)=>{S.mail.letter={id:A.LETTERS[S.camp][0].id,t:at(h)};S.mail.queue=[];};
 
 test("the catalogues: 11 missions with both camps' names, at least 8 letters a camp, at least 6 goals",()=>{
  assert.deepEqual(A.MISSIONS.map(m=>m.id),["tract","ag","tribune","perm","repas","piquet","fete","repos","univ","risque","nuit"]);
@@ -32,7 +34,7 @@ test("the catalogues: 11 missions with both camps' names, at least 8 letters a c
 test("a fresh game carries the new fields; its 3 goals are drawn at the first advance, from random",()=>{
  const S=R.newGame("right",at(10));
  assert.deepEqual(S.missions,{cur:null,day:20260105,n:0,paid:[],b:0});
- assert.equal(S.mail.letter,null);assert.equal(S.mail.next,at(10)+30*60000);
+ assert.equal(S.mail.letter,null);assert.deepEqual(S.mail.queue,[]);assert.equal(S.mail.sd,20260105);assert.equal(S.mail.k,A.mailDue(S.mail.cal,20260105,600),"the slots already past do not come");
  assert.equal(S.goals.day,-1);assert.equal(S.flame.pts,0);assert.equal(S.flame.day,20260105);
  const T=structuredClone(S);
  R.advance(S,at(10),1,R.seeded(7));R.advance(T,at(10),1,R.seeded(7));
@@ -146,21 +148,8 @@ test("the risky mission is drawn at report time: heads a win, tails a flop",()=>
  assert.equal(F.moral,35);assert.equal(F.hyg,40);assert.match(F.journal[0].text,/mal tourné/);
 });
 
-test("voter mail: a letter comes after the gap, never between 00:00 and 07:00",()=>{
- const S=game("left",10);
- assert.equal(S.mail.letter,null);
- R.advance(S,at(10.4),1,never);assert.equal(S.mail.letter,null);
- R.advance(S,at(10.5),1,never);assert.ok(A.mailWaiting(S));
- assert.ok(A.LETTERS.left.some(l=>l.id===S.mail.letter.id));assert.equal(S.mail.letter.t,at(10.5));
- const id=S.mail.letter.id;R.advance(S,at(11),1,never);assert.equal(S.mail.letter.id,id,"one letter at a time");
- const N=game("right",23);N.mail.next=at(23.5);
- R.advance(N,at(24+1),1,never);assert.equal(N.mail.letter,null,"quiet at night");
- R.advance(N,at(24+6.9),1,never);assert.equal(N.mail.letter,null);
- R.advance(N,at(24+7),1,never);assert.ok(N.mail.letter);assert.ok(A.LETTERS.right.some(l=>l.id===N.mail.letter.id));
-});
-
-test("answering a letter: its effect, the next one 30 to 60 min later, a bulletin every 3rd letter of the day",()=>{
- const S=game("left",10);S.mail.next=at(10);R.advance(S,at(10),1,never);
+test("answering a letter: its effect, never XP nor FM, a bulletin every 3rd letter of the day",()=>{
+ const S=game("left",10);give(S,10);
  assert.match(play(S,{type:"mailAnswer",id:"nope",choice:0},10).error,/Pas de lettre/);
  const id=S.mail.letter.id,x=A.letterOf(id);
  assert.match(play(S,{type:"mailAnswer",id,choice:9},10).error,/inconnue/);
@@ -169,14 +158,10 @@ test("answering a letter: its effect, the next one 30 to 60 min later, a bulleti
  const xp=S.xp,fm=S.fm,r=play(S,{type:"mailAnswer",id,choice:1},10,()=>0.5);
  assert.ok(r.ok);assert.deepEqual(r.fx,x.answers[1].fx);assert.equal(r.bulletin,false);
  for(const [k,v] of Object.entries(x.answers[1].fx))assert.equal(S[k],50+v);
- assert.equal(S.xp,xp);assert.equal(S.fm,fm);
- assert.equal(S.mail.letter,null);assert.equal(S.mail.next,at(10)+45*60000);
+ assert.equal(S.xp,xp);assert.equal(S.fm,fm);assert.equal(S.mail.letter,null);
  assert.equal(A.lettersToday(S),1);assert.equal(S.flame.log.letters,1);assert.equal(S.journal[0].k,"mail");assert.match(S.journal[0].text,new RegExp(x.from));
- let h=10;
- for(const n of [2,3]){h+=1.1;R.advance(S,at(h),1,never);const l=S.mail.letter;assert.ok(l,`letter ${n}`);
-  const b=S.wardrobe.bulletins,r2=play(S,{type:"mailAnswer",id:l.id,choice:0},h,never);
+ for(const n of [2,3]){give(S,10);const b=S.wardrobe.bulletins,r2=play(S,{type:"mailAnswer",id:S.mail.letter.id,choice:0},10,never);
   assert.equal(r2.bulletin,n===3);assert.equal(S.wardrobe.bulletins,b+(n===3?1:0));}
- assert.ok(S.mail.next-at(h)>=30*60000&&S.mail.next-at(h)<60*60000);
 });
 
 test("daily goals: reached by visits, purchases, pets, games, missions and letters; each pays once",()=>{
@@ -192,7 +177,7 @@ test("daily goals: reached by visits, purchases, pets, games, missions and lette
  play(S,{type:"pet"},14);play(S,{type:"pet"},15);assert.ok(S.goals.list[2].done);
  const b=S.wardrobe.bulletins;play(S,{type:"pet"},16);assert.equal(S.wardrobe.bulletins,b,"a goal pays once");
  // Combo: one mission and one letter.
- const C=game("right",10);setGoals(C,["combo","mission2","minis2"]);C.mail.next=at(10);R.advance(C,at(10),1,never);
+ const C=game("right",10);setGoals(C,["combo","mission2","minis2"]);give(C,10);
  play(C,{type:"mailAnswer",id:C.mail.letter.id,choice:0},10);
  assert.equal(A.goalView(C)[0].have,1);assert.equal(A.goalView(C)[0].need,2);
  play(C,{type:"missionStart",id:"tract"},10);R.advance(C,at(10.5),1,never);play(C,{type:"missionReport"},10.5);
@@ -204,9 +189,9 @@ test("daily goals: reached by visits, purchases, pets, games, missions and lette
 
 test("a goal reached pays its gauges and a bulletin, never XP nor FM",()=>{
  const S=game("left",10);setGoals(S,["letters3","visits3","care2"]);
- S.mail.next=at(10);R.advance(S,at(10),1,never);S.flame.log.letters=0;
+ S.flame.log.letters=0;
  let h=10;
- for(let n=0;n<3;n++){if(n){h+=1.1;R.advance(S,at(h),1,never);}S.moral=S.hyg=50;const xp=S.xp,fm=S.fm;play(S,{type:"mailAnswer",id:S.mail.letter.id,choice:0},h);
+ for(let n=0;n<3;n++){if(n){h+=1.1;R.advance(S,at(h),1,never);}give(S,h);S.moral=S.hyg=50;const xp=S.xp,fm=S.fm;play(S,{type:"mailAnswer",id:S.mail.letter.id,choice:0},h);
   if(n===2){assert.equal(S.xp,xp);assert.equal(S.fm,fm);}}
  assert.ok(S.goals.list[0].done);assert.equal(S.flame.log.goals,1);
  assert.equal(S.wardrobe.bulletins,2,"the 3rd letter and the goal");

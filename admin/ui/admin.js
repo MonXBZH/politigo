@@ -426,7 +426,8 @@ async function viewPlayer(id){
   h("div",{class:"card"},h("h2",{},"Actions"),actions,h("h2",{class:"sub"},"Chat"),chat),
   h("div",{class:"grid wide"},
    h("div",{class:"card"},h("h2",{},"Compte"),kv(["Identifiant",String(p.id)],["Camp",CAMP[p.camp]||p.camp],["Candidat",p.candidate],["Inscrit le",fmt(p.created)],["Vu",p.lastSeen?`${fmt(p.lastSeen)} (${ago(p.lastSeen)})`:"jamais"],
-    ["En ligne",p.online?"oui":"non"],["Sessions",String(p.sessions??"—")],["Abonnements notif.",String(p.pushSubs??"—")],["Suspendu",p.suspended?"oui":"non"])),
+    ["En ligne",p.online?"oui":"non"],["Sessions",String(p.sessions??"—")],["Abonnements notif.",String(p.pushSubs??"—")],["Suspendu",p.suspended?"oui":"non"],
+    ["Nouveautés vues",p.seenVersion||"jamais"],p.mythicBlock?["Bâton de feu",`non éligible au Bâton de feu : ${p.mythicBlock}`]:null)),
    h("div",{class:"card"},h("h2",{},"Partie"),kv(["Niveau",String(p.lvl??"—")],["XP",String(p.xp??"—")],["Score",String(p.score??"—")],["Fonds (FM)",String(p.fm??"—")],["Morts",String(p.deaths??"—")],["Morts d'affilée sans jouer",String(p.idleDeaths??"—")],
     ...GAUGES.map(([k,l])=>[l,p[k]==null?"—":typeof p[k]==="number"?String(Math.round(p[k])):String(p[k])])))),
   wardrobeCard(p),
@@ -858,14 +859,21 @@ const annulBtn=d=>!can("duel-annul")?null:h("button",{class:"btn small danger",t
   .then(ok=>ok&&act(b,()=>call("duel-annul",{id:d.id}),"Duel annulé, gains rendus."));}},"Annuler ce duel (rendre les gains)");
 
 // The actions logged, in plain words (anything else shows under its own name).
-const KIND_LABEL={missionStart:"Mission lancée",missionReport:"Rapport de mission",mailAnswer:"Courrier",draw:"Tirage",exchange:"Échange",wear:"Garde-robe",buy:"Achat",pet:"Caresse",light:"Lumière",
+const KIND_LABEL={pongStart:"Pong lancé",pongEnd:"Pong terminé",missionStart:"Mission lancée",missionReport:"Rapport de mission",mailAnswer:"Courrier",draw:"Tirage",exchange:"Échange",wear:"Garde-robe",buy:"Achat",pet:"Caresse",light:"Lumière",
  "debate:next":"Débat","duel:challenge":"Duel lancé","duel:accept":"Duel accepté","duel:refuse":"Duel refusé"};
+// Reaction delays measured by the server (median), and the families the signals come from.
+const LAG_LABEL={mail:"lettre → réponse",mission:"fin de mission → rapport",visit:"ouverture → visite",draw:"minuit → tirage gratuit",duel:"défi → acceptation"};
+const FAMILY_LABEL={rythme:"rythme",client:"client",jeu:"mini-jeux"};
+const durS=s=>s<90?`${s} s`:s<5400?`${Math.round(s/60)} min`:`${Math.round(s/3600)} h`;
 function botReport(r,withName=true){
- const lvl=r.score>=60?"bad":r.score>=30?"warn":"good";
+ const lvl=r.alert?"bad":r.score>=30?"warn":"good",lags=Object.entries(r.lags||{}).filter(([,v])=>v);
  return h("div",{},
-  h("div",{class:"btn-row"},withName?h("a",{href:`#joueurs/${r.id}`},h("b",{},r.name)):null,h("span",{class:`badge ${lvl}`},`score ${r.score??0}/100`),h("span",{class:"muted small"},`${r.actions14d??0} actions sur 14 j`)),
+  h("div",{class:"btn-row"},withName?h("a",{href:`#joueurs/${r.id}`},h("b",{},r.name)):null,h("span",{class:`badge ${lvl}`},`score ${r.score??0}/100`),
+   (r.families||[]).map(f=>h("span",{class:"badge"},FAMILY_LABEL[f]??f)),r.alert?h("span",{class:"badge bad"},"alerte"):null,h("span",{class:"muted small"},`${r.actions14d??0} actions sur 14 j`)),
+  h("p",{class:"muted small"},"Indices, pas preuves : l'alerte demande au moins deux familles d'indices (rythme, client, mini-jeux)."),
   h("div",{class:"metrics"},[["sans écran ouvert",pct(r.noLiveShare)],["hors navigateur",pct(r.nonBrowserShare)],["la nuit (1 h-6 h)",pct(r.nightShare)],["écart médian",r.medianGapS==null?"—":`${Math.round(r.medianGapS)} s`],["régularité (CV)",r.gapCv==null?"—":r.gapCv.toFixed(2)]]
    .map(([k,v])=>h("span",{},`${k} : `,h("b",{},v)))),
+  lags.length?h("div",{class:"metrics"},lags.map(([k,v])=>h("span",{},`${LAG_LABEL[k]??k} : `,h("b",{},durS(v.medS)),` (${v.n})`))):null,
   r.reasons?.length?h("ul",{class:"reasons"},r.reasons.map(x=>h("li",{},x))):null,
   r.kinds?.length?h("div",{class:"metrics"},r.kinds.map(k=>h("span",{},`${KIND_LABEL[k.kind]??k.kind} : `,h("b",{},String(k.n)),k.off?` (${k.off} hors navigateur)`:""))):null,
   Array.isArray(r.byHour)&&r.byHour.length===24?bars(r.byHour):null,
@@ -875,7 +883,7 @@ function botReport(r,withName=true){
 async function viewBots(){
  const {items}=await call("bots");
  return [head("Détection de bots",refreshBtn()),
-  h("p",{class:"muted small"},"Indices sur 14 jours, jamais une preuve. Les mini-jeux pèsent le plus (résultats invraisemblables, bonus maximal presque à chaque partie, scores trop constants, parties envoyées au plus tôt permis), puis le client (hors navigateur, sans écran ouvert), la nuit et le rythme des actions. Le détail des points est dans chaque rapport. Aucune adresse IP n'est conservée. Heures dans le fuseau du jeu."),
+  h("p",{class:"muted small"},"Indices sur 14 jours, jamais une preuve, et rien n'est sanctionné tout seul. Trois familles : le rythme (délais de réaction mesurés par le serveur et comparés aux autres joueurs, visites, pauses), le client (hors navigateur, sans écran ouvert, nouveautés jamais ouvertes) et les mini-jeux (résultats invraisemblables, scores trop constants, parties au plus tôt permis). Une alerte demande au moins deux familles ; la nuit ne compte qu'avec un autre indice. Le détail des points est dans chaque rapport. Aucune adresse IP n'est conservée. Heures dans le fuseau du jeu."),
   items.length?h("div",{class:"grid wide"},items.map(r=>h("div",{class:"card"},botReport(r)))):h("div",{class:"card"},empty("Aucune activité enregistrée."))];
 }
 

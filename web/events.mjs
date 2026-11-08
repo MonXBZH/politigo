@@ -31,7 +31,7 @@ export const EVENT_TYPES={
   params:[{k:"n",label:"Tirages offerts",opts:[[1,"1"],[2,"2"],[3,"3"]],def:1}],sum:p=>`${p.n} tirage${p.n>1?"s":""} gratuit${p.n>1?"s":""} en plus`},
  soldes:{label:"Soldes à la Buvette",ann:"🎉 {nom} : {resume} jusqu'à {fin}. Passe à la caisse !",msg:"La Buvette et les Soins sont moins chers.",desc:"Baisse les prix en FM de la Buvette et des Soins.",
   params:[{k:"off",label:"Réduction",opts:[[25,"−25 %"],[50,"−50 %"]],def:50}],sum:p=>`Buvette et Soins −${p.off} %`},
- courrier:{label:"Sac postal",ann:"🎉 {nom} : {resume} jusqu'à {fin}. Réponds à tes électeurs !",msg:"Les électeurs écrivent bien plus souvent.",desc:"Une lettre toutes les quelques minutes, de 7 h à minuit.",
+ courrier:{label:"Sac postal",ann:"🎉 {nom} : {resume} jusqu'à {fin}. Réponds à tes électeurs !",msg:"Les électeurs écrivent bien plus souvent.",desc:"Une lettre en plus toutes les quelques minutes, de 7 h à minuit, et jusqu'à 6 bulletins du courrier dans la journée au lieu de 2.",
   params:[{k:"gap",label:"Écart entre les lettres",opts:[[10,"10 minutes"],[15,"15 minutes"]],def:10}],sum:p=>`Une lettre toutes les ${p.gap} minutes`},
  duels:{label:"Nuit des duels",ann:"🎉 {nom} : {resume} jusqu'à {fin}. Choisis ton adversaire !",msg:"Plus de défis, et de plus gros gains.",desc:"Ajoute des défis par jour et multiplie les gains d'une victoire.",
   params:[{k:"extra",label:"Défis en plus",opts:[[2,"+2"],[5,"+5"]],def:2},{k:"mult",label:"Gains",opts:[[1.5,"×1,5"],[2,"×2"]],def:2}],sum:p=>`+${p.extra} défis, gains ${x(p.mult)}`},

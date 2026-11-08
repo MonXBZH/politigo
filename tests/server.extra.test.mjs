@@ -215,9 +215,10 @@ test("B6 closed registrations (POLITIGO_INVITE=off) and the per-IP hourly limit"
   assert.ok(!/Invite code/.test(p.out));
  }finally{await stop(p);}
  const addr=ip();let last;const codes=[];
- for(let n=0;n<6;n++){last=await reg(client(addr),"Limit"+n,{invite:"faux"});codes.push(last.status);}
- assert.deepEqual(codes,[403,403,403,429,429,429],"3 sign-ups an hour per address");
- assert.match(last.json.error,/inscriptions/);
+ // 1.7.1: only wrong invite codes count, 5 an hour per address (it was 3 attempts of any kind).
+ for(let n=0;n<7;n++){last=await reg(client(addr),"Limit"+n,{invite:"faux"});codes.push(last.status);}
+ assert.deepEqual(codes,[403,403,403,403,403,429,429],"5 wrong invite codes an hour per address");
+ assert.match(last.json.error,/codes d'invitation faux/);
  assert.equal((await reg(client(addr),"Limit9")).status,429,"a valid sign-up from a limited address is refused too");
  assert.equal((await reg(client(),"Limit9")).status,201,"another address is unaffected");
 });

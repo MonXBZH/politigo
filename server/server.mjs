@@ -9,6 +9,7 @@ import {DatabaseSync} from "node:sqlite";
 import {readFileSync,writeFileSync,lstatSync,unlinkSync,chmodSync,readdirSync,statSync} from "node:fs";
 import {dirname,join} from "node:path";
 import * as R from "./rules.mjs";
+import * as A from "./activities.mjs";
 import * as E from "./events.mjs";
 import * as P from "./push.mjs";
 import {createChat} from "./chat.mjs";
@@ -55,8 +56,9 @@ const PRESENCE_MS=Math.max(0,Number(env.PRESENCE_MS??8000));
 const BOARD_MS=Math.max(0,Number(env.BOARD_MS??1000));
 const MAX_PLAYERS=Math.max(1,Number(env.MAX_PLAYERS)||50);   // a leaked invite code cannot flood the database
 const SESSION_DAYS=90,BODY_LIMIT=4096,FEED_KEEP=200,SESSIONS_PER_PLAYER=10,SSE_PER_PLAYER=3,SSE_TOTAL=300,SSE_PER_IP=12;
-// Sign-ups per address and hour: a group of friends behind one box, not a farm of accounts.
-const REG_PER_HOUR=3;
+// Sign-ups per address and hour: a group of friends behind one box, not a farm of accounts. Only wrong invite codes
+// count against guessing; a typo in the form (name taken, short password) costs nothing.
+const REG_PER_HOUR=4,REG_BAD_INVITE_PER_HOUR=5;
 // Said at start: the streams the players may open together must fit within the server-wide cap.
 if(MAX_PLAYERS*SSE_PER_PLAYER>SSE_TOTAL*0.8)console.warn(`MAX_PLAYERS ${MAX_PLAYERS} × ${SSE_PER_PLAYER} live streams is close to or above the server cap of ${SSE_TOTAL}: some screens may be turned away.`);
 // The __Host- prefix makes the browser refuse the cookie unless it is Secure, host-only and Path=/.
@@ -169,6 +171,12 @@ for(const [col,type] of [["seen_version","TEXT"],["suspended","INTEGER NOT NULL 
  if(db.prepare("PRAGMA table_info(players)").all().some(c=>c.name===col))continue;
  try{db.exec(`ALTER TABLE players ADD COLUMN ${col} ${type}`);}catch(e){if(!/duplicate column/i.test(e.message))throw e;}
 }
+// The reaction delay (1.7.1): ms from what the server itself set off (a letter in, a mission over, a visit's window,
+// midnight's free draw, a challenge) to the action; NULL when nothing did. An older version names its columns, so it
+// writes its rows without it and never reads it. Another process starting on the same file may have added it first.
+if(!db.prepare("PRAGMA table_info(activity)").all().some(c=>c.name==="lag")){
+ try{db.exec("ALTER TABLE activity ADD COLUMN lag INTEGER");}catch(e){if(!/duplicate column/i.test(e.message))throw e;}
+}
 // No connection date was kept before: those accounts count from the first boot that has the column.
 db.prepare("UPDATE players SET last_seen=? WHERE last_seen IS NULL").run(Date.now());
 // The staff's bearer: their death count when they got it (a death sends it back to the urn) and the low-Flamme warning.
@@ -205,6 +213,12 @@ const CHAT={global:chatOn("chat_global","global"),camp:chatOn("chat_camp","camp"
 const chatRooms=()=>({global:CHAT.global,camp:CHAT.camp});
 {const v=getSetting("event");if(R.EVENT_MODES.includes(v)&&v!==EVENT_MODE){EVENT_MODE=v;console.warn(`Seasonal event set by the admin: ${v}.`);}}
 const RELEASE=R.releaseOf(VERSION);   // "1.3.0" for v1.3.0-3-gabc1234, null on a dev server
+// When this release first ran here (1.7.1): a very active account that has not opened its "what's new" since is a
+// weak hint for the bot report (the page shows it on its first load). Two processes starting together write the same.
+let RELEASE_AT=null;
+if(RELEASE){try{const s=JSON.parse(getSetting("release_at")||"null");
+ if(s?.v===RELEASE&&Number.isFinite(s.t))RELEASE_AT=s.t;else{RELEASE_AT=Date.now();setSetting("release_at",JSON.stringify({v:RELEASE,t:RELEASE_AT}));}}
+ catch(e){console.error("release_at:",e.message);}}
 const q={
  // An id is never given twice: SQLite would reuse the highest one once deleted, and a moderator's record names players by id.
  insertPlayer:db.prepare("INSERT INTO players(id,name,name_key,pass,created,state,score,updated,seen_version) VALUES((SELECT MAX(COALESCE(MAX(id),0),?)+1 FROM players),?,?,?,?,?,?,?,?)"),
@@ -242,9 +256,11 @@ const q={
  insertAudit:db.prepare("INSERT INTO admin_log(t,via,cmd,target,detail,actor) VALUES(?,?,?,?,?,?)"),
  announces:db.prepare("SELECT t,via,target,detail,actor FROM admin_log WHERE cmd IN ('announce','schedule') ORDER BY id DESC LIMIT 50"),
  insertActivity:db.prepare("INSERT INTO activity(player_id,t,kind,live,ua) VALUES(?,?,?,?,?)"),
+ setLag:db.prepare("UPDATE activity SET lag=? WHERE rowid=?"),
+ lastAnswer:db.prepare("SELECT MAX(t) AS t FROM activity WHERE player_id=? AND kind='mailAnswer' AND lag IS NOT NULL AND rowid<>?"),
  purgeActivity:db.prepare("DELETE FROM activity WHERE t<?"),
- activitySince:db.prepare("SELECT player_id,t,kind,live,ua FROM activity WHERE t>? ORDER BY player_id,t"),
- activityOf:db.prepare("SELECT player_id,t,kind,live,ua FROM activity WHERE player_id=? AND t>? ORDER BY t"),
+ activitySince:db.prepare("SELECT player_id,t,kind,live,ua,lag FROM activity WHERE t>? ORDER BY player_id,t"),
+ activityOf:db.prepare("SELECT player_id,t,kind,live,ua,lag FROM activity WHERE player_id=? AND t>? ORDER BY t"),
  activeSince:db.prepare("SELECT DISTINCT player_id AS id FROM activity WHERE t>?"),
  eventsOpen:db.prepare("SELECT * FROM events WHERE closed=0 ORDER BY starts"),
  eventsAll:db.prepare("SELECT * FROM events ORDER BY starts DESC LIMIT 200"),
@@ -597,7 +613,7 @@ setInterval(()=>{
   // One broken player (or a full disk) is logged and skipped; it must not stop everyone else's clock.
   if(p.suspended)continue;   // frozen: their companion neither lives nor dies until the suspension is lifted
   // A letter comes in mid-hour: it counts as a change, or an open screen would only see it after the player's next action.
-  try{update(p,S=>{const l=S.mail?.letter?.id;return R.advance(S,now,SPEED,rand,fxOf(p))||S.mail?.letter?.id!==l;});missionDue(p);if(p.id===hold)batonCheck(p,now);}
+  try{update(p,S=>{const l=S.mail?.letter?.id,w=A.lettersWaiting(S);return R.advance(S,now,SPEED,rand,fxOf(p))||S.mail?.letter?.id!==l||A.lettersWaiting(S)!==w;});missionDue(p);if(p.id===hold)batonCheck(p,now);}
   catch(e){console.error(`sweep, player ${p.id}:`,e);}
  }
  try{sweepSchedules(now);}catch(e){console.error("sweep, schedules:",e);}
@@ -873,7 +889,7 @@ async function duelRoute(req,res){
  const p=auth(req);if(limited("duel:"+p.id,30,60e3))throw new HttpError(429,"Doucement : trop de duels d'un coup.");
  const b=await readJson(req);
  if(!players.has(p.id))throw new HttpError(401,"Connexion requise.");   // deleted while the body was arriving
- logActivity(p,req,"duel:"+(typeof b.op==="string"?b.op:"?"));
+ const row=logActivity(p,req,"duel:"+(typeof b.op==="string"?b.op:"?"));
  const now=Date.now(),refuse=m=>new HttpError(422,m.endsWith(".")?m:m+".");
  if(b.op==="challenge"){
   update(p,S=>R.advance(S,now,SPEED,rand,fxOf(p)));
@@ -894,7 +910,7 @@ async function duelRoute(req,res){
  if(now>=d.expires){closeDuel(d,"expired",now);throw refuse("Ce défi a expiré.");}
  update(p,S=>R.advance(S,now,SPEED,rand,fxOf(p)));
  const e=playBlock(p.state);if(e)throw refuse(e);
- q.duelAccept.run(now,d.id);
+ q.duelAccept.run(now,d.id);setLag(row,now-(d.c_done??d.created));   // received: once the challenger played
  return send(res,200,{ok:true,duel:{id:d.id},me:mePayload(p)});
 }
 async function pushRoute(req,res,path){
@@ -919,13 +935,21 @@ async function pushRoute(req,res,path){
 // deserves a chance, and owns the one row that makes a win real. No await between the roll and that row.
 const MYTHIC="baton",CLEAN_MS=60e3,cleanCache=new Map();   // playerId -> {t,clean,bot}: the bot report is costly, draws come in bursts
 // Clean: a bot score under BOT_ALERT, under NON_BROWSER of the actions sent by something else than a browser (a script
-// scores only 40 on its own) and none of their duel turns flagged by the anti-cheat within 14 days.
-function mythicClean(p,now){
- const c=cleanCache.get(p.id);if(c&&now-c.t<CLEAN_MS)return c.clean;
- const rep=botReport(p,q.activityOf.all(p.id,activityCut(now)),q.miniOf.all(p.id,activityCut(now))),bot=rep.score;
- const flagged=q.flaggedDuels.all(now-14*864e5).some(d=>flagsOf(d).some(x=>(x.side==="d"?d.defender:d.challenger)===p.id));
- const clean=bot<BOT_ALERT&&rep.nonBrowserShare<=NON_BROWSER&&!flagged;cleanCache.set(p.id,{t:now,clean,bot});return clean;
+// scores only 40 on its own), none of their duel turns flagged by the anti-cheat within 14 days, nor their part of a
+// Bâton duel (baton_duels: a held or annulled one; one the organiser accepted as it stands no longer counts).
+// mythicWhy: why not, in French for the admin's player sheet ("" when clean). Automatic, shown, never told the player.
+function mythicWhy(p,now){
+ const c=cleanCache.get(p.id);if(c&&now-c.t<CLEAN_MS)return c.why;
+ const rep=reportOf(p,now),bot=rep.score,why=[],cut=now-14*864e5;
+ if(rep.alert)why.push(`score de bot ${bot}/100, sur ${rep.families.length} familles d'indices`);   // as the alert: one family alone is never enough
+ if(rep.nonBrowserShare>NON_BROWSER)why.push(`${pct(rep.nonBrowserShare)} des actions hors navigateur`);
+ const duel=q.flaggedDuels.all(cut).find(d=>flagsOf(d).some(x=>(x.side==="d"?d.defender:d.challenger)===p.id));
+ if(duel)why.push(`tour de duel #${duel.id} signalé par l'anti-triche`);
+ const bd=bq.flaggedOf.all(cut,p.id,p.id).map(bLoad).find(d=>!["done","forfeit"].includes(d.status)&&d.fl.some(x=>(x.side==="b"?d.bearer:d.challenger)===p.id));
+ if(bd)why.push(`duel du Bâton #${bd.id} signalé par l'anti-triche (${[...new Set(bd.fl.flatMap(x=>x.flags||[]))].join(", ")})`);
+ const s=why.join(" ; ");cleanCache.set(p.id,{t:now,clean:!s,bot,why:s});return s;
 }
+const mythicClean=(p,now)=>!mythicWhy(p,now);
 // opts.mythic for the rules. clean is a getter, worked out only for an otherwise eligible player. won.v: a claim landed.
 function mythicOpts(p,now,won={}){
  const available=!q.mythicOf.get(MYTHIC),ageDays=(now-p.created)/864e5;
@@ -980,6 +1004,7 @@ const bq={
  defended:db.prepare("SELECT resolved FROM baton_duels WHERE bearer=? AND winner=? AND status='done' ORDER BY resolved DESC LIMIT 1"),
  of:db.prepare("SELECT * FROM baton_duels WHERE challenger=? OR bearer=? ORDER BY id DESC LIMIT 5"),
  held:db.prepare("SELECT * FROM baton_duels WHERE status='held' ORDER BY id DESC LIMIT 50"),
+ flaggedOf:db.prepare("SELECT * FROM baton_duels WHERE flags IS NOT NULL AND created>? AND (challenger=? OR bearer=?) ORDER BY id DESC LIMIT 20"),
  move:db.prepare("UPDATE mythics SET player_id=?,t=?,deaths=?,warned=0 WHERE item=? AND player_id=?"),
  setDeaths:db.prepare("UPDATE mythics SET deaths=? WHERE item=?"),
  setWarned:db.prepare("UPDATE mythics SET warned=? WHERE item=?"),
@@ -1345,10 +1370,15 @@ async function route(req,res){
  }
 
  if(path==="/api/register"&&method==="POST"){
-  const ip=clientIp(req);if(limited("reg:"+ip,REG_PER_HOUR,3600e3))throw new HttpError(429,"Trop d'inscriptions depuis cette adresse, réessaie plus tard.");
+  // Minutes left before a full bucket opens again (0: not full); a full bucket refuses before anything is checked.
+  const ip=clientIp(req),wait=(key,max)=>{const bk=buckets.get(key),now=Date.now();return bk&&bk.reset>now&&bk.count>=max?Math.max(1,Math.ceil((bk.reset-now)/60e3)):0;};
+  let w=wait("reginv:"+ip,REG_BAD_INVITE_PER_HOUR);if(w)throw new HttpError(429,`Trop de codes d'invitation faux depuis cette adresse : réessaie dans ${w} min.`);
+  w=wait("reg:"+ip,REG_PER_HOUR);if(w)throw new HttpError(429,`Trop d'inscriptions depuis cette adresse : réessaie dans ${w} min.`);
   const b=await readJson(req);
   if(!INVITE||!REG_OPEN)throw new HttpError(403,"Les inscriptions sont fermées.");
-  if(typeof b.invite!=="string"||!sameSecret(b.invite.trim(),INVITE))throw new HttpError(403,"Code d'invitation incorrect.");
+  const code=typeof b.invite==="string"?b.invite.trim():"";
+  if(!code)throw new HttpError(403,"Entre le code d'invitation donné par l'organisateur.");   // nothing typed is not a guess
+  if(!sameSecret(code,INVITE)){limited("reginv:"+ip,REG_BAD_INVITE_PER_HOUR,3600e3);throw new HttpError(403,"Code d'invitation incorrect.");}
   const name=cleanName(b.name);
   if(!NAME_RE.test(name))throw new HttpError(400,"Pseudo : 3 à 20 caractères (lettres, chiffres, espace, . _ -).");
   if(reservedName(name))throw new HttpError(400,"Ce pseudo est réservé à l'organisation.");
@@ -1361,13 +1391,16 @@ async function route(req,res){
    const t=q.tombstoneOf.get(nameKey(name));if(t&&Date.now()-t.deleted<864e5)throw new HttpError(409,"Ce pseudo vient d'être libéré, réessaie demain.");
   };
   seat();
-  const pass=await hashPassword(b.password,{ip,prio:true});
+  // The seat is counted before the hashing pause, so that parallel sign-ups cannot slip past the cap; given back on failure.
+  if(limited("reg:"+ip,REG_PER_HOUR,3600e3)){buckets.get("reg:"+ip).count--;throw new HttpError(429,"Trop d'inscriptions depuis cette adresse, réessaie dans un moment.");}
+  const giveBack=()=>{const bk=buckets.get("reg:"+ip);if(bk&&bk.count>0)bk.count--;};
+  let pass;try{pass=await hashPassword(b.password,{ip,prio:true});}catch(e){giveBack();throw e;}
   // Checked again after the hashing pause, and in the same synchronous transaction as the insert (no await in
   // between): of two sign-ups racing for one name or the last seat, the second loses.
   const now=Date.now(),state=R.newGame(b.camp,now);let lastInsertRowid;
   db.exec("BEGIN IMMEDIATE");
   try{seat();({lastInsertRowid}=q.insertPlayer.run(Number(getSetting("playerFloor"))||0,name,nameKey(name),pass,now,JSON.stringify(state),R.score(state),now,RELEASE));db.exec("COMMIT");}
-  catch(e){db.exec("ROLLBACK");throw e;}
+  catch(e){db.exec("ROLLBACK");giveBack();throw e;}
   const p={id:Number(lastInsertRowid),name,created:now,state,seen:RELEASE};players.set(p.id,p);touchSeen(p,now);   // a new player has nothing to catch up on
   // The account exists from here on: a failed announcement must not turn the sign-up into an error.
   try{const feed=newFeedEntries(p,0);if(feed.length)broadcast("feed",feed);publishBoard();}catch(e){console.error("register: announce failed",e);}
@@ -1410,16 +1443,21 @@ async function route(req,res){
   const p=auth(req);if(limited("act:"+p.id,40,10e3))throw new HttpError(429,"Doucement : trop d'actions d'un coup.");
   const b=await readJson(req);
   if(!players.has(p.id))throw new HttpError(401,"Connexion requise.");   // deleted while the body was arriving
-  logActivity(p,req,typeof b.type==="string"?b.type:"?");
-  const now=Date.now(),ev=eventNow();
+  const row=logActivity(p,req,typeof b.type==="string"?b.type:"?");
+  const now=Date.now(),ev=eventNow();let lag=null;
   // The debate's end is the server's (POST /api/debate): a score sent for it is not even looked at.
   if(b.type==="miniEnd"&&p.state.mini?.k==="debate")throw new HttpError(422,"Le Débat chrono se joue question par question.");
   const opts={now,speed:SPEED,random:rand,event:ev,boost:fxOf(p)},won={v:false};
   if(b.type==="draw")opts.mythic=mythicOpts(p,now,won);
   let r;
   // A claimed staff that did not end up in the saved game (a failed write, a refused draw) goes back to the urn.
-  try{r=update(p,S=>R.act(S,b,opts));}
+  // The state is brought up to date first (act does it again, a no-op), to read what was waiting before the action.
+  try{r=update(p,S=>{let c=null;try{R.advance(S,now,SPEED,rand,fxOf(p));c=cueOf(S);}catch{}
+   const out=R.act(S,b,opts);if(c&&out?.ok){try{lag=lagOf(c,S,b);}catch{}}return out;});}
   finally{if(won.v&&!p.state.wardrobe?.own?.includes(MYTHIC)){won.v=false;q.freeMythic.run(MYTHIC,p.id);}}
+  // A letter waiting behind another: from the moment it came to the head, i.e. the previous answer when later.
+  if(lag!==null&&b.type==="mailAnswer"){try{const prev=q.lastAnswer.get(p.id,row??-1)?.t;if(Number.isFinite(prev))lag=Math.min(lag,now-prev);}catch{}}
+  if(lag!==null)setLag(row,lag);
   if(r.audit){recordMini(p,r.audit,now);delete r.audit;}   // for the admin, not for the player's script
   if(r.ok&&b.type==="draw")drawNews(p,r,won.v,now);
   // The rules hand the turn (its seed included) to the server only, out of the reply.
@@ -1793,9 +1831,38 @@ function uaTag(ua){
  if(/^Mozilla\/5\.0 \(/.test(ua)&&/(Gecko\/|AppleWebKit\/|Firefox\/|Chrome\/|Safari\/)/.test(ua)&&!/bot|crawl|spider|curl|python|wget/i.test(ua))return "browser";
  return (/^[A-Za-z0-9._-]+/.exec(ua)?.[0]||"other").toLowerCase().slice(0,24);
 }
+// Returns the row's id (to add its reaction delay once the action went through), null when it could not be written.
 function logActivity(p,req,kind){
- try{q.insertActivity.run(p.id,Date.now(),String(kind).replace(/[^\w:.-]/g,"").slice(0,24)||"?",isOnline(p.id)?1:0,uaTag(req.headers["user-agent"]));}
- catch(e){console.error(`activity, player ${p.id}:`,e.message);}
+ try{return q.insertActivity.run(p.id,Date.now(),String(kind).replace(/[^\w:.-]/g,"").slice(0,24)||"?",isOnline(p.id)?1:0,uaTag(req.headers["user-agent"])).lastInsertRowid;}
+ catch(e){console.error(`activity, player ${p.id}:`,e.message);return null;}
+}
+const setLag=(row,ms)=>{if(row==null||!Number.isFinite(ms)||ms<0||ms>LAG_MAX)return;try{q.setLag.run(Math.round(ms),row);}catch(e){console.error("activity lag:",e.message);}};
+// Reaction delays, measured on the server's clock from what it set off itself; the browser is asked nothing. The cue
+// follows from the kind: mailAnswer (the oldest letter waiting), missionReport (the mission's end), draw (midnight, the
+// free draw), duel:accept (the challenge); any other action that opened a paid visit: that visit's window.
+const LAG_MAX=7*864e5,LAG_CUE={mailAnswer:"mail",missionReport:"mission",draw:"draw","duel:accept":"duel"};
+const cueOfKind=k=>LAG_CUE[k]??"visit";
+// The letter at the head of the box (the one answered): its slot on the game clock, null when none or when its time
+// is unknown (a missing field is no delay). A letter kept behind another could only be answered once it came to the
+// head: the route also caps the delay at the time since the player's previous answer.
+function mailSince(S){
+ const m=S?.mail;if(!m||typeof m!=="object")return null;
+ const head=m.letter&&typeof m.letter==="object"?m.letter:Array.isArray(m.queue)?m.queue[0]:null;
+ return head&&Number.isFinite(head.t)?head.t:null;
+}
+// What the state says before the action (brought up to date), then the delay once the action went through.
+function cueOf(S){
+ const idx=R.curIdx(S),day=(idx-R.hodOf(idx))*R.H;
+ return {v:S.vclock,mail:mailSince(S),mission:S.missions?.cur?.end??null,lastVisit:S.lastVisit,day,
+  open:Math.max((S.lastVisit+R.XP.visitGap)*R.H,day+R.ECO.nightEnd*R.H)};
+}
+function lagOf(c,S,b){
+ let from=null;
+ if(b.type==="mailAnswer")from=c.mail;
+ else if(b.type==="missionReport")from=c.mission;
+ else if(b.type==="draw"){if(b.pay==="free")from=c.day;}
+ else if(S.lastVisit!==c.lastVisit)from=c.open;
+ return Number.isFinite(from)&&c.v>=from?(c.v-from)/SPEED:null;
 }
 const pct=x=>`${Math.round(x*100)} %`;
 // Mini-game results as the rules audited them, kept ACTIVITY_DAYS like the actions (score, seconds, errors, flags).
@@ -1841,7 +1908,8 @@ function gameStats(rows){
 function gameSignals(st){
  let score=0;const reasons=[],all=Object.entries(st.games),n=all.reduce((a,[,g])=>a+g.n,0);
  const cap=all.reduce((a,[,g])=>a+g.capShare*g.n,0)/(n||1);
- if(n>=5&&cap>=0.8){score+=25;reasons.push(`${pct(cap)} des mini-jeux au bonus maximal (${n} parties)`);}
+ // A good player reaches the full bonus too: a small weight (1.7.1), it only adds up with something else.
+ if(n>=5&&cap>=0.8){score+=10;reasons.push(`${pct(cap)} des mini-jeux au bonus maximal (${n} parties) : un bon joueur y arrive aussi`);}
  const label=k=>R.MINI[k]?.label??({pong:"Pong",duel:"Duels"}[k]??k);
  const flat=all.filter(([,g])=>g.n>=10&&g.cv!==null&&g.cv<0.1).map(([k])=>k);
  if(flat.length){score+=20;reasons.push(`Scores trop constants (${flat.map(label).join(", ")})`);}
@@ -1852,18 +1920,88 @@ function gameSignals(st){
  return {score,reasons};
 }
 // Suspicion score, 0 to 100, from the last 14 days of actions and mini-games:
-//  +30 an implausibility flag on a mini-game result (too fast, over the cap, a machine's rhythm),
-//  +25 80 % or more of at least 5 mini-games at the full bonus,
-//  +20 scores of one game too constant (coefficient of variation < 0.1 over at least 10 games),
-//  +20 most games of a kind sent within 5 % of the earliest moment allowed,
-//  +20 more than half of the actions sent with no live screen open (a script, not the page),
-//  +20 more than 20 % from a client that is not a browser (curl, python-requests, node...),
-//  +15 more than 25 % of the actions between 1 h and 6 h (game time zone),
-//  +15 gaps under 2 h too regular (coefficient of variation < 0.15 over at least 30 gaps): a timer, not a hand.
-function botReport(p,rows,minis=[]){
+//  game:   +30 an implausibility flag on a mini-game result (too fast, over the cap, a machine's rhythm),
+//          +10 80 % or more of at least 5 mini-games at the full bonus (a good player gets there too),
+//          +20 scores of one game too constant (coefficient of variation < 0.1 over at least 10 games),
+//          +20 most games of a kind sent within 5 % of the earliest moment allowed,
+//  client: +20 more than half of the actions sent with no live screen open (a script, not the page),
+//          +20 more than 20 % from a client that is not a browser (curl, python-requests, node...),
+//          +10 a very active account that never opened the current release's news, out for SEEN_DAYS,
+//  timing (reaction delays on the server's clock, against the median of the other players):
+//          +20 letters answered within 10 s (median, and 80 % of at least 30), +15 mission reports the same (10),
+//          +15 all 8 paid visits every whole day (7 days at least), +15 the day's first visit always within 2 min of
+//          its window opening (7 days), +15 no pause over 3 h between 7 h and midnight (7 days),
+//          +15 gaps under 2 h too regular (coefficient of variation < 0.15 over at least 30 gaps): a timer, not a hand,
+//  +15 more than 25 % of the actions between 1 h and 6 h (game time zone), only along with another signal: a night owl
+//      is no bot.
+// The bot: alert takes BOT_ALERT points from two families at least: one family alone (a great player, an odd phone,
+// a regular life) is never enough. A hint, never a proof: nothing is sanctioned on its own.
+const FAST_S=10,OPEN_S=120,PAUSE_H=3,TIMING_DAYS=7,SEEN_DAYS=7,SEEN_ACTIONS=400;
+const med=a=>{const s=a.filter(Number.isFinite).sort((x,y)=>x-y);return s.length?s[s.length>>1]:null;};
+// The day and wall clock of a time, cached per hour: R.clockOf goes through Intl (~5 µs), and 14 days of a whole game's
+// actions are read at once. Within an hour the minutes follow the epoch's (whole-hour offsets, as in Europe/Paris).
+const hourCache=new Map();
+function wallOf(t){
+ const h=Math.floor(t/R.H);let c=hourCache.get(h);
+ if(!c){if(hourCache.size>4000)hourCache.clear();const w=R.clockOf(h*R.H);hourCache.set(h,c={day:R.dayKey(h),hour:w.hour,minute:w.minute});}
+ const m=c.minute+Math.floor((t-h*R.H)/6e4);return {day:c.day,hour:(c.hour+Math.floor(m/60))%24,minute:m%60};
+}
+const dur=s=>s<90?`${Math.round(s)} s`:s<5400?`${Math.round(s/60)} min`:`${Math.round(s/3600)} h`;
+// The timing of one player over the window: delays per cue (seconds), and per whole day (today and the window's
+// first, cut, day aside) the paid visits, the first visit's delay and the longest pause between 7 h and midnight.
+function timingOf(rows,now){
+ const lags={mail:[],mission:[],draw:[],duel:[],visit:[]},days=new Map();
+ const today=wallOf(now).day,first=wallOf(activityCut(now)).day;
+ for(const r of rows){
+  const c=wallOf(r.t),k=c.day;let d=days.get(k);if(!d)days.set(k,d={visits:0,open:null,mins:[]});
+  const m=c.hour*60+c.minute;if(m>=7*60)d.mins.push(m);
+  if(r.lag==null||!Number.isFinite(r.lag))continue;
+  const cue=cueOfKind(r.kind),s=r.lag/1000;lags[cue].push(s);
+  if(cue==="visit"){d.visits++;if(d.open===null)d.open=s;}
+ }
+ const whole=[...days].filter(([k])=>k!==today&&k!==first).map(([,d])=>d),opens=whole.map(d=>d.open).filter(x=>x!==null);
+ const stat=a=>({n:a.length,med:med(a),fast:a.length?a.filter(x=>x<=FAST_S).length/a.length:0});
+ const pause=d=>{let g=0,prev=7*60;for(const m of d.mins){g=Math.max(g,m-prev);prev=m;}return Math.max(g,24*60-prev);};
+ return {mail:stat(lags.mail),mission:stat(lags.mission),draw:stat(lags.draw),duel:stat(lags.duel),visit:stat(lags.visit),days:whole.length,
+  fullDays:whole.filter(d=>d.visits>=R.XP.visitsPerDay).length,openDays:opens.length,openMax:opens.length?Math.max(...opens):null,openMed:med(opens),
+  noPauseDays:whole.filter(d=>d.mins.length&&pause(d)<=PAUSE_H*60).length};
+}
+// The group's habits: per cue, each player's median delay (those with enough of them). A player is compared with the
+// others only, so that a script alone on a test server is still measured against nothing (absolute thresholds).
+const groupBy=rows=>{const by=new Map();for(const r of rows){let l=by.get(r.player_id);if(!l)by.set(r.player_id,l=[]);l.push(r);}return by;};
+let normsCache={t:0,v:null};
+function groupNorms(now,timings=null){
+ if(!timings&&normsCache.v&&now-normsCache.t<300e3)return normsCache.v;
+ if(!timings){timings=new Map();for(const [id,rows] of groupBy(q.activitySince.all(activityCut(now))))timings.set(id,timingOf(rows,now));}
+ const v={};
+ for(const k of ["mail","mission","open"])v[k]=[...timings].map(([id,t])=>[id,k==="open"?(t.openDays>=3?t.openMed:null):t[k].n>=5?t[k].med:null]).filter(([,x])=>x!==null);
+ normsCache={t:now,v};return v;
+}
+const normOf=(v,k,id)=>med((v?.[k]??[]).filter(([i])=>i!==id).map(([,x])=>x));
+function timingSignals(t,norm){
+ const out=[],grp=g=>g==null?"pas assez d'autres joueurs pour comparer":`les autres joueurs : ${dur(g)} en médiane`;
+ const quick=(k,min,pts,what)=>{const s=t[k],g=norm(k);
+  if(s.n>=min&&s.med<=FAST_S&&s.fast>=0.8&&(g==null||s.med<=g/5))out.push([pts,`${what} en ${dur(s.med)} en médiane, ${pct(s.fast)} en moins de ${FAST_S} s sur ${s.n} (${grp(g)}) : une main met plutôt des minutes`]);};
+ quick("mail",30,20,"Répond aux lettres");
+ quick("mission",10,15,"Lit les rapports de mission");
+ const V=R.XP.visitsPerDay;
+ if(t.days>=TIMING_DAYS&&t.fullDays===t.days)out.push([15,`${V} visites sur ${V} chaque jour joué (${t.fullDays} jours) : jamais une journée chargée ou une grasse matinée`]);
+ const g=norm("open");
+ if(t.openDays>=TIMING_DAYS&&t.openMax<=OPEN_S&&(g==null||t.openMax<=g/3))out.push([15,`Première visite du jour toujours moins de ${OPEN_S/60} min après l'ouverture (${t.openDays} jours, au plus ${dur(t.openMax)} ; ${grp(g)})`]);
+ if(t.noPauseDays>=TIMING_DAYS)out.push([15,`Aucune pause de plus de ${PAUSE_H} h entre 7 h et minuit sur ${t.noPauseDays} jours : même un passionné mange, travaille ou dort`]);
+ return out;
+}
+// The current release's news never opened by a very active account, out long enough (a new account saw it at sign-up).
+function seenHint(p,n,now){
+ if(!RELEASE||!RELEASE_AT||now-RELEASE_AT<SEEN_DAYS*864e5||now-p.created<SEEN_DAYS*864e5||n<SEEN_ACTIONS)return null;
+ const s=R.releaseOf(p.seen);if(s&&R.cmpRelease(s,RELEASE)>=0)return null;
+ const days=Math.floor((now-Math.max(RELEASE_AT,p.created))/864e5);
+ return `${s?`Nouveautés vues jusqu'à la ${s} seulement`:"N'a jamais ouvert les nouveautés"} : la ${RELEASE} est sortie il y a ${days} jours, malgré ${n} actions (la page du jeu les affiche d'elle-même au chargement)`;
+}
+function botReport(p,rows,minis=[],norms=null,now=Date.now(),timing=null){
  const byHour=Array(24).fill(0),n=rows.length,byKind=new Map();let noLive=0,nonBrowser=0,night=0;const gaps=[];
  for(let i=0;i<n;i++){
-  const r=rows[i],h=R.clockOf(r.t).hour;byHour[h]++;
+  const r=rows[i],h=wallOf(r.t).hour;byHour[h]++;
   if(!r.live)noLive++;if(r.ua!=="browser")nonBrowser++;if(h>=1&&h<6)night++;
   let c=byKind.get(r.kind);if(!c)byKind.set(r.kind,c={kind:r.kind,n:0,off:0});c.n++;if(r.ua!=="browser")c.off++;
   if(i)gaps.push((r.t-rows[i-1].t)/1000);
@@ -1872,22 +2010,35 @@ function botReport(p,rows,minis=[]){
  const short=gaps.filter(g=>g<7200),mean=short.length?short.reduce((a,b)=>a+b,0)/short.length:0;
  const cv=short.length>1&&mean>0?Math.sqrt(short.reduce((a,g)=>a+(g-mean)**2,0)/short.length)/mean:null;
  const noLiveShare=n?noLive/n:0,nonBrowserShare=n?nonBrowser/n:0,nightShare=n?night/n:0;
- const games=gameStats(minis),sig=gameSignals(games),reasons=[...sig.reasons];let score=sig.score;
- if(noLiveShare>0.5){score+=20;reasons.push(`${pct(noLiveShare)} des actions sans écran de jeu ouvert`);}
+ const games=gameStats(minis),sig=gameSignals(games),reasons=[...sig.reasons],fam=new Set();let score=sig.score;
+ if(sig.score)fam.add("jeu");
+ const add=(f,pts,why)=>{score+=pts;reasons.push(why);fam.add(f);};
+ if(noLiveShare>0.5)add("client",20,`${pct(noLiveShare)} des actions sans écran de jeu ouvert`);
  if(nonBrowserShare>NON_BROWSER){
   const tags=[...new Set(rows.filter(r=>r.ua!=="browser").map(r=>r.ua))].slice(0,3).join(", ");
-  score+=20;reasons.push(`${pct(nonBrowserShare)} des actions hors navigateur (${tags}) : pas de Bâton de feu`);
+  add("client",20,`${pct(nonBrowserShare)} des actions hors navigateur (${tags}) : pas de Bâton de feu`);
  }
- if(nightShare>0.25){score+=15;reasons.push(`${pct(nightShare)} des actions entre 1 h et 6 h`);}
- if(cv!==null&&short.length>=30&&cv<0.15){score+=15;reasons.push(`Rythme trop régulier (variation ${cv.toFixed(2).replace(".",",")} sur ${short.length} intervalles)`);}
+ const seen=seenHint(p,n,now);if(seen)add("client",10,seen);
+ timing??=timingOf(rows,now);
+ for(const [pts,why] of timingSignals(timing,k=>normOf(norms,k,p.id)))add("rythme",pts,why);
+ if(cv!==null&&short.length>=30&&cv<0.15)add("rythme",15,`Rythme trop régulier (variation ${cv.toFixed(2).replace(".",",")} sur ${short.length} intervalles)`);
+ if(nightShare>0.25){
+  if(score){score+=15;reasons.push(`${pct(nightShare)} des actions entre 1 h et 6 h, en plus du reste`);}
+  else reasons.push(`${pct(nightShare)} des actions entre 1 h et 6 h : un couche-tard, ne compte qu'avec un autre indice`);
+ }
+ score=Math.min(100,score);const families=[...fam];
+ const lagMed=Object.fromEntries(["mail","mission","visit","draw","duel"].map(k=>[k,timing[k].n?{n:timing[k].n,medS:Math.round(timing[k].med)}:null]));
  return {id:p.id,name:p.name,actions14d:n,byHour,noLiveShare,nonBrowserShare,nightShare,medianGapS:median===null?null:Math.round(median),
-  gapCv:cv===null?null:Math.round(cv*1000)/1000,score:Math.min(100,score),reasons,kinds:[...byKind.values()].sort((a,b)=>b.n-a.n).slice(0,12),games:games.games,gameFlags:games.flags};
+  gapCv:cv===null?null:Math.round(cv*1000)/1000,score,families,alert:score>=BOT_ALERT&&families.length>=2,lags:lagMed,
+  reasons,kinds:[...byKind.values()].sort((a,b)=>b.n-a.n).slice(0,12),games:games.games,gameFlags:games.flags};
 }
 const activityCut=now=>now-ACTIVITY_DAYS*864e5;
+// One player's report, measured against the group (its norms cached a few minutes).
+const reportOf=(p,now)=>botReport(p,q.activityOf.all(p.id,activityCut(now)),q.miniOf.all(p.id,activityCut(now)),groupNorms(now),now);
 function botsAll(now){
- const group=rows=>{const by=new Map();for(const r of rows){let l=by.get(r.player_id);if(!l)by.set(r.player_id,l=[]);l.push(r);}return by;};
- const by=group(q.activitySince.all(activityCut(now))),mi=group(q.miniSince.all(activityCut(now)));
- return [...players.values()].map(p=>botReport(p,by.get(p.id)??[],mi.get(p.id)??[])).sort((a,b)=>b.score-a.score||b.actions14d-a.actions14d||a.name.localeCompare(b.name,"fr"));
+ const by=groupBy(q.activitySince.all(activityCut(now))),mi=groupBy(q.miniSince.all(activityCut(now)));
+ const timings=new Map([...by].map(([id,rows])=>[id,timingOf(rows,now)])),norms=groupNorms(now,timings);
+ return [...players.values()].map(p=>botReport(p,by.get(p.id)??[],mi.get(p.id)??[],norms,now,timings.get(p.id))).sort((a,b)=>b.score-a.score||b.actions14d-a.actions14d||a.name.localeCompare(b.name,"fr"));
 }
 // Accounts that look like one person playing both sides, from the duels of the last 30 days: created within 30 min
 // of each other and dueling each other, handing over to each other within 2 s again and again (one hand on two
@@ -2014,7 +2165,7 @@ function suspend(p,on){
   update(p,S=>{R.resync(S,now,"suspension");});
  }
 }
-function playerDetail(p){
+function playerDetail(p,self=false){
  const S=p.state,now=Date.now();
  return {id:p.id,name:p.name,camp:S.camp,candidate:R.person(S).name,lvl:S.lvl,xp:Math.floor(S.xp),score:R.score(S),form:S.form,sat:S.sat,moral:S.moral,energy:S.energy,hyg:S.hyg,
   fm:S.fm,deaths:S.deaths,idleDeaths:S.idleDeaths??0,lastSeen:p.lastSeen??null,protected:!!p.protected,created:p.created,updated:q.updatedOf.get(p.id)?.updated??null,online:isOnline(p.id),sessions:q.sessionsOf.get(p.id,now).n,pushSubs:q.countSubsOf.get(p.id).n,
@@ -2022,7 +2173,9 @@ function playerDetail(p){
    return {id:d.id,mode:d.mode,status:d.status,role:d.challenger===p.id?"challenger":"bearer",vs:nameOf(d.challenger===p.id?d.bearer:d.challenger),created:d.created,
     resolved:d.resolved??null,replayAt:d.replay_at??null,res:d.winner==null?null:d.winner===p.id?"win":"loss",flags:d.fl};}),
   duels:q.lastDuelsOf.all(p.id,p.id).map(d=>{const v=duelView(d,p.id);return {id:v.id,status:v.status,vs:v.vs,role:v.role,created:v.created,res:v.res,flags:flagsOf(d)};}),
-  activity:botReport(p,q.activityOf.all(p.id,activityCut(now)),q.miniOf.all(p.id,activityCut(now))),suspects:duelSuspects(now).filter(x=>x.ids.includes(p.id))};
+  seenVersion:p.seen??null,
+  // A moderator's own sheet: no bot report about them, nor their Bâton eligibility (the bots list's rule).
+  ...(self?{activity:null,mythicBlock:null,suspects:[]}:{activity:reportOf(p,now),mythicBlock:mythicWhy(p,now)||null,suspects:duelSuspects(now).filter(x=>x.ids.includes(p.id))})};
 }
 // The admin's summary of a player's cosmetics: the Flamme, the tickets, what they own and wear (names from the catalogue).
 function wardrobeOf(p){
@@ -2085,7 +2238,7 @@ function alertsAll(now,all=false,skip=null){
   items.push({key:`duel:${d.id}`,kind:"duel",t:d.created,ref:f[0].side==="d"?d.defender:d.challenger,duel:d.id,ids:[d.challenger,d.defender],title:`Duel #${d.id} signalé par l'anti-triche`,
    detail:cut(f.map(x=>`${x.name} (${(x.flags||[]).join(", ")})`).join(" · "))});
  }
- for(const b of botsCache.bots)if(b.score>=BOT_ALERT)items.push({key:`bot:${b.id}`,kind:"bot",t:null,ref:b.id,ids:[b.id],
+ for(const b of botsCache.bots)if(b.alert)items.push({key:`bot:${b.id}`,kind:"bot",t:null,ref:b.id,ids:[b.id],
   title:`${b.name} : score de bot ${b.score}/100`,detail:cut(b.reasons.slice(0,2).join(" · "))});
  for(const s of botsCache.suspects)items.push({key:`suspect:${[...s.ids].sort((x,y)=>x-y).join("-")}`.slice(0,68),kind:"suspect",t:null,ref:s.ids[0],ids:s.ids,
   title:`Duels suspects : ${s.names.join(" · ")}`,detail:cut(s.reasons[0])});
@@ -2132,7 +2285,7 @@ async function adminCommand(b){
    uptimeS:Math.round(process.uptime()),dbBytes:Number(db.prepare("SELECT page_count*page_size AS n FROM pragma_page_count(),pragma_page_size()").get().n),
    event:{mode:EVENT_MODE,current:eventNow()},registrations:{open:regOpen()},suspended:[...players.values()].filter(p=>p.suspended).length,chat:chatStats,chatRooms:chatRooms()};
  }
- if(cmd==="player")return {player:playerDetail(who(b))};
+ if(cmd==="player"){const p=who(b);return {player:playerDetail(p,mine(p.id))};}
  if(cmd==="player-delete"){
   const p=target();
   if(b.confirm!==p.name)throw new HttpError(400,"Retape le pseudo exact pour confirmer.");

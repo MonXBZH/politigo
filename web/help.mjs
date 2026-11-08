@@ -50,9 +50,9 @@ export const HELP=[
   "De quoi s'occuper entre deux visites. Toutes jouent sur les jauges et rapportent des bulletins pour la Tombola, jamais de FM. Les missions donnent aussi de l'XP.",
   [`Missions : une à la fois, ${MISSION_RULES.perDay} par jour, de ${mins(shortest)} à ${mins(longest)}, avec au moins ${MISSION_RULES.minEnergy} d'énergie. Celle de nuit part seulement à partir de ${MISSION_RULES.nightFrom} h. Une notification te prévient quand le rapport t'attend ; la mission risquée se joue à pile ou face au moment du rapport.`,
    `Récompense d'une mission, selon sa durée : jusqu'à 1 h, +${tierXp(1)} XP et 1 bulletin ; jusqu'à 3 h, +${tierXp(2)} XP et 2 bulletins ; à partir de 4 h, +${tierXp(3)} XP et 3 bulletins. La mission risquée paie pareil, réussie ou non.`,
-   `Courrier des électeurs : une lettre toutes les ${MAIL.gapMin/6e4} à ${MAIL.gapMax/6e4} minutes, de ${MAIL.quietTo} h à minuit. Choisis ta réponse : chacune a ses effets.`,
+   `Courrier des électeurs : une lettre environ toutes les ${MAIL.slotMin} minutes, de ${MAIL.quietTo} h à 23 h, que tu aies répondu ou non. Ta boîte en garde ${MAIL.box} : au-delà, les électeurs se lassent. Choisis ta réponse : chacune a ses effets.`,
    `Objectifs du jour : ${GOALS_PER_DAY} défis tirés chaque matin, récompensés en jauges.`],
-  `Bulletins : ceux d'une mission se gagnent une fois par jour, ${MISSION_RULES.bulletinsPerDay} au plus par jour pour toutes les missions, mais l'XP tombe à chaque rapport. S'y ajoutent un bulletin par objectif atteint et un toutes les ${MAIL.bulletinEvery} lettres répondues.`]},
+  `Bulletins : ceux d'une mission se gagnent une fois par jour, ${MISSION_RULES.bulletinsPerDay} au plus par jour pour toutes les missions, mais l'XP tombe à chaque rapport. S'y ajoutent un bulletin par objectif atteint et un toutes les ${MAIL.bulletinEvery} lettres répondues (${MAIL.bulletinsPerDay} par jour au plus pour le courrier).`]},
  {id:"flamme",title:"La Flamme",parts:[
   `Elle grandit avec ton assiduité, jour après jour, et s'affiche sous les quatre jauges. Chaque journée terminée lui ajoute jusqu'à ${FLAME.gauges+FLAME.goals+FLAME.visits+FLAME.missions+FLAME.letters} points :`,
   [`toutes les jauges tenues à ${FLAME.gaugeMin} ou plus toute la journée : +${FLAME.gauges} ;`,
@@ -76,8 +76,21 @@ export const HELP=[
   ["Le classement en direct : score, niveau, série record, survie. Touche un élu pour ouvrir sa fiche et le défier.",
    "Le fil de la République raconte les évolutions, les morts politiques, les beaux scores et les duels de chacun.",
    "Le chat, quand l'organisateur l'ouvre : un salon pour tous et un pour ton camp. Signale un message déplacé d'un geste ; tout s'efface au bout de 7 jours.",
-   "Les notifications (Dossier → Compte) te préviennent d'un défi, d'un résultat ou d'un rapport de mission, même le jeu fermé. Sur iPhone, ajoute d'abord PolitiGo à l'écran d'accueil."]]}
+   "Les notifications (Dossier → Compte) te préviennent d'un défi, d'un résultat ou d'un rapport de mission, même le jeu fermé. Sur iPhone, ajoute d'abord PolitiGo à l'écran d'accueil."]]},
+ {id:"regle",title:"La règle du jeu",parts:[
+  "PolitiGo se joue à la main : pas de script, pas de robot, pas de second compte. Les robots ne votent pas.",
+  "L'organisation voit l'activité de chaque compte. Si quelque chose cloche, elle en parle d'abord avec toi."]}
 ];
 export const helpOf=id=>HELP.find(h=>h.id===id)||null;
+// The sign-up form's own checks, before anything is sent: what is missing, said precisely ("" when all is well).
+// The server checks again (and the characters of the name): this only spares a round trip and a vague answer.
+export function signupProblem({name,password,invite}={}){
+ const n=typeof name==="string"?name.trim().replace(/\s+/g," "):"",len=[...n].length;
+ if(!n)return "Choisis un pseudo.";
+ if(len<3||len>20)return "Pseudo : 3 à 20 caractères (lettres, chiffres, espace, . _ -).";
+ if(typeof password!=="string"||password.length<8)return "Mot de passe : 8 caractères minimum.";
+ if(typeof invite!=="string"||!invite.trim())return "Entre le code d'invitation donné par l'organisateur.";
+ return "";
+}
 // The section a sheet's « ? » opens.
 export const SHEET_HELP={food:"jauges",care:"jauges",play:"jeux",duels:"duels",more:"demarrer",wardrobe:"tombola",urn:"tombola",player:"social",chat:"social"};

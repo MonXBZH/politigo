@@ -98,19 +98,23 @@ test("Soldes: the price falls, never to nothing, and a free item stays free",()=
  const T=game("left",10),big=R.shop.filter(i=>i.price>=2).at(-1);T.fm=R.itemPrice(big,fx);assert.notEqual(R.itemBlock(T,big),"");assert.ok(!/Il manque/.test(R.itemBlock(T,big,fx)));
 });
 
-test("Sac postal: the next letter comes within the event's gap",()=>{
- const S=game("left",10);S.mail.letter=null;S.mail.next=at(11);
+test("Sac postal: a letter every few minutes on top of the calendar, answered or not, into the box of 3",()=>{
+ const S=game("left",10);S.mail.letter=null;S.mail.queue=[];S.mail.k=A.MAIL.slots;   // the calendar is done for the day
  const fx=E.effectsOf([ev("courrier",{gap:10})],"left",1);
- R.advance(S,at(10.1),1,never,()=>fx);assert.equal(S.mail.next,at(10.1)+10*60000);assert.equal(S.mail.letter,null);
- R.advance(S,at(10.1)+10*60000,1,never,()=>fx);assert.ok(S.mail.letter,"it came");
- const r=play(S,{type:"mailAnswer",id:S.mail.letter.id,choice:0},10.3,()=>fx);assert.ok(r.ok);assert.equal(S.mail.next,at(10.3)+10*60000);
+ R.advance(S,at(10.1),1,never,()=>fx);assert.ok(S.mail.letter,"one as the event starts");assert.equal(S.mail.next,at(10.1)+10*60000);
+ R.advance(S,at(10.1)+5*60000,1,never,()=>fx);assert.equal(A.lettersWaiting(S),1);
+ R.advance(S,at(10.1)+10*60000,1,never,()=>fx);assert.equal(A.lettersWaiting(S),2,"not answered, it comes anyway");
+ R.advance(S,at(10.1)+20*60000,1,never,()=>fx);R.advance(S,at(10.1)+30*60000,1,never,()=>fx);assert.equal(A.lettersWaiting(S),3,"the box holds 3");
+ R.advance(S,at(11),1,never);assert.equal(A.lettersWaiting(S),3,"after the event, the calendar only");
 });
 
-test("Sac postal: no more bulletins past the day's usual letters",()=>{
+test("Sac postal: the mail's bulletins capped at 6 a day instead of 2",()=>{
  const S=game("left",10),fx=E.effectsOf([ev("courrier",{gap:10})],"left",1),b0=S.wardrobe.bulletins;S.goals.list=[];
- const answer=n=>{S.mail.n=n;S.mail.day=20260105;S.mail.letter={id:"l_velo",t:S.vclock};return play(S,{type:"mailAnswer",id:"l_velo",choice:0},10,()=>fx).bulletin;};
- assert.equal(answer(23),true,"the 24th");assert.equal(answer(26),false,"the 27th");assert.equal(S.wardrobe.bulletins,b0+1);
- S.mail.n=26;S.mail.letter={id:"l_velo",t:S.vclock};assert.equal(play(S,{type:"mailAnswer",id:"l_velo",choice:0},10).bulletin,true,"outside the event, as usual");
+ const answer=(n,f)=>{S.mail.n=n;S.mail.day=20260105;S.mail.letter={id:"l_velo",t:S.vclock};return play(S,{type:"mailAnswer",id:"l_velo",choice:0},10,()=>f).bulletin;};
+ assert.equal(A.mailBulletinsLeft(S,fx),6);assert.equal(A.mailBulletinsLeft(S),2);
+ for(let k=1;k<=7;k++)assert.equal(answer(3*k-1,fx),k<=6,`the ${3*k}th letter`);
+ assert.equal(S.wardrobe.bulletins,b0+6);assert.equal(A.mailBulletinsLeft(S,fx),0);
+ S.mail.b=1;assert.equal(answer(2,E.NO_FX),true,"outside the event, the usual cap");assert.equal(answer(5,E.NO_FX),false);
 });
 
 test("Nuit des duels: a win pays more, a loss the same",()=>{

@@ -159,8 +159,9 @@ test("A5: the Bâton's global limit answers 429 past 20 requests a second",async
 test("A2: a forwarded address that is not an IP is ignored: the bucket is the connection's, and short",async()=>{
  const reg=(name,xff)=>fetch(`http://127.0.0.1:${PORT}/api/register`,{method:"POST",headers:{"Content-Type":"application/json","X-Forwarded-For":xff},
   body:JSON.stringify({name,password:PW,invite:INVITE,camp:"left"})}).then(r=>r.status);
- const st=[];for(let i=0;i<4;i++)st.push(await reg(`Faussaire ${"abcd"[i]}`,"z".repeat(6000)+i));
- assert.deepEqual(st,[201,201,201,429],"four forged addresses are one connection: the fourth sign-up is refused");
+ // 1.7.1: four successful sign-ups per address and hour (it was three).
+ const st=[];for(let i=0;i<5;i++)st.push(await reg(`Faussaire ${"abcdefg"[i]}`,"z".repeat(6000)+i));
+ assert.deepEqual(st,[201,201,201,201,429],"five forged addresses are one connection: the fifth sign-up is refused");
  // A real address still names its own bucket.
  assert.equal(await reg("Honnete Ip","10.66.0.1"),201);
 });
