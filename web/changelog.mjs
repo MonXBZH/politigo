@@ -5,6 +5,36 @@
 import {cmpRelease} from "./rules.mjs";
 
 export const CHANGELOG=[
+ {version:"1.7.1",date:"2026-11-08",help:["activites","regle"],
+  added:[
+   "La règle du jeu, dans l'aide et à l'inscription : PolitiGo se joue à la main, sans script, sans robot ni second compte. Les robots ne votent pas."
+  ],
+  changed:[
+   "Le courrier devient une boîte aux lettres : une lettre arrive environ toutes les 45 minutes de 7 h à 23 h, que tu aies répondu ou non, et jusqu'à 3 t'attendent. Le courrier rapporte 2 bulletins par jour au plus, les jauges toujours.",
+   "L'inscription ne bloque plus après quelques fautes de frappe : le formulaire signale le champ à corriger, et seuls les codes d'invitation faux comptent dans la limite."
+  ],
+  fixed:[
+   "Un pseudo très long n'élargit plus la page : le fil, les classements, les duels et le chat restent dans l'écran, même sur un petit téléphone.",
+   "Le nom n'apparaît plus deux fois sur les lignes de duel du fil.",
+   "Après un rechargement en plein duel, le temps affiché est le temps qui reste vraiment.",
+   "Quand un compte est supprimé, ses adversaires sont prévenus de l'annulation des duels en cours, et leurs défis et victoires du jour restent comptés.",
+   "La fin d'une suspension n'est plus présentée comme une maintenance du serveur.",
+   "Le bandeau du Tirage du peuple parle de l'urne de ton camp, à gauche comme à droite."
+  ],
+  admin:[
+   "Supprimer un joueur depuis sa fiche : un droit à part, que l'organisation peut déléguer aux modérateurs.",
+   "Protéger un compte : aucun modérateur ne peut plus agir dessus.",
+   "Une alerte et une liste pour les comptes qui semblent abandonnés : 3 morts d'affilée sans jouer et 5 jours sans connexion. Rien n'est supprimé tout seul.",
+   "Les annonces se préparent dans l'événement : texte modifiable avec un modèle préfait et un aperçu, et rappels 15 minutes, 1 heure ou 1 jour avant, cumulables.",
+   "Des sauvegardes automatiques quotidiennes, hebdomadaires et mensuelles, réglables dans le panneau Sauvegarde, avec téléchargement, suppression et alerte en cas d'échec.",
+   "La fiche et la liste des joueurs montrent la dernière visite de chacun (« Vu »).",
+   "Un modérateur ne peut plus agir sur le compte d'un autre modérateur, ni lancer un événement sans le droit de lancer, et ses actions sont limitées à 30 par minute.",
+   "Le journal regroupe les actions répétées (×N) et garde à part les actions sensibles, qu'une rafale ne peut plus effacer ; la gestion des modérateurs y apparaît aussi.",
+   "Chaque compte de la console a ses propres sessions : un modérateur ne peut plus déconnecter l'organisation en se connectant trop souvent.",
+   "Les séries d'événements gardent leur heure, même après « Lancer maintenant » ou un changement d'heure.",
+   "Le rapport d'activité de la console est plus juste, avec moins de fausses alertes pour les joueurs très actifs."
+  ]
+ },
  {version:"1.7.0",date:"2026-11-06",help:["events"],
   added:[
    "Les événements : pendant quelques heures, l'organisation peut doubler l'XP, lever la limite de missions, raccourcir les missions, faire pleuvoir les bulletins, offrir des tirages, solder la Buvette, multiplier le courrier, lancer une nuit des duels ou protéger tout le monde d'une mort politique. Un bandeau en haut de l'écran annonce ce qui est en cours et le temps restant.",

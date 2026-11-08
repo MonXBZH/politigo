@@ -7,7 +7,7 @@
   <img alt="Node 24" src="https://img.shields.io/badge/node-24%20LTS-5fa04e">
   <img alt="Aucune dépendance" src="https://img.shields.io/badge/d%C3%A9pendances-0-success">
   <img alt="Docker" src="https://img.shields.io/badge/docker-compose%20%7C%20Portainer-2496ed">
-  <img alt="443 tests" src="https://img.shields.io/badge/tests-443-brightgreen">
+  <img alt="557 tests" src="https://img.shields.io/badge/tests-557-brightgreen">
   <img alt="Satire" src="https://img.shields.io/badge/genre-satire-ff9db0">
 </p>
 
@@ -140,8 +140,8 @@ la Tombola. Les missions donnent aussi un peu d'**XP**.
   Mêmes effets dans les deux camps, mais pas le même agenda : *Tractage au marché* ou *Serrage de mains au marché*,
   *Retraite en gîte coopératif* ou *Thalasso à La Baule*, *Nuit debout* ou *Soirée au Fouquet's*… La mission risquée se
   joue à pile ou face au moment du rapport. Une notification prévient quand le rapport t'attend.
-- ✉️ **Le courrier des électeurs** : une lettre toutes les 30 à 60 minutes, de 7 h à minuit, avec deux ou trois réponses
-  possibles, chacune avec ses effets.
+- ✉️ **Le courrier des électeurs** : une lettre environ toutes les 45 minutes, de 7 h à 23 h, qu'on ait répondu ou non
+  (3 au plus attendent dans la boîte), avec deux ou trois réponses possibles, chacune avec ses effets.
 - 🎯 **Objectifs du jour** : trois défis tirés chaque matin (« Militant modèle », « Agenda de ministre »…), récompensés
   en jauges.
 <p align="center">
@@ -159,7 +159,7 @@ dans la main. **Purement cosmétique** : aucun effet sur le jeu, et **jamais d'a
 
 - 🎟️ **Un tirage gratuit par jour**, puis un **bulletin** par tirage. Les bulletins se gagnent seulement en jouant :
   de 1 à 3 par mission selon sa durée (6 par jour au plus), un par objectif du jour atteint, un toutes les trois lettres
-  répondues.
+  répondues (2 par jour au plus pour le courrier).
 - 🌈 **Cinq raretés** : commun (60 %), rare (28 %), épique (9,5 %), légendaire (2 %) et ultra rare (0,5 %). Un tirage
   garanti épique au 10ᵉ sans en voir, légendaire au 50ᵉ, ultra rare au 80ᵉ.
 - 🎊 **Les doublons deviennent des confettis**. Ils s'échangent contre la case de ton choix : 100 pour une commune, 200 pour une rare, 300 pour une épique.
@@ -198,10 +198,10 @@ dans la main. **Purement cosmétique** : aucun effet sur le jeu, et **jamais d'a
 ### Pour l'organisateur
 
 Une **interface d'administration** facultative, dans son propre conteneur, pour le réseau local : tableau de bord, fiches
-des joueurs (mot de passe, déblocage, renommage, suspension), **annonces** immédiates ou planifiées (à tous, à un camp, à un
+des joueurs (mot de passe, déblocage, renommage, suspension, suppression, protection), **annonces** immédiates ou planifiées (à tous, à un camp, à un
 joueur), ouverture et modération du chat (avec le fil de tous les salons en direct), modération du fil, duels, code d'invitation en un clic,
-inscriptions et événements à chaud, sauvegarde, **détection de bots**, journal des actions. Les cas à traiter (signalements,
-duels suspects, comptes louches, événements rares) remontent en direct dans « À traiter », avec un son et une notification
+inscriptions et événements à chaud, sauvegardes automatiques, **détection de bots**, journal des actions. Les cas à traiter (signalements,
+duels suspects, comptes louches, comptes abandonnés, événements rares) remontent en direct dans « À traiter », avec un son et une notification
 système. L'organisateur peut nommer des **modérateurs** parmi les joueurs, avec des droits choisis un par un. La fiche d'un
 joueur montre aussi sa Flamme, ses bulletins et sa Garde-robe. Elle gère plusieurs parties sur le même serveur.
 

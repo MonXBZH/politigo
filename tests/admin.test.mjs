@@ -107,7 +107,7 @@ test("the CLI lists registered players and the raw reply never carries password 
   const j=JSON.parse(raw.trim());
   assert.equal(j.ok,true);assert.deepEqual(j.players.map(p=>p.name).sort(),["Alice","Bob"]);
   // 1.5.0 widened the rows for the admin interface; still nothing secret in them.
-  for(const p of j.players){assert.ok("created" in p&&"updated" in p);assert.deepEqual(Object.keys(p).sort(),["camp","chatMutedUntil","created","id","lvl","name","online","suspended","updated"]);}
+  for(const p of j.players){assert.ok("created" in p&&"updated" in p);assert.deepEqual(Object.keys(p).sort(),["camp","chatMutedUntil","created","id","lastSeen","lvl","name","online","suspended","updated"]);}
  }finally{await stop(S.p);}
 });
 

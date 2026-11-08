@@ -14,7 +14,7 @@ const SERVER=process.env.ADMIN_SERVER||"/w/admin/server.mjs";
 let api1,api2,adm,dir1,dir2,S1,S2;
 
 function startAdmin(port,extra){
- const env={...process.env,PORT:String(port),ADMIN_DATA:mkdtempSync(join(tmpdir(),"pgad-")),...extra};
+ const env={...process.env,PORT:String(port),ADMIN_DATA:mkdtempSync(join(tmpdir(),"pgad-")),ADMIN_BACKUP_TICK_MS:"0",...extra};
  for(const k of Object.keys(env))if(env[k]===undefined)delete env[k];
  const p=spawn("node",[SERVER],{env,stdio:["ignore","pipe","pipe"]});
  p.out="";p.err="";p.stderr.on("data",d=>{p.err+=d;});p.dataDir=env.ADMIN_DATA;
@@ -248,6 +248,8 @@ test("the Modo événements profile: the events, signed with their name, and not
  const s=Date.now()+36e5,ev={type:"soldes",name:"Soldes du modo",msg:"Moitié prix.",params:{off:50},starts:s,ends:s+36e5,who:"all",rep:""};
  const r=await m.call("prod","event-save",ev);assert.equal(r.status,200,JSON.stringify(r.json));assert.equal(r.json.event.by,"Modo Fete");
  assert.equal((await m.call("prod","events-list")).status,200);
+ const texts=await m.call("prod","event-save",{...ev,ann:"Le {nom}",rtext:"Dans {delai}",reminds:[60,15]});assert.equal(texts.status,200,JSON.stringify(texts.json));assert.deepEqual([texts.json.event.ann,texts.json.event.rtext,texts.json.event.reminds],["Le {nom}","Dans {delai}",[60,15]],"the console lets the texts and the reminders through");
+ const seen=await m.call("prod","event-preview",{...ev,ann:"Le {nom}"});assert.equal(seen.status,200,JSON.stringify(seen.json));assert.equal(seen.json.ann,"Le Soldes du modo");
  assert.equal((await m.call("prod","event-start",{id:r.json.event.id})).status,200);
  assert.equal((await m.call("prod","event-stop",{id:r.json.event.id})).status,200);
  assert.equal((await m.call("prod","bots")).status,403);assert.equal((await m.call("prod","player",{name:"Modo Fete"})).status,403);
@@ -259,7 +261,40 @@ test("the Modo événements profile: the events, signed with their name, and not
  // Without the action, the panel shows but nothing moves.
  const made2=await b.req("/api/mods/save",{id:made.json.mod.id,panels:["events"],actions:[]});assert.equal(made2.status,200);
  const m2=browser();assert.equal((await m2.req("/api/login",{name:"Modo Fete",password:made.json.password})).status,200);
- assert.equal((await m2.call("prod","events-list")).status,200);assert.equal((await m2.call("prod","event-save",ev)).status,403);
+ assert.equal((await m2.call("prod","events-list")).status,200);assert.equal((await m2.call("prod","event-save",ev)).status,403);assert.equal((await m2.call("prod","event-preview",ev)).status,403);
+});
+
+test("deleting a player: a right of its own, in no profile; moderators' accounts and protected ones are out of reach",async()=>{
+ const b=browser();await b.login();
+ const cat=(await b.req("/api/mods")).json;
+ assert.ok(cat.actions.some(x=>x[0]==="player-delete"||x.id==="player-delete"));
+ for(const p of cat.presets)assert.ok(!p.actions.includes("player-delete"),p.id);
+ for(const n of ["Modo Sup","Modo Deux","Cible Un","Cible Deux","Le Proprio"])await player(API1,n);
+ const idOf=async n=>(await b.call("prod","list")).json.players.find(p=>p.name===n).id;
+ const sup=await idOf("Modo Sup"),two=await idOf("Modo Deux"),one=await idOf("Cible Un"),own=await idOf("Le Proprio");
+ const made=await b.req("/api/mods/save",{server:"prod",player:sup,panels:["joueurs"],actions:["reset-password"],servers:[]});assert.equal(made.status,200,JSON.stringify(made.json));
+ assert.equal((await b.req("/api/mods/save",{server:"prod",player:two,panels:["joueurs"],actions:[],servers:[]})).status,200);
+ const m=browser();assert.equal((await m.req("/api/login",{name:"Modo Sup",password:made.json.password})).status,200);
+ assert.equal((await m.call("prod","player-delete",{id:one,confirm:"Cible Un"})).status,403,"not without the right");
+ assert.equal((await b.req("/api/mods/save",{id:made.json.mod.id,panels:["joueurs"],actions:["reset-password","player-delete"]})).status,200);
+ const m2=browser();assert.equal((await m2.req("/api/login",{name:"Modo Sup",password:made.json.password})).status,200);
+ assert.match((await m2.call("prod","player-delete",{id:two,confirm:"Modo Deux",mods:[]})).json.error,/modérateur/,"another moderator, whatever the page sends");
+ assert.equal((await b.call("prod","player",{id:two})).json.player.isMod,true);assert.equal((await b.call("prod","player",{id:one})).json.player.isMod,false);
+ // The owner's protection: theirs alone, and it holds against the password route.
+ assert.equal((await m2.call("prod","player-protect",{id:own,on:true})).status,403);
+ assert.equal((await b.call("prod","player-protect",{id:own,on:true})).status,200);
+ assert.match((await m2.req("/api/s/prod/reset-password",{id:own})).json.error,/protégé/);
+ assert.match((await m2.call("prod","player-delete",{id:own,confirm:"Le Proprio"})).json.error,/protégé/);
+ assert.equal((await m2.call("prod","player-delete",{id:one,confirm:"Cible Un"})).status,200);
+ assert.equal((await m2.call("prod","abandoned-list")).status,200);
+ assert.equal((await m2.call("prod","abandoned-ignore",{id:own})).status,403,"not without alerts-ack");
+ assert.match((await b.call("prod","player-delete",{id:own,confirm:"Le Proprio"})).json.error,/retire/,"the owner lifts it first");
+ const refused=await b.call("prod","player-delete",{id:two,confirm:"Modo Deux"});
+ assert.equal(refused.status,409,"not even the owner, while that account is a moderator's");assert.match(refused.json.error,/retire-le d'abord des modérateurs/);
+ assert.equal((await b.call("prod","player-delete",{name:"Modo Deux",confirm:"Modo Deux"})).status,409,"by name too");
+ const modTwo=(await b.req("/api/mods")).json.mods.find(x=>x.name==="Modo Deux");
+ assert.equal((await b.req("/api/mods/delete",{id:modTwo.id})).status,200);
+ assert.equal((await b.call("prod","player-delete",{id:two,confirm:"Modo Deux"})).status,200,"the moderator removed first, the owner can");
 });
 
 test("health: 200 while one server answers, with each server's state; 503 when none does",async()=>{
