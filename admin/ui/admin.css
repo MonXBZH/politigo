@@ -38,7 +38,7 @@ input[type=text],input[type=password],input[type=search],input[type=number],inpu
 select option{background:var(--bg1)}
 textarea{resize:vertical;min-height:84px}
 input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:1px}
-label{display:block;font-weight:600;font-size:13px;color:var(--muted);margin:10px 0 4px}
+label,.lbl{display:block;font-weight:600;font-size:13px;color:var(--muted);margin:10px 0 4px}
 .check{display:inline-flex;align-items:center;gap:6px;margin:4px 10px 4px 0;color:var(--ink);font-weight:500;font-size:14px}
 .check input{width:18px;height:18px;accent-color:var(--accent)}
 .field-row{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
@@ -156,6 +156,11 @@ img.reported{display:block;max-width:min(100%,320px);max-height:320px;border-rad
 .srv-card .invite{margin:4px 0 10px}
 
 .notice{border-color:#ffd59a77;background:#ffd59a14}
+/* listening asked but closed, list of parties unreadable */
+.notice.bad{border-color:#ff6b7a88;background:#ff6b7a14}
+/* the backups of removed parties, under their own heading */
+h2.section{margin:22px 0 4px;font-size:16px}
+.card.removed{border-style:dashed}
 
 .flags{display:inline-flex;flex-wrap:wrap;gap:4px}
 .bars.histo{height:28px;width:120px;grid-template-columns:none;grid-auto-flow:column;grid-auto-columns:1fr;margin-top:4px}
@@ -204,3 +209,37 @@ select.inline{width:auto;min-width:0;padding:6px 10px;margin:0}
 .check{display:flex;align-items:center;gap:8px;margin-top:8px}
 .check input{width:auto;min-height:0}
 .btn-row input.bk-keep{width:84px;flex:none;margin:0}
+
+/* Parties: one card per linked game, the listening block, the env lines shown once */
+.btn-row.tight{margin-top:0}
+.badges{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
+.grid.wide.parties{grid-template-columns:repeat(auto-fill,minmax(340px,1fr))}
+.party h2{display:flex;align-items:center;gap:8px;min-width:0}
+.party h2 .pname{min-width:0;overflow-wrap:anywhere}
+.party.down{border-color:#ff6b7a88}
+.party.wait{border-style:dashed}
+.party.focus{border-color:var(--accent-2);box-shadow:0 0 0 2px #ffd59a44}
+.party .alias{margin:-4px 0 8px;overflow-wrap:anywhere}
+.party .acts,.top-gap{margin-top:10px}
+.hint{margin:10px 0 0;padding:8px 10px;border-left:3px solid var(--line);font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+.hint.bad{border-left-color:var(--danger);color:#ffd4d9}
+.hint.warn{border-left-color:var(--accent-2)}
+.hint b{color:var(--ink)}
+details.help{margin-top:10px;font-size:13px}
+details.help summary{cursor:pointer;font-weight:600;color:var(--accent-2)}
+details.help ul{margin:6px 0 0;padding-left:18px;color:var(--muted)}
+details.help li{margin:4px 0;overflow-wrap:anywhere}
+.env{display:grid;gap:6px;margin:8px 0;min-width:0}
+.envline{display:flex;gap:8px;align-items:center;padding:6px 6px 6px 10px;border-radius:12px;background:#0006;border:1px solid var(--line);min-width:0}
+.envline code{flex:1;min-width:0;background:none;padding:0;overflow-wrap:anywhere;word-break:break-all;font-size:13px;user-select:all}
+.envline.hl{border-color:var(--accent-2)}
+.envline.hole{border:2px dashed var(--accent-2);background:#ffd59a1f}
+.envline.hole code{color:var(--accent-2);font-weight:700}
+.envline .btn{flex:none}
+.steps{margin:8px 0 0;padding-left:20px;font-size:14px}
+.steps li{margin:3px 0}
+.fp{display:flex;flex-wrap:wrap;gap:8px;align-items:center;min-width:0}
+.fp code{overflow-wrap:anywhere;word-break:break-all;min-width:0}
+.accent{color:var(--accent-2)}
+.dlg.wide{width:min(92vw,560px)}
+@media(max-width:520px){.grid.wide.parties{grid-template-columns:minmax(0,1fr)}.envline code{font-size:12px}}

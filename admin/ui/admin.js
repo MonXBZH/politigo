@@ -13,8 +13,14 @@ function h(tag,props,...kids){
   else e.setAttribute(k,v===true?"":String(v));
  }
  for(const c of kids.flat(Infinity))if(c!=null&&c!==false)e.append(c instanceof Node?c:String(c));
+ // A form field always has an id (browsers flag one without id or name; a <label for> needs it anyway).
+ if(/^(INPUT|SELECT|TEXTAREA)$/.test(e.tagName)&&!e.id&&!e.name)e.id=`f-${++fieldSeq}`;
  return e;
 }
+let fieldSeq=0;
+// <label for> a field (made by h(), so it has an id); a group of boxes gets a plain heading (.lbl) instead.
+const lab=(text,field)=>h("label",{for:field.id},text);
+const lbl=text=>h("span",{class:"lbl"},text);
 const CAMP={left:"Gauche",right:"Droite"};
 const fmt=t=>t?new Date(t).toLocaleString("fr-FR",{dateStyle:"short",timeStyle:"short"}):"—";
 const fmtDay=t=>t?new Date(t).toLocaleDateString("fr-FR"):"—";
@@ -22,6 +28,8 @@ function ago(t){
  if(!t)return "jamais";const s=Math.max(0,(Date.now()-t)/1000);
  return s<60?"à l'instant":s<3600?`il y a ${Math.floor(s/60)} min`:s<86400?`il y a ${Math.floor(s/3600)} h`:`il y a ${Math.floor(s/86400)} j`;
 }
+// Versions in one format everywhere: "1.7.3" (a release, or the x.y.z of "v1.7.3-3-gabc1234"), never a "v".
+const ver=v=>{if(v==null||v==="")return null;const t=String(v),m=/^v?(\d+\.\d+\.\d+)/.exec(t);return m?m[1]:t.replace(/^v(?=\d)/,"");};
 const pct=x=>x==null?"—":`${Math.round(x*100)} %`;
 const bytes=n=>n==null?"—":n<1024?`${n} o`:n<1048576?`${(n/1024).toFixed(1)} Ko`:n<1073741824?`${(n/1048576).toFixed(1)} Mo`:`${(n/1073741824).toFixed(1)} Go`;
 const dur=s=>{if(s==null)return "—";s=Math.floor(s);const d=Math.floor(s/86400),hh=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return d?`${d} j ${hh} h`:hh?`${hh} h ${m} min`:`${m} min`;};
@@ -59,7 +67,7 @@ const owner=()=>me.role==="owner";
 const sees=p=>owner()||!!me.panels?.includes(p);
 const can=a=>owner()||!!me.actions?.includes(a);
 const isMe=id=>!owner()&&id!=null&&me.self?.[cur]===id;   // their own player account on this server: no action on it
-const OWNER_ONLY=new Set(["reglages","sauvegarde","modos"]);
+const OWNER_ONLY=new Set(["reglages","sauvegarde","modos","parties"]);
 
 // ===================================================================== game servers
 // Every game action goes to /api/s/<server>/...: the server is part of the URL, chosen in the top bar and remembered.
@@ -71,9 +79,14 @@ const srvName=()=>curSrv()?.name||"?";
 const multi=()=>servers.length>1;
 const sp=a=>`/api/s/${encodeURIComponent(cur)}/${a}`;
 const call=(cmd,args={})=>api(sp("call"),{cmd,...args});
+// Renewed parties (the owner's view of /api/parties): still listed, unreachable until they come back with the new token.
+let waitToken=new Set();
+const renewing=p=>p.state==="pending"&&!!p.firstSeen;
+const noteParties=list=>{waitToken=new Set(list.filter(renewing).map(p=>p.id));};
 async function loadServers(full=false){
  const r=await api("/api/servers",{full});
  servers=r.servers;
+ if(owner()&&servers.some(s=>!s.up))await partiesGet().then(x=>noteParties(x.parties||[]),()=>{});else waitToken=new Set();
  if(!servers.some(s=>s.id===cur))cur=servers.some(s=>s.id===store.get())?store.get():servers[0]?.id;
  drawSwitcher();
  return servers;
@@ -87,7 +100,8 @@ function pickServer(id){
 function drawSwitcher(){
  const box=$("#srv"),s=curSrv(),dot=x=>h("i",{class:`dot ${x?.up?"up":"down"}`,title:x?.up?"joignable":"injoignable"});
  if(!multi()){box.replaceChildren(dot(s),h("span",{class:"name"},s?.name||""));return;}
- const sel=h("select",{"aria-label":"Serveur de jeu",onchange:e=>pickServer(e.target.value)},servers.map(x=>h("option",{value:x.id,selected:x.id===cur},`${x.name}${x.up?"":" (injoignable)"}`)));
+ const sel=h("select",{"aria-label":"Partie",onchange:e=>pickServer(e.target.value)},servers.map(x=>{const v=x.up?ver(x.release||x.version):null;
+  return h("option",{value:x.id,selected:x.id===cur},`${x.name}${v?` · ${v}`:""}${x.up?"":waitToken.has(x.id)?" (injoignable, en attente du nouveau jeton)":" (injoignable)"}`);}));
  box.replaceChildren(dot(s),sel);
 }
 setInterval(()=>{if(!document.hidden&&!$("#app").hidden&&route().id!=="apercu")loadServers().catch(()=>{});},15000);
@@ -107,15 +121,19 @@ let toastT;
 function toast(msg,bad=false){const t=$("#toast");t.textContent=msg;t.classList.toggle("bad",bad);t.classList.add("show");clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove("show"),bad?6000:3500);}
 const fail=e=>{if(!(e instanceof Unauthorized))toast(e.message||String(e),true);};
 // One <dialog> for every question; resolves with the OK value (or null when cancelled / Escape).
-// Every question names the game server it acts on ("Suspendre le compte sur « Prod » ?"), so nothing hits the wrong game.
-function dialog({title,body=[],ok="Confirmer",cancel="Annuler",danger=false,value=()=>true,focus,server=true}){
+// Every question names the game (the "partie") it acts on ("Suspendre le compte sur « Prod » ?"), so nothing hits the wrong game.
+// value() may be async; undefined keeps the dialog open (a field to fix). Without a cancel button, Escape does nothing:
+// what such a dialog shows (a password, a token) is shown once and must not vanish by a stray key.
+function dialog({title,body=[],ok="Confirmer",cancel="Annuler",danger=false,value=()=>true,focus,server=true,wide=false}){
  const d=$("#dlg"),okB=$("#dlg-ok"),noB=$("#dlg-cancel"),name=srvName();
  $("#dlg-title").textContent=!server?title:/ \?$/.test(title)?title.replace(/ \?$/,` sur « ${name} » ?`):`${title} · « ${name} »`;
- $("#dlg-body").replaceChildren(server?h("span",{class:"srv-tag dlg-srv"},`Serveur : ${name}`):"",...[body].flat().map(b=>typeof b==="string"?h("p",{},b):b));
- okB.textContent=ok;okB.className=`btn ${danger?"danger":"go"}`;noB.textContent=cancel;noB.hidden=cancel===null;
+ $("#dlg-body").replaceChildren(server?h("span",{class:"srv-tag dlg-srv"},`Partie : ${name}`):"",...[body].flat().filter(b=>b!=null&&b!==false).map(b=>typeof b==="string"?h("p",{},b):b));
+ okB.textContent=ok;okB.className=`btn ${danger?"danger":"go"}`;noB.textContent=cancel;noB.hidden=cancel===null;d.classList.toggle("wide",!!wide);
  return new Promise(res=>{
-  const done=v=>{okB.onclick=noB.onclick=d.oncancel=null;d.close();res(v);};
-  okB.onclick=()=>done(value());noB.onclick=()=>done(null);d.oncancel=e=>{e.preventDefault();done(null);};
+  let busy=false;
+  const done=v=>{okB.onclick=noB.onclick=d.oncancel=null;okB.disabled=noB.disabled=false;d.close();res(v);};
+  okB.onclick=async()=>{if(busy)return;busy=true;okB.disabled=noB.disabled=true;let v;try{v=await value();}finally{busy=false;okB.disabled=noB.disabled=false;}if(v!==undefined)done(v);};
+  noB.onclick=()=>{if(!busy)done(null);};d.oncancel=e=>{e.preventDefault();if(!busy&&cancel!==null)done(null);};
   d.showModal();(focus||(danger?noB:okB)).focus();
  });
 }
@@ -123,7 +141,7 @@ const confirmBox=(title,text,ok="Confirmer",danger=true)=>dialog({title,body:tex
 async function promptBox(title,label,init=""){
  const inp=h("input",{type:"text",value:init,maxLength:200});
  inp.addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();$("#dlg-ok").click();}});
- const v=await dialog({title,body:[h("label",{},label),inp],ok:"Valider",value:()=>inp.value.trim(),focus:inp});
+ const v=await dialog({title,body:[lab(label,inp),inp],ok:"Valider",value:()=>inp.value.trim(),focus:inp});
  return v||null;
 }
 async function copy(text,inp){if(await copyText(text))toast("Copié !");else{inp?.select();toast("Copie impossible : sélectionne le texte.",true);}}
@@ -165,10 +183,11 @@ const SECTIONS=[
  ["apercu","Vue d'ensemble",viewOverview],["tableau","Tableau de bord",viewDashboard],["traiter","À traiter",viewAlerts],["joueurs","Joueurs",viewPlayers],["annonces","Annonces",viewAnnounces],["events","Events",viewEvents],
  ["chat","Chat",viewChat],["fil","Fil",viewFeed],["duels","Duels",viewDuels],["reglages","Réglages",viewSettings],
  ["sauvegarde","Sauvegarde",viewBackup],["bots","Détection de bots",viewBots],["journal","Journal d'admin",viewAudit],["modos","Modérateurs",viewMods],
+ ["parties","Parties",viewParties],
 ];
 // With a single server the overview is skipped altogether; a moderator only gets their panels.
 const sections=()=>SECTIONS.filter(([k])=>k==="apercu"?multi():OWNER_ONLY.has(k)?owner():sees(k));
-const route=()=>{const [s,...rest]=location.hash.slice(1).split("/"),list=sections();return {id:list.some(x=>x[0]===s)?s:list[0]?.[0]??"apercu",arg:rest.join("/")};};
+const route=()=>{const [s,...rest]=location.hash.slice(1).split("/"),list=sections(),ok=list.some(x=>x[0]===s);return {id:ok?s:list[0]?.[0]??"apercu",arg:ok?rest.join("/"):""};};
 function buildNav(){
  const {id}=route();
  $("#nav").replaceChildren(...sections().map(([k,label])=>h("a",{href:`#${k}`,"aria-current":k===id?"page":null},label)));
@@ -178,6 +197,8 @@ let refreshT=null,renderSeq=0;
 const stopRefresh=()=>{clearInterval(refreshT);refreshT=null;};
 async function render(){
  const {id,arg}=route(),seq=++renderSeq,view=$("#view");stopRefresh();
+ // A section that is not theirs (#parties for a moderator, an old link): the address follows the panel shown.
+ if(location.hash.slice(1).split("/")[0]!==id)history.replaceState(null,"",`#${id}`);
  for(const a of $("#nav").children){if(a.getAttribute("href")===`#${id}`)a.setAttribute("aria-current","page");else a.removeAttribute("aria-current");}
  const fn=sections().find(x=>x[0]===id)?.[2]??(()=>h("div",{class:"card"},empty("Aucun panneau ne t'est ouvert : demande à l'organisateur.")));
  try{
@@ -195,8 +216,13 @@ document.addEventListener("visibilitychange",()=>{if(!document.hidden&&route().i
 // Polled every 20 s on every server, the page hidden or not: the count heads the menu and the tab's title, a new item
 // chimes (sound on) and, the console in the background, shows a system notification (HTTPS or localhost only: browsers
 // refuse it on plain http). "Vu" files an item away on its game server, for every console.
-const ALERT_MS=20000,KIND={chat:"Chat",duel:"Duel",bot:"Bot",suspect:"Comptes",mythic:"Mythique",baton:"Duel du Bâton",abandoned:"Abandon",backup:"Sauvegarde"},BASE_TITLE=document.title,SOUND_KEY="politigo-admin-sound";
-const alertLink=a=>a.kind==="chat"?"#chat":a.kind==="suspect"?"#duels":a.kind==="abandoned"?"#joueurs/abandonnes":a.kind==="backup"?"#sauvegarde":`#joueurs/${a.ref}`;
+const ALERT_MS=20000,KIND={chat:"Chat",duel:"Duel",bot:"Bot",suspect:"Comptes",mythic:"Mythique",baton:"Duel du Bâton",abandoned:"Abandon",backup:"Sauvegarde",link:"Liaison"},BASE_TITLE=document.title,SOUND_KEY="politigo-admin-sound";
+// A "Liaison" alert, the owner's alone: a party's token tried by another machine (key link:<party id>:<instance>), the
+// link certificate made anew (link-cert:<short fingerprint>) or the list of parties unreadable: all open #parties.
+const linkAlert=a=>a.kind==="link"||String(a.key||"").startsWith("link:")||String(a.key||"").startsWith("link-");
+const linkCertAlert=a=>String(a.key||"").startsWith("link-cert:");
+const linkParty=a=>{const k=String(a.key||"");return k.startsWith("link:")?k.split(":")[1]||"":"";};
+const alertLink=a=>linkAlert(a)?`#parties/${linkParty(a)}`.replace(/\/$/,""):a.kind==="chat"?"#chat":a.kind==="suspect"?"#duels":a.kind==="abandoned"?"#joueurs/abandonnes":a.kind==="backup"?"#sauvegarde":`#joueurs/${a.ref}`;
 let alerts=new Map(),alertsKnown=null,alertsT=null,audio=null;   // server id -> {items,acked,error}; "server|key" seen so far (null: first poll)
 const soundOn=()=>{try{return localStorage.getItem(SOUND_KEY)!=="off";}catch{return true;}};
 const notifiable=()=>window.isSecureContext&&"Notification" in window;
@@ -236,6 +262,15 @@ function announceAlerts(fresh){
  }
  toast(`À traiter${where} : ${a.title}${more}`);
 }
+// What an alert says; a "Liaison" one also quotes the start of the instance that tried the token (its key's third part)
+// when the text does not, and a regenerated certificate keeps its meaning even with an older server's empty text.
+const alertTitle=a=>a.title||(linkCertAlert(a)?"Certificat de liaison régénéré":"");
+function alertDetail(a){
+ if(linkCertAlert(a))return a.detail||"Certificat de liaison régénéré : chaque partie doit recevoir la nouvelle empreinte (POLITIGO_ADMIN_TLS), page Parties.";
+ const k=String(a.key||"");if(!k.startsWith("link:"))return a.detail||null;
+ const inst=k.split(":").slice(2).join(":"),d=a.detail||"";
+ return inst&&!d.includes(inst.slice(0,8))?`${d}${d?" ":""}Instance : ${inst.slice(0,8)}…`:d||null;
+}
 function startAlerts(){stopAlerts();pollAlerts().catch(()=>{});alertsT=setInterval(()=>pollAlerts().catch(()=>{}),ALERT_MS);}
 function stopAlerts(){clearInterval(alertsT);alertsT=null;alerts=new Map();alertsKnown=null;drawAlertCount();}
 async function viewAlerts(){
@@ -253,20 +288,20 @@ async function viewAlerts(){
    h("div",{class:"btn-row"},h("h2",{},multi()?s.name:"Alertes"),items.filter(a=>!a.noAck).length>1&&can("alerts-ack")?h("button",{class:"btn small",type:"button",onclick:e=>ack(s.id,items.filter(a=>!a.noAck).map(a=>a.key),e.currentTarget)},"Tout marquer comme vu"):null),
    st.error?h("p",{class:"err"},st.error):null,
    items.length?h("div",{class:"list"},items.map(a=>h("div",{class:"alert-item"},
-    h("div",{class:"btn-row"},h("span",{class:`badge ${a.kind==="chat"?"warn":a.kind==="mythic"||a.kind==="baton"?"mythic":"bad"}`},KIND[a.kind]||a.kind),h("b",{},a.title),a.t?h("span",{class:"muted small"},fmt(a.t)):null),
-    a.detail?h("p",{class:"wrap muted small"},a.detail):null,
+    h("div",{class:"btn-row"},h("span",{class:`badge ${a.kind==="chat"?"warn":a.kind==="mythic"||a.kind==="baton"?"mythic":"bad"}`},linkAlert(a)?"Liaison":KIND[a.kind]||a.kind),h("b",{},alertTitle(a)),a.t?h("span",{class:"muted small"},fmt(a.t)):null),
+    alertDetail(a)?h("p",{class:"wrap muted small"},alertDetail(a)):null,
     h("div",{class:"btn-row"},sees(alertLink(a).slice(1).split("/")[0])?h("button",{class:"btn small go",type:"button",onclick:()=>open(s.id,a)},"Ouvrir"):null,
      can("alerts-ack")&&!a.noAck&&h("button",{class:"btn small",type:"button",onclick:e=>ack(s.id,[a.key],e.currentTarget)},"Vu"))))):empty("Rien à traiter."),
    st.acked?h("p",{class:"muted small"},`${st.acked} déjà vue${st.acked>1?"s":""} : elle${st.acked>1?"s":""} ne compte${st.acked>1?"nt":""} plus pendant 30 jours.`):null);
  });
- return [h("div",{class:"view-head"},h("h1",{},"À traiter"),h("div",{class:"btn-row"},h("span",{class:"muted small"},"vérifié toutes les 20 s, sur tous les serveurs"),refreshBtn())),
+ return [h("div",{class:"view-head"},h("h1",{},"À traiter"),h("div",{class:"btn-row"},h("span",{class:"muted small"},"vérifié toutes les 20 s, sur toutes les parties"),refreshBtn())),
   h("div",{class:"card"},h("h2",{},"Me prévenir"),snd,perm,
-   h("p",{class:"muted small"},"Signalements du chat, duels signalés par l'anti-triche, joueurs au score de bot élevé (50/100 et plus), groupes de duels suspects, gain d'un objet mythique et comptes qui semblent abandonnés.")),
+   h("p",{class:"muted small"},"Signalements du chat, duels signalés par l'anti-triche, joueurs au score de bot élevé (50/100 et plus), groupes de duels suspects, gain d'un objet mythique et comptes qui semblent abandonnés."+(owner()?" Pour l'organisateur seul : sauvegardes en échec et, sous Liaison, jetons de partie essayés par une autre machine, certificat de liaison régénéré et liste des parties illisible.":""))),
   ...blocks];
 }
 
 // The current game server's name heads every page.
-const srvTag=()=>h("span",{class:"srv-tag",title:"Serveur de jeu"},h("i",{class:`dot ${curSrv()?.up?"up":"down"}`}),srvName());
+const srvTag=()=>h("span",{class:"srv-tag",title:"Partie"},h("i",{class:`dot ${curSrv()?.up?"up":"down"}`}),srvName());
 const head=(title,...extra)=>h("div",{class:"view-head"},h("div",{class:"btn-row"},h("h1",{},title),srvTag()),h("div",{class:"btn-row"},extra));
 const refreshBtn=()=>h("button",{class:"btn small",type:"button",onclick:e=>act(e.currentTarget,render)},"Actualiser");
 const empty=t=>h("p",{class:"empty"},t);
@@ -288,10 +323,11 @@ function inviteWidget(inv){
   else toast("Copie impossible : affiche le code et sélectionne-le.",true);}},"Copier");
  return h("div",{class:"invite"},h("span",{class:"muted small"},"Code d'invitation"),code,eye,cp);
 }
-// Clipboard API (HTTPS or localhost), else the old hidden-textarea route.
+// Clipboard API (HTTPS or localhost), else the old hidden-textarea route (inside the open dialog: a modal one makes
+// the rest of the page inert).
 async function copyText(text){
  try{await navigator.clipboard.writeText(text);return true;}
- catch{const t=h("textarea",{value:text,readOnly:true,class:"offscreen"});document.body.append(t);t.select();let ok=false;try{ok=document.execCommand("copy");}catch{}t.remove();return ok;}
+ catch{const t=h("textarea",{value:text,readOnly:true,class:"offscreen"});($("#dlg").open?$("#dlg"):document.body).append(t);t.select();let ok=false;try{ok=document.execCommand("copy");}catch{}t.remove();return ok;}
 }
 
 // ===================================================================== Vue d'ensemble (several servers)
@@ -305,13 +341,14 @@ async function viewOverview(){
   h("div",{class:"grid wide"},servers.map(s=>h("div",{class:`card srv-card${s.up?"":" down"}`,onclick:e=>{if(!e.target.closest("button"))enter(s.id);}},
    h("h2",{},h("i",{class:`dot ${s.up?"up":"down"}`}),h("button",{class:"linkish",type:"button",onclick:()=>enter(s.id)},s.name)),
    s.up&&can("invite")?inviteWidget(s.invite):null,
-   s.up?kv(["Version",s.version],["Joueurs",s.players],["Connectés",s.online],["Actifs 24 h",s.active24h],["Chat",chatState(s.chatRooms)],["Signalements chat",s.chatReports],
+   s.up?kv(["Version",ver(s.release||s.version)],["Joueurs",s.players],["Connectés",s.online],["Actifs 24 h",s.active24h],["Chat",chatState(s.chatRooms)],["Signalements chat",s.chatReports],
     ["Prochaine annonce",s.nextAnnounce?`${fmt(s.nextAnnounce.t)} : ${s.nextAnnounce.text}`:"aucune"])
-   :h("p",{class:"err"},`Injoignable : ${s.error||"pas de réponse"}`)))),
-  h("div",{class:"card"},h("h2",{},"Ajouter un serveur"),h("p",{class:"muted small"},
-   "La liste vient de la configuration du conteneur admin, pas de cette page : monte le volume du socket d'administration de l'autre pile "+
-   "(volume externe, par exemple politigo-test_politigo-admin-sock sur /run/politigo-test), puis ajoute-le à POLITIGO_ADMIN_SERVERS "+
-   "(« Prod=/run/politigo/admin.sock;Test=/run/politigo-test/admin.sock ») et redémarre le conteneur admin.")),
+   :h("p",{class:"err"},`Injoignable : ${waitToken.has(s.id)?"en attente du nouveau jeton (renouvelé page Parties)":s.error||"pas de réponse"}`)))),
+  owner()?h("div",{class:"card"},h("h2",{},"Ajouter une partie"),h("p",{class:"muted small"},
+   "Une autre stack ou une autre machine se rattache par le réseau : page ",h("a",{href:"#parties"},"Parties"),", « Ajouter une partie », puis trois lignes à coller dans sa stack. "+
+   "Ancien mode, toujours possible sur la même machine : monter le volume du socket d'administration de l'autre stack "+
+   "(volume externe, par exemple politigo-test_politigo-admin-sock sur /run/politigo-test), l'ajouter à POLITIGO_ADMIN_SERVERS "+
+   "(« Prod=/run/politigo/admin.sock;Test=/run/politigo-test/admin.sock ») et redémarrer le conteneur admin.")):null,
  ];
 }
 
@@ -331,8 +368,8 @@ async function viewDashboard(){
    stat(s.suspended,"suspendus"),stat(s.pushSubs,"abonnements notifications"),stat(s.registrations?(s.registrations.open?"ouvertes":"fermées"):"—","inscriptions"),stat(chatState(s.chatRooms),"chat"),
    stat(s.event?(s.event.current?tr(EVENT,s.event.current):"aucun"):"—",`événement (mode ${{auto:"automatique",off:"désactivé",halloween:"forcé"}[s.event?.mode]??"?"})`)),
   h("div",{class:"grid wide"},
-   h("div",{class:"card"},h("h2",{},"Serveur"),h("dl",{class:"kv"},
-    h("dt",{},"Version"),h("dd",{},`${s.version??"?"}${s.release&&s.release!==s.version?` (${s.release})`:""}`),
+   h("div",{class:"card"},h("h2",{},"Partie"),h("dl",{class:"kv"},
+    h("dt",{},"Version"),h("dd",{title:s.version||""},ver(s.release||s.version)??"?"),
     h("dt",{},"En route depuis"),h("dd",{},dur(s.uptimeS)),h("dt",{},"Base de données"),h("dd",{},bytes(s.dbBytes)))),
    h("div",{class:"card"},h("h2",{},"Chat"),Object.keys(ch).length?h("dl",{class:"kv"},
     h("dt",{},"Messages (7 jours)"),h("dd",{},String(ch.messages7d??"—")),h("dt",{},"Images"),h("dd",{},String(ch.media??"—")),
@@ -375,7 +412,7 @@ async function viewPlayers(arg){
 async function deleteAccount(btn,p,done){
  const inp=h("input",{type:"text",maxLength:40,autocomplete:"off"});
  const warn=[p.baton?"Il porte le Bâton de feu : le Bâton retourne dans l'urne.":null].filter(Boolean);
- const v=await dialog({title:"Supprimer le compte ?",body:[`Le compte de ${p.name} est supprimé pour de bon : progression, garde-robe et lignes du fil. Son pseudo reste bloqué 24 h.`,...warn,h("label",{},`Retape le pseudo pour confirmer : ${p.name}`),inp],ok:"Supprimer",danger:true,value:()=>inp.value,focus:inp});
+ const v=await dialog({title:"Supprimer le compte ?",body:[`Le compte de ${p.name} est supprimé pour de bon : progression, garde-robe et lignes du fil. Son pseudo reste bloqué 24 h.`,...warn,lab(`Retape le pseudo pour confirmer : ${p.name}`,inp),inp],ok:"Supprimer",danger:true,value:()=>inp.value,focus:inp});
  if(v==null)return;
  if(v!==p.name){toast("Le pseudo ne correspond pas : rien n'a été supprimé.",true);return;}
  act(btn,()=>call("player-delete",{id:p.id,confirm:v}),`Compte de ${p.name} supprimé.`,done);
@@ -488,7 +525,7 @@ function targetPicker(names){
   return sel.value==="all"?{kind:"all"}:{kind:"camp",camp:sel.value};
  };
  const label=t=>t.kind==="all"?"tout le monde":t.kind==="camp"?`le camp de ${t.camp==="left"?"gauche":"droite"}`:t.name;
- return {node:h("div",{class:"field-row"},sel,name,dl),get,label,reset:()=>{sel.value="all";name.value="";name.hidden=true;}};
+ return {sel,node:h("div",{class:"field-row"},sel,name,dl),get,label,reset:()=>{sel.value="all";name.value="";name.hidden=true;}};
 }
 function composer(){
  const ta=h("textarea",{rows:3,maxLength:400,placeholder:"Texte de l'annonce (texte brut, 240 caractères au plus)","aria-label":"Texte de l'annonce"});
@@ -523,8 +560,8 @@ async function viewAnnounces(){
  const until=h("input",{type:"date","aria-label":"Jusqu'au (facultatif)"});
  const dayBoxes=[1,2,3,4,5,6,0].map(d=>h("input",{type:"checkbox",value:d}));
  const days=h("div",{class:"days"},dayBoxes.map((b,i)=>h("label",{class:"check"},b,["lun.","mar.","mer.","jeu.","ven.","sam.","dim."][i])));
- const onceBox=h("div",{},h("label",{},"Date et heure (heure de ce navigateur)"),at);
- const repBox=h("div",{},h("div",{class:"field-row"},h("div",{},h("label",{},"Heure (fuseau du jeu, Paris)"),time),h("div",{},h("label",{},"Jusqu'au (facultatif, inclus)"),until)),h("div",{hidden:true},h("label",{},"Jours"),days));
+ const onceBox=h("div",{},lab("Date et heure (heure de ce navigateur)",at),at);
+ const repBox=h("div",{},h("div",{class:"field-row"},h("div",{},lab("Heure (fuseau du jeu, Paris)",time),time),h("div",{},lab("Jusqu'au (facultatif, inclus)",until),until)),h("div",{hidden:true},lbl("Jours"),days));
  const showKind=()=>{onceBox.hidden=kindSel.value!=="once";repBox.hidden=kindSel.value==="once";repBox.lastChild.hidden=kindSel.value!=="weekly";};
  kindSel.addEventListener("change",showKind);showKind();
  const plan=h("button",{class:"btn go",type:"button",onclick:e=>{
@@ -551,10 +588,10 @@ async function viewAnnounces(){
  return [
   head("Annonces",refreshBtn()),
   can("announce")&&h("div",{class:"grid wide"},
-   h("div",{class:"card"},h("h2",{},"Envoyer maintenant"),h("label",{},"Destinataires"),t1.node,h("label",{},"Texte"),c1.ta,c1.counter,h("label",{},"Aperçu"),c1.preview,
+   h("div",{class:"card"},h("h2",{},"Envoyer maintenant"),lab("Destinataires",t1.sel),t1.node,lab("Texte",c1.ta),c1.ta,c1.counter,lbl("Aperçu"),c1.preview,
     h("p",{class:"muted small"},"Bandeau sur les écrans ouverts (jamais en pleine partie), notification aux abonnés et, envoyée à tous, une ligne dans le fil."),h("div",{class:"btn-row"},send)),
-   h("div",{class:"card"},h("h2",{},"Planifier"),h("label",{},"Destinataires"),t2.node,h("label",{},"Texte"),c2.ta,c2.counter,c2.preview,
-    h("label",{},"Fréquence"),kindSel,onceBox,repBox,h("div",{class:"btn-row"},plan))),
+   h("div",{class:"card"},h("h2",{},"Planifier"),lab("Destinataires",t2.sel),t2.node,lab("Texte",c2.ta),c2.ta,c2.counter,c2.preview,
+    lab("Fréquence",kindSel),kindSel,onceBox,repBox,h("div",{class:"btn-row"},plan))),
   h("div",{class:"card"},h("h2",{},"Planifiées"),schedRows),
   h("div",{class:"card"},h("h2",{},"Historique"),items.length?h("div",{class:"table-wrap"},h("table",{},
    h("thead",{},h("tr",{},["Date","Par","Pour","Texte"].map(t=>h("th",{},t)))),
@@ -601,8 +638,8 @@ async function viewEvents(){
  function drawParams(p){
   const t=types[typeSel.value];
   params.replaceChildren(...t.params.flatMap(f=>f.games
-   ?[h("label",{},f.label),...games.map(([k,n])=>h("label",{class:"check"},h("input",{type:"checkbox","data-game":k,checked:p?p[f.k].includes(k):true}),n))]
-   :[h("label",{},f.label),h("select",{"data-k":f.k,"aria-label":f.label},f.opts.map(([v,n])=>h("option",{value:String(v),selected:String(p?.[f.k]??f.def)===String(v)},n)))]));
+   ?[lbl(f.label),...games.map(([k,n])=>h("label",{class:"check"},h("input",{type:"checkbox","data-game":k,checked:p?p[f.k].includes(k):true}),n))]
+   :(sel=>[lab(f.label,sel),sel])(h("select",{"data-k":f.k,"aria-label":f.label},f.opts.map(([v,n])=>h("option",{value:String(v),selected:String(p?.[f.k]??f.def)===String(v)},n))))));
  }
  function typeChanged(){
   const t=types[typeSel.value],was=types[lastType];desc.textContent=t.desc;name.value=t.label;msg.value=t.msg;drawParams();
@@ -755,7 +792,7 @@ async function viewDuels(){
 // ===================================================================== Réglages
 // Two independent switches, saved on change; opening a room asks first (naming the server), closing does not.
 function chatSettings(rooms){
- if(!rooms)return h("div",{class:"card"},h("h2",{},"Chat"),empty("Ce serveur ne gère pas encore l'ouverture du chat."));
+ if(!rooms)return h("div",{class:"card"},h("h2",{},"Chat"),empty("Cette partie ne gère pas encore l'ouverture du chat."));
  const box=(key,label,ask)=>{
   const c=h("input",{type:"checkbox",checked:!!rooms[key],onchange:async()=>{
    const on=c.checked;
@@ -792,11 +829,13 @@ async function viewSettings(){
 // ===================================================================== Sauvegarde
 // The automatic backups live in the admin volume, for every game server at once: a list, the settings, and what failed.
 const BK_FREQ=[["quotidienne","Quotidienne","chaque jour"],["hebdomadaire","Hebdomadaire","le lundi"],["mensuelle","Mensuelle","le 1er du mois"]],BK_LABEL={quotidienne:"Quotidienne",hebdomadaire:"Hebdomadaire",mensuelle:"Mensuelle",manuelle:"Manuelle"};
-function backupFiles(s){
+// A removed party's folder (removed:true): its files stay listed, downloadable and deletable, nothing else.
+function backupFiles(s,removed=false){
  const get=(name,label)=>h("button",{class:"btn small",type:"button",onclick:e=>act(e.currentTarget,()=>download("/api/backups/download",{server:s.id,name}),r=>`${r.name} téléchargé (${bytes(r.size)}).`,null)},label);
  const row=f=>h("tr",{},h("td",{},BK_LABEL[f.freq]),h("td",{},fmt(f.t)),h("td",{},bytes(f.size)),h("td",{},h("div",{class:"btn-row"},get(f.name,"Télécharger"),
   h("button",{class:"btn small danger",type:"button",onclick:e=>{const b=e.currentTarget;confirmBox("Supprimer cette sauvegarde ?",`${f.name} sera effacée pour de bon.`,"Supprimer").then(ok=>ok&&act(b,()=>api("/api/backups/delete",{server:s.id,name:f.name}),"Sauvegarde supprimée."));}},"Supprimer"))));
- return h("div",{class:"card"},h("div",{class:"btn-row"},h("h2",{},multi()?s.name:"Sauvegardes gardées"),s.vapid?get("vapid.json","Télécharger vapid.json"):h("span",{class:"muted small"},"Pas encore de copie de vapid.json")),
+ return h("div",{class:`card${removed?" removed":""}`},h("div",{class:"btn-row"},h("h2",{},removed?(s.name&&s.name!==s.id?s.name:`Partie retirée (${s.id})`):multi()?s.name:"Sauvegardes gardées"),
+  removed&&s.name&&s.name!==s.id?h("span",{class:"badge"},`Partie retirée (${s.id})`):null,s.vapid?get("vapid.json","Télécharger vapid.json"):removed?null:h("span",{class:"muted small"},"Pas encore de copie de vapid.json")),
   s.files.length?h("div",{class:"table-wrap"},h("table",{},h("thead",{},h("tr",{},["Type","Date","Taille",""].map(t=>h("th",{},t)))),h("tbody",{},s.files.map(row)))):empty("Aucune sauvegarde pour l'instant."));
 }
 async function viewBackup(){
@@ -807,18 +846,21 @@ async function viewBackup(){
   return {k,on,keep,el:h("div",{class:"btn-row"},h("label",{class:"check"},on,`${label} (${when})`),keep,h("span",{class:"muted small"},`gardées · prochaine : ${fmt(s.next[k])}`))};
  });
  const saveBtn=h("button",{class:"btn go",type:"button",onclick:e=>act(e.currentTarget,()=>api("/api/backups/save",{config:{hour:Number(hour.value),...Object.fromEntries(rows.map(r=>[r.k,{on:r.on.checked,keep:Number(r.keep.value)}]))}}),"Réglages enregistrés.")},"Enregistrer");
- const runBtn=h("button",{class:"btn",type:"button",disabled:s.running,onclick:e=>act(e.currentTarget,()=>api("/api/backups/run"),r=>{const ko=r.results.filter(x=>!x.ok).length;return ko?`${ko} serveur${ko>1?"s":""} en échec : voir ci-dessous.`:"Sauvegarde faite.";})},"Sauvegarder maintenant");
- const failed=s.servers.filter(x=>x.failure).map(x=>h("div",{class:"card"},h("span",{class:"badge bad"},"Échec"),h("b",{},` ${multi()?`${x.name} : `:""}la dernière sauvegarde a échoué, le ${fmt(x.failure.t)}`),h("p",{class:"err"},x.failure.error)));
+ const runBtn=h("button",{class:"btn",type:"button",disabled:s.running,onclick:e=>act(e.currentTarget,()=>api("/api/backups/run"),r=>{const ko=r.results.filter(x=>!x.ok).length;return ko?`${ko} partie${ko>1?"s":""} en échec : voir ci-dessous.`:"Sauvegarde faite.";})},"Sauvegarder maintenant");
+ const live=s.servers.filter(x=>!x.removed),gone=s.servers.filter(x=>x.removed);
+ const failed=live.filter(x=>x.failure).map(x=>h("div",{class:"card"},h("span",{class:"badge bad"},"Échec"),h("b",{},` ${multi()?`${x.name} : `:""}la dernière sauvegarde a échoué, le ${fmt(x.failure.t)}`),h("p",{class:"err"},x.failure.error)));
  const auto=h("div",{class:"card"},h("h2",{},"Sauvegardes automatiques"),
-  h("p",{class:"muted small"},`Dans le volume politigo-admin-data (/data-admin/backups), pour tous les serveurs de jeu, avec une copie de vapid.json. Une sauvegarde manquée pendant un arrêt est prise au redémarrage. Dernière réussite : ${fmt(s.lastSuccess)}. Place utilisée : ${bytes(s.total)}${s.disk?`, libre : ${bytes(s.disk.free)}`:""}.`),
+  h("p",{class:"muted small"},`Dans le volume politigo-admin-data (/data-admin/backups), pour toutes les parties, avec une copie de vapid.json. Une sauvegarde manquée pendant un arrêt est prise au redémarrage. Dernière réussite : ${fmt(s.lastSuccess)}. Place utilisée : ${bytes(s.total)}${s.disk?`, libre : ${bytes(s.disk.free)}`:""}.`),
   h("label",{for:"bk-hour"},"Heure (celle du conteneur)"),hour,rows.map(r=>r.el),h("div",{class:"btn-row"},saveBtn,runBtn),
   h("p",{class:"muted small"},"Les 5 dernières sauvegardes manuelles sont gardées. Les images du chat (chat-media) ne sont pas incluses, et ces copies restent sur la même machine que le jeu : télécharges-en une de temps en temps."));
  return [head("Sauvegarde",refreshBtn()),h("div",{class:"grid wide"},
-  h("div",{class:"card"},h("h2",{},"Base de données"),h("p",{class:"muted small"},"Une copie cohérente de la base (VACUUM INTO), prise à chaud, téléchargée puis effacée du serveur. Elle contient les empreintes des mots de passe : garde-la en lieu sûr."),
+  h("div",{class:"card"},h("h2",{},"Base de données"),h("p",{class:"muted small"},"Une copie cohérente de la base (VACUUM INTO), prise à chaud, téléchargée puis effacée de la machine de la partie. Elle contient les empreintes des mots de passe : garde-la en lieu sûr."),
    h("div",{class:"btn-row"},dl("backup","Télécharger la base (.db)"))),
   h("div",{class:"card"},h("h2",{},"Clé des notifications"),h("p",{class:"muted small"},"vapid.json : sans elle, une base restaurée perd tous les abonnements aux notifications. C'est une clé privée : ne la partage jamais."),
    h("div",{class:"btn-row"},dl("backup-vapid","Télécharger vapid.json")))),
-  ...failed,auto,...s.servers.map(backupFiles)];
+  ...failed,auto,...live.map(x=>backupFiles(x)),
+  gone.length?[h("h2",{class:"section"},"Parties retirées"),h("p",{class:"muted small"},"Leurs sauvegardes restent dans le volume de la console : téléchargeables, ou à supprimer quand tu n'en veux plus. Plus de sauvegarde automatique ni manuelle pour elles."),
+   ...gone.map(x=>backupFiles(x,true))]:null];
 }
 
 // ===================================================================== Détection de bots
@@ -883,7 +925,7 @@ function botReport(r,withName=true){
 async function viewBots(){
  const {items}=await call("bots");
  return [head("Détection de bots",refreshBtn()),
-  h("p",{class:"muted small"},"Indices sur 14 jours, jamais une preuve, et rien n'est sanctionné tout seul. Trois familles : le rythme (délais de réaction mesurés par le serveur et comparés aux autres joueurs, visites, pauses), le client (hors navigateur, sans écran ouvert, nouveautés jamais ouvertes) et les mini-jeux (résultats invraisemblables, scores trop constants, parties au plus tôt permis). Une alerte demande au moins deux familles ; la nuit ne compte qu'avec un autre indice. Le détail des points est dans chaque rapport. Aucune adresse IP n'est conservée. Heures dans le fuseau du jeu."),
+  h("p",{class:"muted small"},"Indices sur 14 jours, jamais une preuve, et rien n'est sanctionné tout seul. Trois familles : le rythme (délais de réaction mesurés par le jeu et comparés aux autres joueurs, visites, pauses), le client (hors navigateur, sans écran ouvert, nouveautés jamais ouvertes) et les mini-jeux (résultats invraisemblables, scores trop constants, parties au plus tôt permis). Une alerte demande au moins deux familles ; la nuit ne compte qu'avec un autre indice. Le détail des points est dans chaque rapport. Aucune adresse IP n'est conservée. Heures dans le fuseau du jeu."),
   items.length?h("div",{class:"grid wide"},items.map(r=>h("div",{class:"card"},botReport(r)))):h("div",{class:"card"},empty("Aucune activité enregistrée."))];
 }
 
@@ -909,8 +951,8 @@ function rightsForm(cat,init){
  for(const box of [pan,act_])box.addEventListener("change",()=>{preset.value="";});
  const setHome=id=>{init.home=id;for(const i of srv.querySelectorAll("input")){i.disabled=i.value===id;if(i.disabled)i.checked=true;}};
  return {setHome,get:()=>({panels:vals(pan),actions:vals(act_),servers:vals(srv)}),
-  node:h("div",{},h("label",{},"Profil"),preset,h("h3",{class:"sub"},"Panneaux visibles"),pan,h("h3",{class:"sub"},"Actions permises"),act_,
-   cat.servers.length>1?[h("h3",{class:"sub"},"Serveurs"),srv]:null,
+  node:h("div",{},lab("Profil",preset),preset,h("h3",{class:"sub"},"Panneaux visibles"),pan,h("h3",{class:"sub"},"Actions permises"),act_,
+   cat.servers.length>1?[h("h3",{class:"sub"},"Parties accessibles"),srv]:null,
    h("p",{class:"muted small"},"Toujours réservés à l'organisateur : Réglages, Sauvegarde, régénération du code d'invitation et gestion des modérateurs. Un modérateur n'agit jamais sur son propre compte."))};
 }
 const modApi=(a,b={})=>api(`/api/mods${a?`/${a}`:""}`,b);
@@ -919,14 +961,14 @@ async function viewMods(){
  const cat=await modApi(""),srvName_=id=>cat.servers.find(s=>s.id===id)?.name||id;
  const label=(list,ids)=>ids.map(id=>list.find(x=>x[0]===id)?.[1]??id).join(", ")||"aucune";
  // Add: a server, then one of its players.
- const srvSel=h("select",{"aria-label":"Serveur du joueur"},cat.servers.map(s=>h("option",{value:s.id,selected:s.id===cur},s.name)));
+ const srvSel=h("select",{"aria-label":"Partie du joueur"},cat.servers.map(s=>h("option",{value:s.id,selected:s.id===cur},s.name)));
  const pSel=h("select",{"aria-label":"Joueur"});
  const form=rightsForm(cat,{panels:cat.presets[0].panels,actions:cat.presets[0].actions,servers:[],home:srvSel.value});
  const loadPlayers=async()=>{
   pSel.replaceChildren(h("option",{value:""},"Chargement…"));form.setHome(srvSel.value);
   try{const {players}=await srvCall(srvSel.value,"list");const taken=new Set(cat.mods.map(m=>m.name.toLowerCase()));
    pSel.replaceChildren(h("option",{value:""},"Choisis un joueur…"),...players.filter(p=>!taken.has(p.name.toLowerCase())).sort((a,b)=>a.name.localeCompare(b.name,"fr")).map(p=>h("option",{value:p.id},p.name)));}
-  catch(e){pSel.replaceChildren(h("option",{value:""},"Serveur injoignable"));fail(e);}
+  catch(e){pSel.replaceChildren(h("option",{value:""},"Partie injoignable"));fail(e);}
  };
  srvSel.addEventListener("change",loadPlayers);loadPlayers();
  const create=h("button",{class:"btn go",type:"button",onclick:e=>{
@@ -942,9 +984,9 @@ async function viewMods(){
     m.account&&!m.account.ok?h("span",{class:"badge bad"},"compte de jeu introuvable"):null),
    // Their account as it stands now: gone, or renamed outside this console (no rights there until removed and added again).
    m.account&&!m.account.ok?h("p",{class:"err small"},m.account.name?`Ce compte s'appelle maintenant ${m.account.name} (renommé hors de cette console, ou base restaurée) : aucun droit sur ${srvName_(m.home)}. Retire ce modérateur puis ajoute-le de nouveau.`
-    :`Son compte de joueur n'existe plus sur ${srvName_(m.home)} : aucun droit sur ce serveur. Retire ce modérateur.`):null,
+    :`Son compte de joueur n'existe plus sur ${srvName_(m.home)} : aucun droit sur cette partie. Retire ce modérateur.`):null,
    h("dl",{class:"kv"},h("dt",{},"Panneaux"),h("dd",{},label(cat.panels,m.panels)),h("dt",{},"Actions"),h("dd",{},label(cat.actions,m.actions)),
-    cat.servers.length>1?[h("dt",{},"Serveurs"),h("dd",{},m.servers.map(srvName_).join(", "))]:null,
+    cat.servers.length>1?[h("dt",{},"Parties accessibles"),h("dd",{},m.servers.map(srvName_).join(", "))]:null,
     h("dt",{},"Créé le"),h("dd",{},fmt(m.created)),h("dt",{},"Dernière connexion"),h("dd",{},m.lastLogin?`${fmt(m.lastLogin)} (${ago(m.lastLogin)})`:"jamais")),
    h("div",{class:"btn-row"},
     h("button",{class:"btn small",type:"button",onclick:()=>{box.hidden=!box.hidden;}},"Modifier les droits"),
@@ -956,9 +998,230 @@ async function viewMods(){
  };
  return [h("div",{class:"view-head"},h("h1",{},"Modérateurs"),refreshBtn()),
   h("div",{class:"card"},h("h2",{},"Ajouter un modérateur"),
-   h("div",{class:"field-row"},cat.servers.length>1?h("div",{},h("label",{},"Serveur"),srvSel):null,h("div",{},h("label",{},"Joueur"),pSel)),
+   h("div",{class:"field-row"},cat.servers.length>1?h("div",{},lab("Partie",srvSel),srvSel):null,h("div",{},lab("Joueur",pSel),pSel)),
    form.node,h("div",{class:"btn-row"},create)),
   ...(cat.mods.length?cat.mods.map(card):[h("div",{class:"card"},empty("Aucun modérateur pour l'instant."))])];
+}
+
+// ===================================================================== Parties (the owner only)
+// The games linked to this console: the main one by its local socket, the others over the network (TLS link, see
+// admin/link.mjs). GET /api/parties lists them; POST adds one, renews its token or removes it. The three env lines
+// (address, certificate fingerprint, token) come back once, are shown once and never kept by this page.
+const LINK_ENV=["POLITIGO_ADMIN_URL","POLITIGO_ADMIN_TLS","POLITIGO_ADMIN_TOKEN"];
+const fold=s=>String(s||"").normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase().trim();
+const partyName=p=>p.announced||p.label||p.id;
+const since=t=>{const s=Math.max(0,(Date.now()-t)/1000);return s<3600?`${Math.max(1,Math.floor(s/60))} min`:s<86400?`${Math.floor(s/3600)} h ${String(Math.floor(s%3600/60)).padStart(2,"0")}`:`${Math.floor(s/86400)} j`;};
+async function partiesGet(){
+ const r=await fetch("/api/parties",{method:"GET",credentials:"same-origin",headers:{"Content-Type":"application/json","X-PolitiGo-Admin":"1"}});
+ if(r.status===401){showLogin();throw new Unauthorized("Session expirée.");}
+ let j=null;try{j=await r.json();}catch{}
+ if(!r.ok||!j?.ok)throw new Error(j?.error||`Erreur ${r.status}`);
+ return j;
+}
+// parties.json unreadable (set aside by the console): add, renew and remove answer 409 « Liste des parties illisible : … »
+// until it is repaired. The page learns it from that answer (or from a GET that says it: broken) and locks the three.
+let partiesBroken=null;
+const BROKEN_RE=/^Liste des parties illisible/;
+const partiesPost=b=>api("/api/parties",b).catch(e=>{if(BROKEN_RE.test(e.message||"")){partiesBroken=e.message;if(route().id==="parties")render();}throw e;});
+// Listening asked (POLITIGO_ADMIN_LINK=on) but not open (port taken, certificate unreadable…): listen.up false, listen.error.
+const listenDown=L=>!!L.on&&L.up===false;
+// A copy button that says "Copié !" for 2 s; without any clipboard (plain http), the text itself is selected instead.
+function copyBtn(text,label="Copier",cls="btn small",sel=null){
+ const b=h("button",{class:cls,type:"button",onclick:async e=>{
+  e.stopPropagation();
+  if(await copyText(text)){b.textContent="Copié !";clearTimeout(b.t);b.t=setTimeout(()=>{b.textContent=label;},2000);return;}
+  if(sel){try{const r=document.createRange();r.selectNodeContents(sel);const s=getSelection();s.removeAllRanges();s.addRange(r);}catch{}}
+  toast(sel?"Copie impossible ici : le texte est sélectionné, copie-le à la main.":"Copie impossible : sélectionne le texte.",true);}},label);
+ return b;
+}
+const copyLine=(line,cls="")=>{const c=h("code",{},line);return h("div",{class:`envline${cls?` ${cls}`:""}`},c,copyBtn(line,"Copier","btn small",c));};
+// The published address is not one another machine can use (0.0.0.0, ::, empty, 127.0.0.1 behind a proxy): the API
+// sends url:null or needsHost:true, and the page asks for the host's IP, visibly, in the lines to paste too.
+const HOST_HOLE="<IP de cette machine>";
+const needsHost=L=>!!L.needsHost||!L.url||/</.test(L.url);
+const linkUrl=L=>needsHost(L)?`${HOST_HOLE}:${L.port||8091}`:L.url;
+const hostHelp=()=>h("p",{class:"hint warn"},h("b",{},"Adresse à compléter : "),`l'écoute est publiée sur une adresse que les autres machines ne peuvent pas joindre. Remplace ${HOST_HOLE} par l'IP de l'hôte de la console dans POLITIGO_ADMIN_URL, ou règle POLITIGO_ADMIN_LINK_BIND (facultative) sur l'IP interne de l'hôte dans la stack principale.`);
+function linesDialog(name,env,L,renew=false){
+ const hole=needsHost(L)||!env?.POLITIGO_ADMIN_URL||/</.test(env.POLITIGO_ADMIN_URL);
+ const val=k=>k==="POLITIGO_ADMIN_URL"&&hole?(env?.[k]&&/</.test(env[k])?env[k]:linkUrl(L)):env?.[k]??"";
+ const lines=LINK_ENV.map(k=>`${k}=${val(k)}`),block=lines.join("\n"),all=h("code",{class:"offscreen"},block);
+ return dialog({title:renew?`Nouveau jeton · « ${name} »`:`Partie « ${name} » ajoutée`,ok:"C'est noté",cancel:null,server:false,wide:true,body:[
+  renew?"L'ancien jeton ne marche plus. Remplace la ligne du jeton dans les variables de la stack de cette partie :":"Colle ces trois lignes dans les variables d'environnement de la stack de cette partie :",
+  h("div",{class:"env"},lines.map((l,i)=>copyLine(l,i===0&&hole?"hole":renew&&i===2?"hl":""))),
+  hole?hostHelp():null,
+  renew?h("p",{class:"small accent"},"Seule la ligne POLITIGO_ADMIN_TOKEN change ; les deux autres sont rappelées pour mémoire."):null,
+  h("div",{class:"btn-row tight"},copyBtn(block,"Copier les trois lignes","btn small go",all),all),
+  h("ol",{class:"steps"},
+   h("li",{},"Portainer → Stacks → la stack de la partie."),
+   h("li",{},"Environment variables → Advanced mode, colle les lignes à la suite des autres."),
+   h("li",{},"Update the stack (le workflow GitOps ne change pas)."),
+  ),
+  h("p",{class:"muted small"},"Affiché une seule fois : la console ne garde pas le jeton en clair. Il se lie à la première machine qui s'en sert ; une autre machine qui l'essaie ensuite est refusée."),
+ ]});
+}
+// After a change: the top switcher and the parties page both follow.
+const partiesChanged=async()=>{try{await loadServers();}catch{}if(route().id==="parties")await render();};
+async function addParty(list,L){
+ const inp=h("input",{type:"text",maxLength:40,placeholder:"par exemple : Soirée bureau",autocomplete:"off",spellcheck:false});
+ const err=h("p",{class:"err small",role:"alert"});
+ inp.addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();$("#dlg-ok").click();}});
+ const r=await dialog({title:"Ajouter une partie",ok:"Créer le jeton",focus:inp,server:false,body:[
+  lab("Nom indicatif",inp),inp,err,
+  h("p",{class:"muted small"},"Il sert à reconnaître la partie ici en attendant sa première connexion ; ensuite, le nom affiché est celui de sa variable POLITIGO_SERVER_NAME."),
+ ],value:async()=>{
+  const v=inp.value.trim();err.textContent="";
+  if(!v){err.textContent="Donne un nom à la partie.";inp.focus();return undefined;}
+  if(list.some(p=>fold(p.label)===fold(v)||fold(p.announced)===fold(v))){err.textContent=`Une partie s'appelle déjà « ${v} ».`;inp.focus();return undefined;}
+  try{return await partiesPost({action:"add",label:v});}
+  catch(e){if(e instanceof Unauthorized)return null;err.textContent=e.message;inp.focus();return undefined;}}});
+ if(!r)return;
+ const name=r.party?.label||inp.value.trim();
+ partiesChanged();
+ await linesDialog(name,r.env,L);
+ toast(`« ${name} » attend sa première connexion.`);
+}
+async function renewParty(p,L,btn){
+ const name=partyName(p);
+ const ok=await dialog({title:`Renouveler le jeton de « ${name} » ?`,ok:"Renouveler",danger:true,server:false,body:[
+  "L'ancien jeton cesse de marcher tout de suite : la partie se déconnecte jusqu'à ce que la nouvelle ligne soit collée dans sa stack.",
+  "Le nouveau jeton se liera à la première machine qui s'en servira.",
+ ]});
+ if(ok!==true)return;
+ await act(btn,async()=>{const r=await partiesPost({action:"renew",id:p.id});partiesChanged();await linesDialog(name,r.env,L,true);},`Jeton de « ${name} » renouvelé.`,null);
+}
+async function removeParty(p,btn){
+ const name=partyName(p);
+ const ok=await dialog({title:`Retirer la partie « ${name} » ?`,ok:"Retirer",danger:true,server:false,body:[
+  `La console oublie « ${name} » et son jeton cesse de marcher. La partie elle-même continue de tourner : retire aussi les trois variables de sa stack.`,
+  "Les sauvegardes déjà faites restent dans le volume de la console (Sauvegarde). Les modérateurs qui y avaient accès le perdent.",
+ ]});
+ if(ok!==true)return;
+ await act(btn,()=>partiesPost({action:"remove",id:p.id}),`« ${name} » retirée. Ses sauvegardes sont gardées.`,partiesChanged);
+}
+// The card's state: [dot, badge class, badge text, card class]. "closed" is the page's own: a network party while the
+// console's listening is off cannot come back, whatever it was.
+function partyState(p,L){
+ if(p.local){const up=servers.find(s=>s.id===p.id)?.up!==false;return up?["up","good","En ligne",""]:["down","bad","Injoignable","down"];}
+ if((!L.on||listenDown(L))&&p.state!=="pending")return ["down","bad","Écoute fermée","down"];
+ switch(p.state){
+  case "online":return ["up","good","En ligne",""];
+  case "offline":return ["down","bad",p.lastSeen?`Injoignable depuis ${since(p.lastSeen)}`:"Injoignable","down"];
+  case "pending":return renewing(p)?["down","warn","Injoignable, en attente du nouveau jeton","wait"]:["wait","warn","En attente de première connexion","wait"];
+  case "refused-version":return ["down","bad","Version trop ancienne","down"];
+  default:return ["wait","warn",String(p.state||"?"),"wait"];
+ }
+}
+const kvl=pairs=>h("dl",{class:"kv"},pairs.filter(Boolean).flatMap(([k,v])=>[h("dt",{},k),h("dd",{},v==null||v===""?"—":v)]));
+function backupText(b){
+ if(!b)return "—";
+ return b.ok?h("span",{},h("span",{class:"badge good"},"OK")," ",fmt(b.t))
+  :h("span",{},h("span",{class:"badge bad"},"Échec")," ",b.error||"sauvegarde impossible",h("br",{}),h("span",{class:"muted small"},`le ${fmt(b.t)}`));
+}
+function waitHelp(url,open=false){
+ return h("details",{class:"help",open},h("summary",{},"Rien n'arrive ?"),h("ul",{},
+  h("li",{},"Les trois lignes sont bien dans les variables de la stack de la partie, puis « Update the stack »."),
+  h("li",{},h("b",{},"Empreinte TLS : "),"si les logs du conteneur api de la partie disent « empreinte du certificat différente », recopie POLITIGO_ADMIN_TLS depuis le bloc « Écoute des parties » ci-dessus. La console, elle, ne voit rien arriver."),
+  h("li",{},h("b",{},"Connexion refusée ou délai dépassé : "),`la machine de la partie ne joint pas ${url}. Vérifie l'adresse, le port publié du conteneur admin et le pare-feu.`),
+  h("li",{},h("b",{},"Jeton refusé : "),"le jeton a été renouvelé ou la partie retirée. Renouvelle-le ici."),
+  h("li",{},h("b",{},"Partie antérieure à 1.7.3 : "),"elle ignore ces variables. Mets son image à jour."),
+ ));
+}
+function partyCard(p,L,locals,focus){
+ const [dot,bcls,blabel,ccls]=partyState(p,L),url=linkUrl(L),name=partyName(p);
+ const closed=!p.local&&(!L.on||listenDown(L))&&p.state!=="pending";
+ const refused=p.refused&&p.state!=="refused-version"&&p.state!=="pending"?p.refused:null;
+ const badges=h("div",{class:"badges"},
+  h("span",{class:"badge"},p.local?"Socket local":"Réseau · TLS"),
+  h("span",{class:`badge ${bcls}`},blabel),
+  refused?h("span",{class:"badge bad"},"Jeton refusé à une autre machine"):null);
+ const title=h("h2",{},h("i",{class:`dot ${dot}`}),h("span",{class:"pname"},name));
+ const alias=!p.local&&p.announced&&p.label&&fold(p.announced)!==fold(p.label)?h("p",{class:"muted small alias"},`ajoutée sous « ${p.label} », annoncée comme « ${p.announced} » (POLITIGO_SERVER_NAME)`):null;
+ let body;
+ // "Dernier contact": the time of the last frame received from the party (pings included), so a few seconds ago while it
+ // is online, and the moment the link went quiet once it is not.
+ const last=p.local?"en continu (socket)":p.lastSeen?`${fmt(p.lastSeen)} (${ago(p.lastSeen)})`:null;
+ if(renewing(p)){
+  body=[kvl([["Version",ver(p.version)],["Adresse vue",p.addr?`${p.addr} (avant le nouveau jeton)`:null],["Dernier contact",last],["Dernière sauvegarde",backupText(p.backup)]]),
+   h("p",{class:"hint warn"},h("b",{},"Jeton renouvelé : "),`en attente du nouveau jeton. La partie reste dans le sélecteur du haut, injoignable, avec ses droits de modérateurs et ses sauvegardes, jusqu'à ce qu'elle se reconnecte à ${url} avec la nouvelle ligne POLITIGO_ADMIN_TOKEN.`),waitHelp(url,focus)];
+ }else if(p.state==="pending"){
+  body=[kvl([p.created?["Jeton créé",`${fmt(p.created)} (${ago(p.created)})`]:null,["Adresse vue","pas encore de connexion"]]),
+   h("p",{class:"hint warn"},`Attend que la partie se connecte à ${url} avec son jeton. Rien n'est encore arrivé.`),waitHelp(url,focus)];
+ }else{
+  body=[kvl([
+   ["Version",ver(p.version)],
+   ["Adresse vue",p.addr],
+   [p.local?"Liaison":"Dernier contact",last],
+   ["Joueurs",p.players!=null?String(p.players):null],
+   ["Dernière sauvegarde",backupText(p.backup)],
+  ])];
+  if(closed)body.push(h("p",{class:"hint bad"},h("b",{},"Écoute fermée : "),"la console n'accepte plus les parties réseau, celle-ci ne peut pas se connecter. Voir en haut de page pour rouvrir l'écoute."));
+  else if(p.state==="offline")body.push(h("p",{class:"hint bad"},h("b",{},"Injoignable : "),`la liaison est coupée${p.lastSeen?` (dernier contact le ${fmt(p.lastSeen)}, ${ago(p.lastSeen)})`:""}. La partie est arrêtée ou ne joint plus ${url} (machine éteinte, réseau, pare-feu). Elle se reconnecte seule quand elle revient ; ses pages et la sauvegarde nocturne l'attendent.`));
+  else if(p.state==="refused-version"){const t=p.refused?.t||p.lastSeen;
+   body.push(h("p",{class:"hint bad"},h("b",{},"Version trop ancienne : "),`la partie s'est présentée${t?` ${ago(t)}`:""}${p.version?` en ${ver(p.version)}`:""} ; la liaison demande 1.7.3 ou plus. Connexion refusée. Mets à jour son image (Portainer → Update the stack avec « Re-pull image »), elle se reconnectera seule.`));}
+  if(p.local&&servers.find(s=>s.id===p.id)?.up===false)body.push(h("p",{class:"hint bad"},h("b",{},"Injoignable : "),"le socket local ne répond pas. Le conteneur api de cette partie est-il démarré ?"));
+  if(refused)body.push(h("p",{class:"hint bad"},h("b",{},"Jeton refusé à une autre machine : "),`${refused.addr||"Une autre machine"} a essayé ce jeton ${ago(refused.t)}. Refusé : la partie liée${p.addr?` (${p.addr})`:""} reste ${p.state==="online"&&!closed?"connectée":"la seule autorisée"}. Si c'est une copie de la stack, donne-lui son propre jeton (« Ajouter une partie ») ; si le jeton a fuité, renouvelle-le.`));
+ }
+ const acts=p.local?h("p",{class:"muted small acts"},locals>1?"Partie branchée par un socket local (POLITIGO_ADMIN_SERVERS) : non retirable ici.":"Partie principale, branchée par le socket local : non retirable.")
+  :h("div",{class:"btn-row"},h("button",{class:"btn small",type:"button",disabled:!!partiesBroken,onclick:e=>renewParty(p,L,e.currentTarget)},"Renouveler le jeton"),h("button",{class:"btn small danger",type:"button",disabled:!!partiesBroken,onclick:e=>removeParty(p,e.currentTarget)},"Retirer la partie"));
+ return h("div",{class:`card party${ccls?` ${ccls}`:""}${focus?" focus":""}`,id:`party-${p.id}`},title,alias,badges,body,acts);
+}
+function listenCard(L,n){
+ const url=linkUrl(L),fp=L.fingerprint||"",cu=h("code",{},url),cf=h("code",{},fp||"—");
+ return h("div",{class:"card"},h("h2",{},"Écoute des parties"),
+  h("div",{class:"badges"},h("span",{class:"badge good"},"Ouverte"),h("span",{class:"badge"},`${n} partie${n>1?"s":""} réseau`)),
+  kvl([["Adresse à joindre",h("span",{class:"fp"},cu,copyBtn(url,"Copier","btn small",cu))],
+   ["Empreinte du certificat",h("span",{class:"fp"},cf,fp?copyBtn(fp,"Copier","btn small",cf):null)],
+   ["Certificat",L.certCreated?`généré par la console le ${fmt(L.certCreated)}, gardé dans son volume`:"gardé dans le volume de la console"]]),
+  needsHost(L)?hostHelp():null,
+  h("p",{class:"muted small top-gap"},"Écoute sur POLITIGO_ADMIN_BIND, port POLITIGO_ADMIN_LINK_PORT. Liaison chiffrée (TLS) : chaque partie vérifie l'empreinte avant d'envoyer son jeton."));
+}
+// POLITIGO_ADMIN_LINK=on but the listener did not open: the reason (listen.error), and no party can be added.
+function downCard(L){
+ return h("div",{class:"card notice bad",role:"alert"},h("h2",{},"Écoute demandée mais fermée"),
+  h("div",{class:"badges"},h("span",{class:"badge bad"},"Fermée"),h("span",{class:"badge"},`port ${L.port||8091}`)),
+  h("p",{class:"err wrap"},L.error||"L'écoute n'a pas pu s'ouvrir."),
+  h("p",{class:"muted small"},"POLITIGO_ADMIN_LINK=on est bien là, mais la console n'écoute pas : aucune partie réseau ne peut se connecter et « Ajouter une partie » est bloqué. Regarde les logs du conteneur admin (port déjà pris, certificat illisible dans son volume…), corrige, puis redémarre-le."),
+  L.fingerprint?kvl([["Empreinte du certificat",h("span",{class:"fp"},h("code",{},L.fingerprint))]]):null);
+}
+function closedCard(L){
+ const lines=["COMPOSE_PROFILES=admin","POLITIGO_ADMIN_LINK=on",`POLITIGO_ADMIN_BIND=${L.bind||"<IP de cette machine>"}`,`POLITIGO_ADMIN_LINK_PORT=${L.port||8091}`];
+ return h("div",{class:"card notice"},h("h2",{},"Écoute des parties fermée"),
+  h("p",{class:"small"},"La console ne gère pour l'instant que la partie principale, par le socket local. Pour lui rattacher d'autres parties (autres stacks, autres machines), ouvre l'écoute dans la stack principale :"),
+  h("div",{class:"env"},lines.map((l,i)=>copyLine(l,i===1?"hl":""))),
+  h("ol",{class:"steps"},
+   h("li",{},"COMPOSE_PROFILES=admin est déjà là puisque la console tourne."),
+   h("li",{},`Ajoute POLITIGO_ADMIN_LINK=on. POLITIGO_ADMIN_BIND sert aussi à la console : garde ta valeur. Le port ${L.port||8091} est ${L.port&&L.port!==8091?"celui de POLITIGO_ADMIN_LINK_PORT":"celui par défaut"}.`),
+   h("li",{},"Update the stack. Le certificat est généré au démarrage et le bouton « Ajouter une partie » apparaît ici."),
+  ));
+}
+// Between two refreshes: a first connection and a lost party are told by a toast (the page open).
+let partiesSeen=null;
+function partiesNews(list){
+ const before=partiesSeen;partiesSeen=new Map(list.map(p=>[p.id,p.state]));
+ if(!before)return;
+ for(const p of list){
+  const was=before.get(p.id);if(!was||was===p.state||p.local)continue;
+  if(p.state==="online"&&was!=="offline")toast(`« ${partyName(p)} » est connectée (${[ver(p.version),p.addr].filter(Boolean).join(", ")||"liaison établie"}).`);
+  else if(p.state==="offline"&&was==="online")toast(`« ${partyName(p)} » est injoignable.`,true);
+ }
+}
+async function viewParties(arg){
+ const r=await partiesGet(),L=r.listen||{on:false},list=r.parties||[];
+ if(typeof r.broken==="string"&&r.broken)partiesBroken=r.broken;else if(r.broken===false)partiesBroken=null;
+ partiesNews(list);noteParties(list);
+ const canAdd=!listenDown(L)&&!partiesBroken;
+ refreshT=setInterval(()=>{if(!document.hidden&&route().id==="parties"&&!$("#dlg").open)render();},15000);
+ const n=list.filter(p=>!p.local).length,locals=list.filter(p=>p.local).length;
+ if(arg)setTimeout(()=>document.getElementById(`party-${arg}`)?.scrollIntoView({block:"start",behavior:"smooth"}),0);
+ return [
+  h("div",{class:"view-head"},h("h1",{},"Parties"),h("div",{class:"btn-row tight"},h("span",{class:"muted small"},"actualisée toutes les 15 s"),refreshBtn(),
+   L.on?h("button",{class:"btn go",type:"button",disabled:!canAdd,title:canAdd?null:partiesBroken?"Liste des parties illisible":"Écoute demandée mais fermée",onclick:()=>addParty(list,L)},"Ajouter une partie"):null)),
+  partiesBroken?h("div",{class:"card notice bad",role:"alert"},h("h2",{},"Liste des parties illisible"),h("p",{class:"err wrap"},partiesBroken),
+   h("p",{class:"muted small"},"La console a mis le fichier parties.json de côté (parties.json.corrupt-<date>, dans son volume) : ajouter, renouveler et retirer sont bloqués tant qu'il n'est pas réparé ou retiré, puis la console redémarrée.")):null,
+  !L.on?closedCard(L):listenDown(L)?downCard(L):listenCard(L,n),
+  list.length?h("div",{class:"grid wide parties"},list.map(p=>partyCard(p,L,locals,p.id===arg))):h("div",{class:"card"},empty("Aucune partie pour l'instant.")),
+  h("p",{class:"muted small"},"Les parties en attente ou refusées n'apparaissent pas dans le sélecteur du haut ni dans les droits des modérateurs. Une partie dont le jeton vient d'être renouvelé y reste, injoignable, jusqu'à son retour. Cette page est réservée à l'organisateur."),
+ ];
 }
 
 // ===================================================================== start

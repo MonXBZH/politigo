@@ -7,7 +7,7 @@
   <img alt="Node 24" src="https://img.shields.io/badge/node-24%20LTS-5fa04e">
   <img alt="Aucune dépendance" src="https://img.shields.io/badge/d%C3%A9pendances-0-success">
   <img alt="Docker" src="https://img.shields.io/badge/docker-compose%20%7C%20Portainer-2496ed">
-  <img alt="557 tests" src="https://img.shields.io/badge/tests-557-brightgreen">
+  <img alt="633 tests" src="https://img.shields.io/badge/tests-633-brightgreen">
   <img alt="Satire" src="https://img.shields.io/badge/genre-satire-ff9db0">
 </p>
 
@@ -203,7 +203,8 @@ joueur), ouverture et modération du chat (avec le fil de tous les salons en dir
 inscriptions et événements à chaud, sauvegardes automatiques, **détection de bots**, journal des actions. Les cas à traiter (signalements,
 duels suspects, comptes louches, comptes abandonnés, événements rares) remontent en direct dans « À traiter », avec un son et une notification
 système. L'organisateur peut nommer des **modérateurs** parmi les joueurs, avec des droits choisis un par un. La fiche d'un
-joueur montre aussi sa Flamme, ses bulletins et sa Garde-robe. Elle gère plusieurs parties sur le même serveur.
+joueur montre aussi sa Flamme, ses bulletins et sa Garde-robe. Une seule console gère **plusieurs parties**, sur la même machine
+ou sur d'autres : chaque partie s'y rattache par trois variables d'environnement.
 
 <p align="center">
   <img src="docs/images/admin-dashboard.png" width="92%" alt="L'interface d'administration : tableau de bord d'une partie">
@@ -223,6 +224,7 @@ flowchart LR
   P -. "importe aussi" .-> R
   A --- DB[("SQLite<br/>volume Docker")]
   AD["admin · Node 24<br/>facultatif, LAN"] -- "socket Unix" --> A
+  A2["api d'une autre partie<br/>facultatif"] -- "liaison TLS" --> AD
 ```
 
 - **Le serveur fait foi.** Il détient les parties, fait tourner l'horloge de chacun (même page fermée) et vérifie chaque
@@ -230,8 +232,8 @@ flowchart LR
 - **Les mêmes règles des deux côtés** : `web/rules.mjs` et ses modules (activités, Tombola et Garde-robe…) sont importés
   par le navigateur et par le serveur. Les tirages, eux, n'ont lieu que sur le serveur.
 - **Temps réel** par Server-Sent Events : le classement, le fil et le chat se mettent à jour sans recharger la page.
-- **Administration sans port ouvert** : l'interface d'admin parle à l'API par un socket Unix partagé entre les deux
-  conteneurs, jamais par le réseau.
+- **Administration sans port ouvert sur l'API** : l'interface d'admin parle à sa partie par un socket Unix partagé entre les
+  deux conteneurs. Les autres parties se connectent d'elles-mêmes à la console, en TLS avec certificat épinglé et un jeton chacune.
 - **Zéro dépendance** : Node 24 seul (`node:http`, `node:sqlite`, `node:crypto`), aucun `npm install`.
 - **Robuste aux maintenances** : après un arrêt, même de plusieurs jours, chaque partie revient sur l'heure réelle, sans
   que les jauges bougent ; personne ne meurt parce que le serveur était éteint.
@@ -250,6 +252,7 @@ cp .env.example .env          # POLITIGO_BIND = l'IP du serveur, le reste convie
 docker compose up -d --build
 docker compose logs api       # le code d'invitation à donner aux amis s'y affiche
 docker compose logs admin     # le mot de passe de l'interface d'administration (http://serveur:8090), si .env n'en fixe pas
+                              # (console lancée par COMPOSE_PROFILES=admin, déjà dans .env.example)
 ```
 
 Puis place-le derrière ton reverse proxy en HTTPS. Pour un simple essai en local, sans proxy ni HTTPS, mets

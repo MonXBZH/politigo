@@ -9,6 +9,7 @@ import fs from "node:fs";
 import {dirname,basename,resolve,join} from "node:path";
 import {fileURLToPath} from "node:url";
 import {createBackups} from "./backups.mjs";
+import {createLink,fold,cleanName,cleanVersion,cleanPlayers} from "./link.mjs";
 
 const env=process.env;
 const PORT=+env.PORT||8090,DATA=env.ADMIN_DATA||"/data-admin";
@@ -39,7 +40,37 @@ function parseServers(raw){
 let SERVERS;
 try{SERVERS=parseServers(env.POLITIGO_ADMIN_SERVERS);}catch(e){console.error(`${e.message}: refusing to start.`);process.exit(1);}
 for(const s of SERVERS){s.dir=resolve(dirname(s.socket));s.label=s.name;}   // label: the configured name, else the last one the API gave
-const serverById=id=>{const s=SERVERS.find(x=>x.id===id);if(!s)throw new HttpError(404,"Serveur inconnu.");return s;};
+const serverById=id=>{const s=SERVERS.find(x=>x.id===id);if(!s)throw new HttpError(404,"Partie inconnue.");return s;};
+
+// ===================================================================== parties over the network (link.mjs)
+// Extra games connect TO this console (POLITIGO_ADMIN_LINK=on). Once bound to its machine, a party is one more entry
+// of SERVERS (link:true), added and removed while running; one still waiting for its first connection is not.
+// In the container the listener is always on 8091; POLITIGO_ADMIN_LINK_PORT is the host's side, shown to the owner.
+const LINK_ON=env.POLITIGO_ADMIN_LINK==="on",LINK_PORT=+env.POLITIGO_ADMIN_LINK_PORT||8091,LINK_LISTEN=+env.ADMIN_LINK_LISTEN||8091;   // ADMIN_LINK_LISTEN: tests only
+// POLITIGO_ADMIN_LINK_BIND: the host address the link port is published on (the compose passes LINK_BIND, else
+// POLITIGO_ADMIN_BIND, else 0.0.0.0). An address no other machine can use (any, loopback): url null, the page asks
+// for "<IP de cette machine>".
+const LINK_BIND=(env.POLITIGO_ADMIN_LINK_BIND||"").trim(),INCOMING=join(DATA,"link","incoming");   // streamed backups land here (0600), then go
+const linkUrl=()=>LINK_BIND&&!/^(0\.0\.0\.0|::|\[::\]|127\.\d+\.\d+\.\d+|::1|\[::1\]|localhost)$/i.test(LINK_BIND)?`${LINK_BIND.includes(":")&&!LINK_BIND.startsWith("[")?`[${LINK_BIND}]`:LINK_BIND}:${LINK_PORT}`:null;
+const linkServer=p=>({id:p.id,name:null,label:partyName(p.id,p.announced),link:true,socket:null,dir:INCOMING});
+// A party's name as shown: what it announced (cleaned), else the owner's label; a name another game already uses
+// (a local game, another party) comes with the id, "Nom (p-xxxx)": a party cannot pass for another one.
+function partyName(id,announced){
+ const parties=LINK.list(),p=parties.find(x=>x.id===id),n=cleanName(announced)??p?.announced??p?.label??id,k=fold(n);
+ const clash=SERVERS.some(s=>!s.link&&fold(s.label||"PolitiGo")===k)||parties.some(x=>x.id!==id&&(fold(x.label)===k||(x.announced&&fold(x.announced)===k)));
+ return clash?`${n} (${id})`:n;
+}
+const LINK=createLink({root:DATA,Err:HttpError,taken:id=>SERVERS.some(s=>s.id===id&&!s.link),
+ pingMs:+env.ADMIN_LINK_PING_MS||20e3,deadMs:+env.ADMIN_LINK_DEAD_MS||60e3,helloMs:+env.ADMIN_LINK_HELLO_MS||10e3,
+ backupMs:+env.ADMIN_LINK_BACKUP_MS||undefined,rateMs:+env.ADMIN_LINK_RATE_MS||undefined,   // tests only
+ onLink:p=>{if(!SERVERS.some(s=>s.id===p.id)){SERVERS.push(linkServer(p));health=null;}},
+ onLeave:id=>{const i=SERVERS.findIndex(s=>s.id===id&&s.link);if(i>=0){SERVERS.splice(i,1);health=null;links.clear();}}});
+for(const p of LINK.linked()){
+ if(SERVERS.some(s=>s.id===p.id)){console.error(`admin link: party ${p.id} has the id of a configured server: left out`);continue;}
+ SERVERS.push(linkServer(p));
+}
+// Leftovers of a transfer cut by a restart.
+try{fs.mkdirSync(INCOMING,{recursive:true,mode:0o700});for(const n of fs.readdirSync(INCOMING))if(/^backup-\d+\.db(-shm|-wal|-journal)?$/.test(n))fs.rmSync(join(INCOMING,n),{force:true});}catch{}
 
 // ===================================================================== password
 // 18 characters from an alphabet without look-alikes, drawn without modulo bias (same as admin.mjs generate()).
@@ -140,11 +171,16 @@ function slot(srv,deadline){
 }
 function release(srv){const w=srv.queue.shift();if(w){clearTimeout(w.t);w.ok();}else srv.busy--;}   // a waiter inherits the slot
 async function sock(srv,req,timeout=15000){
- const line=JSON.stringify({...req,via:"web"});   // a moderator's by/self come in req, set here, never from the page
+ const body={...req,via:"web"},line=JSON.stringify(body);   // a moderator's by/self come in req, set here, never from the page
  if(Buffer.byteLength(line)>=SOCKET_REQ_MAX)throw new HttpError(413,"Requête trop grosse pour l'API.");
  const deadline=Date.now()+timeout;
  await slot(srv,deadline);
- try{return await sockOnce(srv,line,Math.max(1,deadline-Date.now()));}finally{release(srv);}
+ try{
+  if(!srv.link)return await sockOnce(srv,line,Math.max(1,deadline-Date.now()));
+  // A party over the network: the same object, through link.mjs; a backup comes back as a file of our own.
+  let file=null;if(req.cmd==="backup"){fs.mkdirSync(srv.dir,{recursive:true,mode:0o700});file=join(srv.dir,`backup-${Date.now()}${crypto.randomInt(1e9)}.db`);}
+  return await LINK.request(srv.id,body,{timeout:Math.max(1,deadline-Date.now()),file});
+ }finally{release(srv);}
 }
 function sockOnce(srv,line,timeout){
  return new Promise((ok,ko)=>{
@@ -159,20 +195,49 @@ function sockOnce(srv,line,timeout){
 }
 async function cmd(srv,req,timeout){const r=await sock(srv,req,timeout);if(!r||r.ok!==true)throw new HttpError(422,r?.error||"Échec.");return r;}
 // One line per server for the switcher, the overview (full: open chat reports, next scheduled announcement) and /health.
+// release: the game's version as "1.7.3" (version: the same, kept for older pages). waiting: a party whose token was
+// renewed, until it comes back with the new one.
+// A party over the network is never waited for: its line comes from memory, refreshed in the background (all of it,
+// full included) when older than LINK_STATUS_MS, one refresh at a time per party; a fresh answer is waited for
+// LINK_STATUS_WAIT at most, else the last one known is given. Only the local socket keeps its 4 s.
+const LINK_STATUS_MS=env.ADMIN_LINK_STATUS_MS!=null?+env.ADMIN_LINK_STATUS_MS:5e3,LINK_STATUS_WAIT=250;   // tests may shorten it
+const ONLY_FULL=["invite","chatReports","nextAnnounce"];
 async function status(srv,full=false){
+ if(!srv.link)return probe(srv,full);
+ const waiting=!LINK.list().find(p=>p.id===srv.id)?.instance?{waiting:true}:{};
+ if(!LINK.live(srv.id)){srv.cached=null;return {id:srv.id,name:srv.label||"PolitiGo",up:false,...waiting,error:"Partie injoignable (liaison coupée)."};}
+ if(!srv.cached||Date.now()-srv.cached.t>=LINK_STATUS_MS){
+  srv.refresh??=probe(srv,true).then(o=>{if(LINK.live(srv.id))srv.cached={t:Date.now(),o};}).finally(()=>{srv.refresh=null;});
+  let t;await Promise.race([srv.refresh,new Promise(r=>{t=setTimeout(r,LINK_STATUS_WAIT);})]).finally(()=>clearTimeout(t));
+ }
+ // Not known yet (its first answer is late): what its hello said.
+ const p=LINK.list().find(x=>x.id===srv.id),o={...(srv.cached?.o??{id:srv.id,name:srv.label||"PolitiGo",up:true,...waiting,version:p?.version??null,release:p?.version??null,players:LINK.runtime(srv.id).players})};
+ if(!full)for(const k of ONLY_FULL)delete o[k];
+ return o;
+}
+// What a game answers, typed: short strings, whole numbers, or null (a party is not trusted with anything else).
+const shortText=(v,max=100)=>typeof v==="string"&&v.length<=max&&!/\p{C}/u.test(v)?v:null;
+const roomsOf=v=>v&&typeof v==="object"&&!Array.isArray(v)?{global:v.global===true,camp:v.camp===true}:null;
+async function probe(srv,full=false){
+ const waiting=srv.link&&!LINK.list().find(p=>p.id===srv.id)?.instance?{waiting:true}:{};
  try{
   const s=await cmd(srv,{cmd:"stats"},4000);
-  if(!srv.name&&typeof s.name==="string"&&s.name.trim())srv.label=s.name.trim().slice(0,40);
-  const o={id:srv.id,name:srv.label||"PolitiGo",up:true,version:s.version??null,players:s.players??null,online:s.online??null,active24h:s.active24h??null,chatRooms:s.chatRooms??null};
+  // What a game says of itself is shown cleaned (a party is not trusted with markup, bidi tricks or another's name).
+  if(srv.link)srv.label=partyName(srv.id,s.name);else if(!srv.name&&cleanName(s.name))srv.label=cleanName(s.name);
+  const num=v=>Number.isSafeInteger(v)&&v>=0?v:null;
+  const release=cleanVersion(s.version);
+  const o={id:srv.id,name:srv.label||"PolitiGo",up:true,...waiting,version:release,release,players:num(s.players),online:num(s.online),active24h:num(s.active24h),chatRooms:roomsOf(s.chatRooms)};
+  srv.seen={t:Date.now(),players:cleanPlayers(s.players),version:o.version};   // for the Parties page, read without any call
   if(full){
    const [rep,sch,inv]=await Promise.allSettled([cmd(srv,{cmd:"chat-reports"},4000),cmd(srv,{cmd:"schedule-list"},4000),cmd(srv,{cmd:"invite-get"},4000)]);
-   o.invite=inv.status==="fulfilled"?{code:inv.value.invite||null,open:!!inv.value.open&&!!inv.value.invite}:null;   // sessions only: the copy button
-   o.chatReports=rep.status==="fulfilled"?rep.value.items?.length??0:null;
-   const next=sch.status==="fulfilled"?(sch.value.schedules||[]).filter(x=>x.enabled&&x.next).sort((a,b)=>a.next-b.next)[0]:null;
+   const code=inv.status==="fulfilled"?shortText(inv.value.invite):null;
+   o.invite=inv.status==="fulfilled"?{code,open:inv.value.open===true&&!!code}:null;   // sessions only: the copy button
+   o.chatReports=rep.status==="fulfilled"?Array.isArray(rep.value.items)?rep.value.items.length:0:null;
+   const next=sch.status==="fulfilled"&&Array.isArray(sch.value.schedules)?sch.value.schedules.filter(x=>x&&x.enabled&&Number.isSafeInteger(x.next)).sort((a,b)=>a.next-b.next)[0]:null;
    o.nextAnnounce=next?{t:next.next,text:String(next.text).slice(0,80)}:null;
   }
   return o;
- }catch(e){return {id:srv.id,name:srv.label||"PolitiGo",up:false,error:e.message};}
+ }catch(e){return {id:srv.id,name:srv.label||"PolitiGo",up:false,...waiting,error:e.message};}
 }
 // A moderator's rights on a server stand on their own account there: the same id, still carrying the name it was
 // linked with. Deleted, renamed outside this console, or that id now someone else's (a restored base): no rights there.
@@ -187,9 +252,14 @@ async function linkOf(m,srv){
  const v={t:Date.now(),ok:!!p&&p.id===id&&modKey(p.name)===linkName(m,srv.id),name:p?.name??null};
  links.set(k,v);return v;
 }
-const LINK_GONE="Ton compte de joueur sur ce serveur n'existe plus ou a changé de pseudo : la console ne t'y donne plus aucun droit. Vois avec l'organisateur.";
+const LINK_GONE="Ton compte de joueur dans cette partie n'existe plus ou a changé de pseudo : la console ne t'y donne plus aucun droit. Vois avec l'organisateur.";
 // The servers among list where that moderator keeps their rights (one that does not answer stays: its calls fail anyway).
-const usable=async(m,list)=>(await Promise.all(list.map(async s=>{try{return (await linkOf(m,s)).ok?s:null;}catch{return s;}}))).filter(Boolean);
+// quick (/api/servers): a party over the network that is slow to say gets the benefit of the doubt (as one that fails),
+// its answer still lands in the cache; every call to it checks again.
+const usable=async(m,list,quick=false)=>(await Promise.all(list.map(async s=>{try{
+ const l=linkOf(m,s);if(!quick||!s.link)return (await l).ok?s:null;
+ l.catch(()=>{});let t;const r=await Promise.race([l,new Promise(ok=>{t=setTimeout(ok,LINK_STATUS_WAIT,null);})]).finally(()=>clearTimeout(t));
+ return !r||r.ok?s:null;}catch{return s;}}))).filter(Boolean);
 // Writes per moderator: 30 a minute at most (a flood would push the evidence out of the admin log). The owner is not limited.
 const rates=new Map();
 function rate(m){
@@ -319,10 +389,11 @@ async function takeBackup(srv,req,timeout){
  try{return await cmd(srv,req,timeout);}
  catch(e){
   if(e.status!==422)throw e;
+  if(srv.link)throw new HttpError(502,`Copie de la base refusée par la partie (${e.message}). Détail dans les journaux de son conteneur api.`);
   let free=null;try{const s=await fs.promises.statfs(srv.dir);free=s.bavail*s.bsize;}catch{}
   await sweepSocketDir(srv);
   if(free!=null&&free<64*1024*1024)throw new HttpError(507,`Copie de la base impossible : le volume du socket d'administration est presque plein (${(free/1048576).toFixed(1)} Mo libres).`);
-  throw new HttpError(502,`Copie de la base refusée par le serveur de jeu (${e.message}). Détail dans les journaux de l'API.`);
+  throw new HttpError(502,`Copie de la base refusée par la partie (${e.message}). Détail dans les journaux de l'API.`);
  }
 }
 const stamp=()=>new Date().toISOString().slice(0,16).replace(/[:T]/g,"-");
@@ -341,7 +412,7 @@ async function sendBackup(srv,res){
 }
 // The automatic backups (backups.mjs), kept in the admin volume. A big base takes time to copy: the API gets two minutes.
 const BACKUP_TICK=env.ADMIN_BACKUP_TICK_MS!=null?+env.ADMIN_BACKUP_TICK_MS:60e3;   // 0: off (tests)
-const BACKUPS=createBackups({root:DATA,servers:SERVERS,Err:HttpError,
+const BACKUPS=createBackups({root:DATA,servers:SERVERS,Err:HttpError,partyMs:+env.ADMIN_BACKUP_PARTY_MS||undefined,   // tests only
  take:async srv=>{const r=await takeBackup(srv,{cmd:"backup",vapid:true},120e3);sweepSocketDir(srv);return {path:backupPath(srv,r),vapid:r.vapid};},
  note:(srv,detail)=>cmd(srv,{cmd:"backup-note",detail},4000)});
 if(BACKUP_TICK>0)setInterval(()=>BACKUPS.tick().catch(e=>console.error("backups:",e)),BACKUP_TICK).unref();
@@ -361,7 +432,7 @@ async function backupsRoute(res,path,b){
 async function sendVapid(srv,res){
  const r=await takeBackup(srv,{cmd:"backup",vapid:true});
  fs.promises.unlink(backupPath(srv,r)).catch(()=>{});   // only the key was wanted: the database copy goes at once
- if(!r.vapid||typeof r.vapid!=="object")throw new HttpError(404,"Pas de vapid.json sur ce serveur (notifications désactivées ?).");
+ if(!r.vapid||typeof r.vapid!=="object")throw new HttpError(404,"Pas de vapid.json pour cette partie (notifications désactivées ?).");
  const body=JSON.stringify(r.vapid,null,1);
  res.writeHead(200,{...BASE_HEADERS,"Content-Type":"application/json; charset=utf-8","Content-Length":Buffer.byteLength(body),"Cache-Control":"no-store",
   "Content-Disposition":`attachment; filename="vapid-${srv.id}-${stamp()}.json"`});
@@ -376,7 +447,7 @@ async function sendVapid(srv,res){
 // is an error (a missing answer must never be kept as "no account there").
 async function playerOn(srv,q){try{return (await cmd(srv,{cmd:"player",...q},6000)).player;}catch(e){if(e.status===422)return null;throw e;}}
 const ids=(v,all)=>Array.isArray(v)?[...new Set(v.filter(x=>all.includes(x)))]:[];
-const rights=r=>`panneaux : ${r.panels.join(", ")} ; actions : ${r.actions.join(", ")||"aucune"} ; serveurs : ${r.servers.join(", ")}`;
+const rights=r=>`panneaux : ${r.panels.join(", ")} ; actions : ${r.actions.join(", ")||"aucune"} ; parties : ${r.servers.join(", ")}`;
 async function modsRoute(res,path,b){
  if(path==="/api/mods"){
   // Their home account as it stands now: its current name, or gone (no rights there until the owner sorts it out).
@@ -405,7 +476,7 @@ async function modsRoute(res,path,b){
   if(MODS.length>=MODS_MAX)throw new HttpError(400,`${MODS_MAX} modérateurs au plus.`);
   const home=serverById(typeof b.server==="string"?b.server:"");
   const p=Number.isSafeInteger(b.player)?await playerOn(home,{id:b.player}):null;
-  if(!p)throw new HttpError(404,"Joueur introuvable sur ce serveur.");
+  if(!p)throw new HttpError(404,"Joueur introuvable dans cette partie.");
   if(MODS.some(x=>x.key===modKey(p.name)))throw new HttpError(409,`${p.name} est déjà modérateur.`);
   rec={id:crypto.randomBytes(8).toString("hex"),name:p.name,key:modKey(p.name),home:home.id,players:{[home.id]:p.id},created:Date.now()};
  }
@@ -414,7 +485,7 @@ async function modsRoute(res,path,b){
  // A server that does not answer: refused, rather than kept as "no account there" for good.
  const found={};
  for(const id of servers)if(!(id in rec.players)){
-  const p=await playerOn(serverById(id),{name:rec.name}).catch(()=>{throw new HttpError(502,`Serveur ${id} injoignable : réessaie quand il répond.`);});
+  const p=await playerOn(serverById(id),{name:rec.name}).catch(()=>{throw new HttpError(502,`Partie ${id} injoignable : réessaie quand elle répond.`);});
   found[id]=p?{id:p.id,key:modKey(p.name)}:null;
  }
  const before=old?{servers:[...old.servers]}:null;
@@ -426,6 +497,69 @@ async function modsRoute(res,path,b){
  console.log(`admin web: moderator ${rec.name} ${old?"updated":"created"} (${servers.join(", ")})`);
  note([...servers,...(before?.servers||[])],old?`Droits du modérateur ${rec.name} modifiés (${rights(rec)}).`:`Modérateur ajouté : ${rec.name} (${rights(rec)}).`);
  return send(res,200,{ok:true,mod:modView(rec),...(password?{password}:{})});
+}
+
+// ===================================================================== parties (the owner only)
+// GET (or POST without action) /api/parties: the listener and every party, the local ones first; POST add / renew /
+// remove. The token is shown once in env and never kept nor logged here: parties.json holds only its SHA-256.
+const linkCert=(create=false)=>{try{return LINK.cert({create});}catch(e){console.error(`admin link: certificate: ${e.message}`);if(create)throw new HttpError(500,"Certificat de liaison impossible à créer dans /data-admin/link.");return null;}};
+// on: asked for (POLITIGO_ADMIN_LINK=on); up: really listening; error: why not.
+let LINK_ERROR=null;
+const listenView=()=>{const c=linkCert(),up=LINK_ON&&LINK.listening();return {on:LINK_ON,up,error:LINK_ON&&!up?LINK_ERROR??"L'écoute des parties n'est pas ouverte.":null,bind:LINK_BIND||null,port:LINK_PORT,url:linkUrl(),fingerprint:c?.fingerprint??null,certCreated:c?.created??null};};
+const envOf=token=>({POLITIGO_ADMIN_URL:linkUrl()??`<IP de cette machine>:${LINK_PORT}`,POLITIGO_ADMIN_TLS:linkCert(true).fingerprint,POLITIGO_ADMIN_TOKEN:token});
+// A line in the main game's admin log (the first local socket), never with the token.
+const noteMain=detail=>{const m=SERVERS.find(s=>!s.link);if(m)note([m.id],detail);};
+function lastBackup(all,id){
+ const s=all.find(x=>x.id===id);if(!s)return null;
+ if(s.failure)return {t:s.failure.t,ok:false,error:s.failure.error};
+ const t=Math.max(0,...Object.values(s.last).map(v=>v??0));return t?{t,ok:true,error:null}:null;
+}
+// The "Liaison" alert: that party's token presented by another machine (the owner's alone, until "Vu").
+function linkAlert(id){
+ const p=LINK.list().find(x=>x.id===id);if(!p?.refused)return null;const r=p.refused;
+ return {key:`link:${p.id}:${r.instance}`,kind:"link",t:r.t,ref:null,ids:[],title:`Jeton de « ${partyName(p.id,p.announced)} » essayé par une autre machine`,
+  detail:`${r.addr} (instance ${String(r.instance).slice(0,8)}…) a présenté le jeton de cette partie : refusé. La partie liée${p.addr?` (${p.addr})`:""} reste connectée. Si c'est une copie de la stack, donne-lui son propre jeton ; sinon renouvelle le jeton.`};
+}
+// The console's own Liaison alerts (parties.json unreadable, certificate regenerated): in the main game's À traiter.
+const mainServer=()=>SERVERS.find(s=>!s.link)??SERVERS[0];
+const consoleAlerts=srv=>srv===mainServer()?LINK.alerts():[];
+// From memory only (no call to the party): what its hello and its last stats reply said.
+function partyView(p,all){
+ const live=LINK.live(p.id),r=LINK.runtime(p.id),old=!live&&r.tooOld;
+ const state=!p.instance?(old?"refused-version":"pending"):live?"online":old?"refused-version":"offline";
+ const seen=SERVERS.find(s=>s.id===p.id)?.seen,players=live?seen?.players??r.players:r.players;
+ return {id:p.id,label:p.label,announced:p.announced?partyName(p.id,p.announced):null,local:false,created:p.created,state,version:old?r.tooOld.version:p.version,addr:old?r.tooOld.addr:p.addr,
+  firstSeen:p.firstSeen,lastSeen:live?r.rx:old?r.tooOld.t:p.lastSeen,players:players??null,backup:lastBackup(all,p.id),refused:p.refused?{t:p.refused.t,addr:p.refused.addr}:null};
+}
+async function partiesRoute(res,b){
+ const all=BACKUPS.status().servers,action=b.action??"list",id=typeof b.id==="string"?b.id:"";
+ if(action==="list"){
+  const local=await Promise.all(SERVERS.filter(s=>!s.link).map(async s=>{const st=await status(s);
+   return {id:s.id,label:st.name,announced:st.name,local:true,created:null,state:"local",up:st.up,version:st.version??null,addr:`socket ${s.socket}`,firstSeen:null,
+    lastSeen:st.up?Date.now():null,players:st.players??null,backup:lastBackup(all,s.id),refused:null};}));   // the local socket only: no network call
+  const remote=LINK.list().map(p=>partyView(p,all));
+  return send(res,200,{ok:true,listen:listenView(),broken:LINK.broken(),parties:[...local,...remote]});
+ }
+ if(action==="add"){
+  if(!LINK_ON)throw new HttpError(409,"L'écoute des parties est fermée : ajoute POLITIGO_ADMIN_LINK=on à la stack de la console, puis redéploie-la.");
+  if(!LINK.listening())throw new HttpError(409,`L'écoute des parties ne fonctionne pas : ${listenView().error}`);
+  const label=typeof b.label==="string"?b.label:"";
+  if(SERVERS.some(s=>!s.link&&s.label&&fold(s.label)===fold(label)))throw new HttpError(409,`Une partie s'appelle déjà « ${label.trim()} ».`);
+  const {party,token}=LINK.add(label),env=envOf(token);
+  console.log(`admin web: party ${party.id} added (${party.label})`);noteMain(`Partie ajoutée : ${party.label} (${party.id}).`);
+  return send(res,200,{ok:true,party:partyView(party,all),env});
+ }
+ if(action==="renew"){
+  const {party,token}=LINK.renew(id),env=envOf(token),name=partyName(party.id,party.announced);
+  console.log(`admin web: token of party ${party.id} renewed`);noteMain(`Jeton de la partie ${name} (${party.id}) renouvelé : l'ancien ne sert plus.`);
+  return send(res,200,{ok:true,party:partyView(party,all),env});
+ }
+ if(action==="remove"){
+  const p=LINK.remove(id);
+  console.log(`admin web: party ${p.id} removed`);noteMain(`Partie retirée : ${cleanName(p.announced)??p.label} (${p.id}).`);
+  return send(res,200,{ok:true});
+ }
+ throw new HttpError(400,"Action inconnue.");
 }
 
 // ===================================================================== routes
@@ -446,6 +580,7 @@ async function route(req,res,path){
    res.writeHead(200,{...BASE_HEADERS,"Content-Type":f.type,"Content-Length":f.body.length,"Cache-Control":"no-cache",ETag:f.etag});return res.end(f.body);
   }
   if(path==="/api/session")return send(res,200,{ok:true,authed:!!session(req)});
+  if(path==="/api/parties"){const ses=session(req);if(!ses)throw new HttpError(401,"Session expirée, reconnecte-toi.");if(ses.mod)throw new HttpError(403,"Réservé à l'organisateur.");return partiesRoute(res,{});}
   throw new HttpError(404,"Introuvable.");
  }
  if(req.method!=="POST"||!path.startsWith("/api/"))throw new HttpError(path.startsWith("/api/")?405:404,"Introuvable.");
@@ -484,7 +619,7 @@ async function route(req,res,path){
  const mod=ses.mod,mine=SERVERS.filter(s=>!mod||mod.servers.includes(s.id));
  if(path==="/api/me")return send(res,200,{ok:true,...(mod?{role:"mod",name:mod.name,panels:mod.panels,actions:mod.actions,self:mod.players}:{role:"owner"})});
  if(path==="/api/servers"){
-  const list=await Promise.all((mod?await usable(mod,mine):mine).map(s=>status(s,b.full===true)));
+  const list=await Promise.all((mod?await usable(mod,mine,true):mine).map(s=>status(s,b.full===true)));
   // What a panel would show, only to whoever has that panel.
   if(mod)for(const s of list){
    if(!mod.actions.includes("invite"))delete s.invite;
@@ -494,12 +629,13 @@ async function route(req,res,path){
   return send(res,200,{ok:true,servers:list});
  }
  if(path.startsWith("/api/mods")){if(mod)throw new HttpError(403,"Réservé à l'organisateur.");return modsRoute(res,path,b);}
+ if(path==="/api/parties"){if(mod)throw new HttpError(403,"Réservé à l'organisateur.");return partiesRoute(res,b);}
  if(path.startsWith("/api/backups")){if(mod)throw new HttpError(403,"Réservé à l'organisateur.");return backupsRoute(res,path,b);}
  // Every game action names its server in the path: /api/s/<id>/<action>.
  const m=/^\/api\/s\/([a-z0-9-]{1,40})\/([a-z-]{1,30})$/.exec(path);
  if(!m)throw new HttpError(404,"Introuvable.");
  const srv=serverById(m[1]),action=m[2];
- if(mod&&!mod.servers.includes(srv.id))throw new HttpError(403,"Ce serveur ne t'est pas ouvert.");
+ if(mod&&!mod.servers.includes(srv.id))throw new HttpError(403,"Cette partie ne t'est pas ouverte.");
  if(mod&&!(await linkOf(mod,srv)).ok)throw new HttpError(403,LINK_GONE);
  const denied=()=>new HttpError(403,"Action non autorisée pour ton rôle.");
  // A moderator's name signs the game's admin log, and their own account there is out of their reach.
@@ -519,13 +655,25 @@ async function route(req,res,path){
    if(m&&!mod)throw new HttpError(409,`Ce compte est celui du modérateur ${m.name} : retire-le d'abord des modérateurs (page Modérateurs), puis supprime le compte.`);
   }
   if(mod&&WRITES(b.cmd))rate(mod);
+  // "Vu" on a Liaison alert is handled here (the game knows nothing of it), by the owner alone.
+  const linkKey=k=>typeof k==="string"&&/^link[:-]/.test(k);
+  if(b.cmd==="alerts-ack"&&Array.isArray(b.keys)&&b.keys.some(linkKey)){
+   const pre=`link:${srv.id}:`;
+   if(!mod)for(const k of b.keys){
+    if(typeof k==="string"&&k.startsWith(pre)&&LINK.ack(srv.id,k.slice(pre.length)))console.log(`admin web: link alert of party ${srv.id} seen`);
+    if(typeof k==="string"&&k.startsWith("link-cert:")&&LINK.ackCert(k))console.log("admin web: regenerated certificate alert seen");
+   }
+   b.keys=b.keys.filter(k=>!linkKey(k));
+   if(!b.keys.length)return send(res,200,{ok:true});
+  }
   const {ok,...r}=await cmd(srv,{cmd:b.cmd,...pick(b,keys),...actor,...(mod?{mods:modIds}:{})})
-   .catch(e=>{if(b.cmd==="alerts"&&!mod&&BACKUPS.alert(srv.id))return {ok:true,items:[],acked:0};throw e;});   // a game server down is the likeliest cause: its backup alert must still show
+   .catch(e=>{if(b.cmd==="alerts"&&!mod&&(BACKUPS.alert(srv.id)||linkAlert(srv.id)||consoleAlerts(srv).length))return {ok:true,items:[],acked:0};throw e;});   // a game server down is the likeliest cause: its backup alert must still show
   if(b.cmd==="rename"&&r.name)renamed(srv,Number.isSafeInteger(b.id)?b.id:null,r.old,r.name);
   if(b.cmd==="player-delete")links.clear();
+  if(srv.link&&!(NEEDS[b.cmd]&&!WRITES(b.cmd)))srv.cached=null;   // anything but a known read: the next /api/servers asks the party again (its invite code, its chat...)
   if(b.cmd==="player"&&r.player)r.player.isMod=modIds.includes(r.player.id);
   if(b.cmd==="abandoned-list")for(const x of r.items||[])x.isMod=modIds.includes(x.id);
-  if(b.cmd==="alerts"&&!mod){const a=BACKUPS.alert(srv.id);if(a)r.items=[a,...(r.items||[])];}   // the owner's alone, and it stays until a backup works
+  if(b.cmd==="alerts"&&!mod){const a=[...consoleAlerts(srv),linkAlert(srv.id),BACKUPS.alert(srv.id)].filter(Boolean);if(a.length)r.items=[...a,...(r.items||[])];}   // the owner's alone, and it stays until a backup works
   return send(res,200,{ok,...r});
  }
  // The new password is drawn here, sent once to the API and shown once to the admin: it is never logged nor kept.
@@ -553,6 +701,15 @@ const server=http.createServer(async(req,res)=>{
 });
 server.headersTimeout=15000;server.requestTimeout=60000;   // a backup download can take a moment
 const HOST=env.ADMIN_HOST||"0.0.0.0";
+if(LINK_ON){
+ try{
+  await LINK.listen(LINK_LISTEN,HOST);
+  console.log(`admin link: parties welcome on ${HOST}:${LINK_LISTEN} (to paste: POLITIGO_ADMIN_URL=${linkUrl()??`<IP de cette machine>:${LINK_PORT}`}), certificate SHA-256 ${linkCert().fingerprint}`);
+ }catch(e){
+  LINK_ERROR=`le port de liaison ${LINK_LISTEN} du conteneur ne s'ouvre pas (${e.code||e.message}) : aucune partie ne peut se connecter. Vérifie qu'aucun autre service ne l'occupe, puis redémarre la console.`;
+  console.error(`admin link: cannot listen on ${HOST}:${LINK_LISTEN} (${e.message}): no party can connect`);
+ }
+}else if(LINK.list().length)console.log(`admin link: closed (POLITIGO_ADMIN_LINK is not "on"): the ${LINK.list().length} network parties cannot connect`);
 server.listen(PORT,HOST,()=>{
  // The owner wants LAN access (0.0.0.0 by default), but a generated password on an open address deserves a loud reminder.
  if(GENERATED&&!/^(127\.|::1$|localhost$)/.test(HOST)){
@@ -562,6 +719,6 @@ server.listen(PORT,HOST,()=>{
   console.warn("never on a host facing the internet without a reverse proxy with HTTPS; or set your own long POLITIGO_ADMIN_PASSWORD.");
   console.warn("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
  }
- console.log(`PolitiGo admin on :${PORT} (${SERVERS.map(s=>`${s.name||s.id}=${s.socket}`).join(", ")}${PROXY_HOPS?`, proxy hops ${PROXY_HOPS}`:""})`);
+ console.log(`PolitiGo admin on :${PORT} (${SERVERS.map(s=>s.link?`${s.label||s.id}=liaison`:`${s.name||s.id}=${s.socket}`).join(", ")}${PROXY_HOPS?`, proxy hops ${PROXY_HOPS}`:""})`);
 });
-for(const sig of ["SIGTERM","SIGINT"])process.on(sig,()=>{server.close();process.exit(0);});
+for(const sig of ["SIGTERM","SIGINT"])process.on(sig,()=>{LINK.close();server.close();process.exit(0);});
