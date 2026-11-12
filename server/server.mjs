@@ -13,6 +13,7 @@ import * as A from "./activities.mjs";
 import * as E from "./events.mjs";
 import * as P from "./push.mjs";
 import {createChat} from "./chat.mjs";
+import {linkConfig,instanceId,startLink} from "./adminlink.mjs";
 import * as W from "./wardrobe.mjs";
 import * as D from "./duel.mjs";
 
@@ -2090,10 +2091,14 @@ function duelSuspects(now){
 function chores(now){
  q.purgeActivity.run(activityCut(now));q.purgeMini.run(activityCut(now));
  q.purgeDuels.run(now-30*864e5);q.purgeTombstones.run(now-7*864e5);q.purgeAcks.run(now-ALERT_DAYS*864e5);
- if(!ADMIN_SOCKET)return;
- const dir=dirname(ADMIN_SOCKET);
- for(const f of readdirSync(dir)){
-  if(!/^backup-\d+\.db(-journal)?$/.test(f))continue;   // a copy cut short by a full disk leaves its journal too
+ for(const dir of new Set([ADMIN_SOCKET&&dirname(ADMIN_SOCKET),dirname(DB_PATH)].filter(Boolean)))sweepBackups(dir,now);
+}
+// Backup copies older than 10 min that nothing took away: cut short by a full disk (its journal too), or left next to
+// the database by a stop in the middle of a transfer over the network link.
+function sweepBackups(dir,now=Date.now()){
+ let names;try{names=readdirSync(dir);}catch(e){if(e.code!=="ENOENT")console.error(`sweeping old backups in ${dir}:`,e.message);return;}
+ for(const f of names){
+  if(!/^backup-\d+\.db(-journal)?$/.test(f))continue;
   try{const st=lstatSync(join(dir,f));if(st.isFile()&&now-st.mtimeMs>10*60e3)unlinkSync(join(dir,f));}catch{}
  }
 }
@@ -2195,9 +2200,11 @@ function renamePlayer(p,raw){
  return {name,old};
 }
 // VACUUM INTO writes a consistent copy while the game runs, next to the socket so only the admin side can read it.
+// Through the network link (adminlink.mjs) it goes next to the database instead, and the link streams then deletes it.
 function backup(b){
- if(!ADMIN_SOCKET)throw new HttpError(400,"Socket d'administration désactivé.");
- const path=join(dirname(ADMIN_SOCKET),`backup-${Date.now()}.db`);
+ const link=!!adminActor.getStore()?.link;
+ if(!link&&!ADMIN_SOCKET)throw new HttpError(400,"Socket d'administration désactivé.");
+ const path=join(link?dirname(DB_PATH):dirname(ADMIN_SOCKET),`backup-${Date.now()}.db`);
  // Created 0600 from the start (no window where another user could open it), then the usual mask is put back.
  const mask=process.umask(0o177);
  try{db.prepare("VACUUM INTO ?").run(path);}
@@ -2206,7 +2213,7 @@ function backup(b){
   for(const f of [path,path+"-journal"])try{unlinkSync(f);}catch{}
   console.error("backup:",e);
   const full=/SQLITE_FULL|ENOSPC|disk is full/i.test(`${e?.code} ${e?.errcode} ${e?.errstr} ${e?.message}`);
-  throw new HttpError(507,full?"Sauvegarde impossible : le volume du socket d'administration est plein.":"Sauvegarde impossible : la copie de la base a échoué (voir les journaux de l'API).");
+  throw new HttpError(507,full?`Sauvegarde impossible : le volume ${link?"des données":"du socket d'administration"} est plein.`:"Sauvegarde impossible : la copie de la base a échoué (voir les journaux de l'API).");
  }
  finally{process.umask(mask);}
  try{chmodSync(path,0o600);}catch{}
@@ -2493,6 +2500,16 @@ async function adminCommand(b){
  }
  throw new HttpError(400,"Commande inconnue.");
 }
+// One admin command, as the socket or the network link received it: the same actor (by, and self/mods/via inside b),
+// the same answer object. link: the command came through the network link (a backup then goes next to the database).
+function runAdmin(b,link=false){
+ // A moderator (web console): their name signs the log, and their own player account is out of their reach (self).
+ const by=typeof b.by==="string"&&b.by.trim()?b.by.trim().slice(0,40):null;
+ return adminActor.run({by,link},()=>adminCommand(b)).then(r=>({ok:true,...r}),e=>{
+  if(!(e instanceof HttpError))console.error("admin:",e);
+  return {ok:false,error:e instanceof HttpError?e.message:"Erreur interne."};
+ });
+}
 let admin=null;
 function startAdmin(){
  if(!ADMIN_SOCKET)return;
@@ -2519,12 +2536,7 @@ function startAdmin(){
    started=true;
    let b=null;try{b=JSON.parse(buf.slice(0,i));}catch{}
    if(!b||typeof b!=="object"||Array.isArray(b))return reply({ok:false,error:"JSON invalide."});
-   // A moderator (web console): their name signs the log, and their own player account is out of their reach (self).
-   const by=typeof b.by==="string"&&b.by.trim()?b.by.trim().slice(0,40):null;
-   adminActor.run({by},()=>adminCommand(b)).then(r=>reply({ok:true,...r}),e=>{
-    if(!(e instanceof HttpError))console.error("admin:",e);
-    reply({ok:false,error:e instanceof HttpError?e.message:"Erreur interne."});
-   });
+   runAdmin(b).then(reply);
   });
  });
  admin.maxConnections=8;   // the admin interface sends a few requests at once
@@ -2535,6 +2547,16 @@ function startAdmin(){
 }
 function stopAdmin(){if(!admin)return;try{admin.close();}catch{}try{unlinkSync(ADMIN_SOCKET);}catch{}admin=null;}
 startAdmin();
+// An extra game reaches the console over the network (POLITIGO_ADMIN_URL, _TLS, _TOKEN): see adminlink.mjs. A missing
+// or malformed variable is logged and the game runs on without the link.
+let adminLink=null;
+{
+ const cfg=linkConfig(env);
+ if(cfg?.error)console.error(`[admin-link] ${cfg.error}`);
+ else if(cfg){sweepBackups(dirname(DB_PATH));adminLink=startLink(cfg,{instance:instanceId(join(dirname(DB_PATH),"admin-link-id")),limit:ADMIN_LIMIT,
+  info:()=>({name:SERVER_NAME,version:RELEASE||VERSION,players:players.size}),exec:b=>runAdmin(b,true)});}
+}
+function stopLink(){if(adminLink){adminLink.stop();adminLink=null;}}
 // Logged once, when it is made: logs are read by more people (and tools) than the data volume.
 if(INVITE_GENERATED&&INVITE_NEW)console.log(`Invite code: ${INVITE} (generated, kept in ${INVITE_FILE}; delete that file and restart for a new one)`);
 else if(INVITE_GENERATED)console.log(`Code d'invitation : voir ${INVITE_FILE} ou la console d'admin.`);
@@ -2542,10 +2564,10 @@ server.listen(PORT,()=>console.log(`PolitiGo API ${VERSION} on :${PORT} (speed x
 // A bug that escapes every handler is logged with its stack, then the container restarts the process cleanly.
 // Every clock is written as it stands before leaving, so a restart never sets anyone's game time back.
 function saveAll(){for(const p of players.values()){try{persist(p);}catch(e){console.error(`saving player ${p.id}:`,e);}}}
-for(const ev of ["unhandledRejection","uncaughtException"])process.on(ev,e=>{console.error(`${ev}:`,e);saveAll();stopAdmin();try{db.close();}catch{}process.exit(1);});
+for(const ev of ["unhandledRejection","uncaughtException"])process.on(ev,e=>{console.error(`${ev}:`,e);saveAll();stopAdmin();stopLink();try{db.close();}catch{}process.exit(1);});
 function shutdown(code){try{db.close();}catch(e){console.error("closing the database:",e);}process.exit(code);}
 for(const sig of ["SIGTERM","SIGINT"])process.on(sig,()=>{
- stopAdmin();
+ stopAdmin();stopLink();
  for(const c of [...clients])closeStream(c,true);
  saveAll();
  server.close(()=>shutdown(0));

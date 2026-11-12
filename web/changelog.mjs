@@ -5,6 +5,18 @@
 import {cmpRelease} from "./rules.mjs";
 
 export const CHANGELOG=[
+ {version:"1.7.3",date:"2026-11-11",
+  added:[
+   "Le jeu a ses premiers sons : certains moments rares ont maintenant leur bande-son, et un bouton 🔊 la coupe (le choix est retenu sur l'appareil)."
+  ],
+  fixed:[],
+  admin:[
+   "Une seule console pour plusieurs parties, même sur d'autres machines : la nouvelle page Parties en ajoute une et donne trois lignes à coller dans sa stack, puis la partie se connecte toute seule.",
+   "La liaison est chiffrée et chaque partie a son propre jeton, lié à sa machine, à renouveler ou retirer à tout moment ; une alerte prévient si une autre machine l'essaie.",
+   "Les sauvegardes automatiques, À traiter et les droits des modérateurs couvrent aussi les parties rattachées.",
+   "La console parle de « parties » partout où elle disait « serveurs »."
+  ]
+ },
  {version:"1.7.1",date:"2026-11-08",help:["activites","regle"],
   added:[
    "La règle du jeu, dans l'aide et à l'inscription : PolitiGo se joue à la main, sans script, sans robot ni second compte. Les robots ne votent pas."

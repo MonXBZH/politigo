@@ -1,4 +1,6 @@
 *
 !admin/server.mjs
 !admin/backups.mjs
+!admin/verify.mjs
+!admin/link.mjs
 !admin/ui/

@@ -1,7 +1,8 @@
 // The Bâton de feu des Apprix: its legend, fourteen pictures at the player's pace (a tap, Enter, Space or → shows the
 // next one, « Passer » jumps to the end), then the reveal card; and the volcano that replaces the hemicycle while its
-// bearer holds it. Nothing touches the DOM until the first play: the module loads in node for its tests.
+// bearer holds it. Its music (hardcore.mjs) plays while it is open, unless the sound is off. Nothing touches the DOM until the first play: the module loads in node for its tests.
 import {baton} from "./looks.mjs";
+import {createSong,soundOn,setSound} from "./hardcore.mjs";
 
 const W=128,H=256,LIFT=34;   // pictures are drawn LIFT px higher: the bottom of the screen belongs to the caption
 let c=null;                  // the picture's context, set while one is drawn
@@ -180,6 +181,7 @@ export function drawSlide(ctx,i,t,reduced=false){
 // behind), onWear() (« Le brandir »), onClose(). Returns {play, open}.
 export function createLegend({reduced=()=>false,drawWinner=()=>{},inert=()=>{},onWear=()=>{},onClose=()=>{}}={}){
  let root=null,els=null,i=0,shownAt=0,raf=0,opener=null,mode="film";
+ const song=createSong();
  const el=(tag,cls,text)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e;};
  function build(){
   root=el("div","legend");root.hidden=true;root.setAttribute("role","dialog");root.setAttribute("aria-modal","true");root.setAttribute("aria-label","La légende du Bâton de feu des Apprix");root.tabIndex=-1;
@@ -196,19 +198,22 @@ export function createLegend({reduced=()=>false,drawWinner=()=>{},inert=()=>{},o
   const row=el("div","btn-row"),wear=el("button","btn go","Le brandir"),again=el("button","btn","Lire la légende"),close=el("button","btn","Fermer");
   for(const b of [wear,again,close])b.type="button";row.append(wear,again,close);
   fin.append(el("span","legend-tag","Mythique · exemplaire unique"),frame,h,p,row);
+  const snd=el("button","icon-btn legend-snd");snd.type="button";   // in the film's corner, then the card's
   root.append(film,fin);document.body.append(root);
-  els={film,cv,vc:cv.getContext("2d"),ttl,cap,count,hint,fin,win,wc:win.getContext("2d"),wear,again,close,off:Object.assign(document.createElement("canvas"),{width:W,height:H}),sp:Object.assign(document.createElement("canvas"),{width:64,height:64})};
+  els={film,cv,vc:cv.getContext("2d"),ttl,cap,count,hint,fin,win,wc:win.getContext("2d"),wear,again,close,off:Object.assign(document.createElement("canvas"),{width:W,height:H}),sp:Object.assign(document.createElement("canvas"),{width:64,height:64}),snd};
+  syncSound();snd.addEventListener("click",()=>{const on=!soundOn();setSound(on);syncSound();if(on)song.start();else song.stop(0.2);});
   next.addEventListener("click",step);skip.addEventListener("click",finish);
   wear.addEventListener("click",()=>{shut();onWear();});again.addEventListener("click",()=>play(opener));close.addEventListener("click",shut);
   // Keys stay inside: the page's own shortcuts (the sheet's Escape, the mini-games) never see them.
   root.addEventListener("keydown",e=>{
    e.stopPropagation();
    if(e.key==="Escape"){e.preventDefault();if(mode==="film")finish();else shut();return;}
-   if(mode==="film"&&["Enter"," ","ArrowRight"].includes(e.key)&&!e.target.closest(".legend-skip")){e.preventDefault();step();return;}
+   if(mode==="film"&&["Enter"," ","ArrowRight"].includes(e.key)&&!e.target.closest(".legend-skip,.legend-snd")){e.preventDefault();step();return;}
    if(e.key==="Tab"){const f=[...root.querySelectorAll("button")].filter(b=>b.getClientRects().length);if(!f.length)return;
     const a=f.indexOf(document.activeElement);if(e.shiftKey&&a<=0){e.preventDefault();f[f.length-1].focus();}else if(!e.shiftKey&&a===f.length-1){e.preventDefault();f[0].focus();}}
   });
  }
+ function syncSound(){const on=soundOn();els.snd.textContent=on?"🔊":"🔇";els.snd.setAttribute("aria-label",on?"Couper la musique":"Mettre la musique");els.snd.setAttribute("aria-pressed",String(on));}
  function show(n){
   i=n;shownAt=performance.now();
   els.cap.replaceChildren(...captionParts(SLIDES[i][1]).map(p=>p.b?el("b","",p.text):document.createTextNode(p.text)));
@@ -234,17 +239,18 @@ export function createLegend({reduced=()=>false,drawWinner=()=>{},inert=()=>{},o
  // A tap too soon after a picture appeared (a double tap) is ignored: nobody skips a passage by accident.
  function step(){if(mode!=="film"||performance.now()-shownAt<500)return;if(i<SLIDES.length-1)show(i+1);else finish();}
  function finish(){
-  mode="final";els.film.hidden=true;els.fin.hidden=false;cancelAnimationFrame(raf);paintWin(performance.now());
+  mode="final";els.film.hidden=true;els.fin.hidden=false;els.fin.prepend(els.snd);cancelAnimationFrame(raf);paintWin(performance.now());
   if(!reduced())raf=requestAnimationFrame(tick);els.wear.focus();
  }
- function shut(){if(!root||root.hidden)return;cancelAnimationFrame(raf);root.hidden=true;inert(false);onClose();(opener&&opener.isConnected?opener:null)?.focus();}
+ function shut(){if(!root||root.hidden)return;cancelAnimationFrame(raf);song.stop();root.hidden=true;inert(false);onClose();(opener&&opener.isConnected?opener:null)?.focus();}
  // Plays from the first picture. from: what gets the focus back at the end.
  function play(from=null){
   if(!root)build();
   opener=from||(root.hidden?document.activeElement:opener);mode="film";
-  cancelAnimationFrame(raf);root.hidden=false;inert(true);els.fin.hidden=true;els.film.hidden=false;
+  cancelAnimationFrame(raf);root.hidden=false;inert(true);els.fin.hidden=true;els.film.hidden=false;els.film.append(els.snd);
   root.classList.remove("on");requestAnimationFrame(()=>root.classList.add("on"));   // the screen dims first
   show(0);root.focus();raf=requestAnimationFrame(tick);
+  syncSound();if(soundOn())song.start();   // play() always follows a tap or a key: the browser lets it sound
  }
  return {play,open:()=>!!root&&!root.hidden};
 }

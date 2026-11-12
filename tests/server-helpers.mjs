@@ -24,9 +24,12 @@ export function boot(port,dir,extra={},db="t.db"){
  for(const k of Object.keys(env))if(env[k]===undefined)delete env[k];
  const p=spawn("node",[process.env.SERVER||"/app/server.mjs"],{env,stdio:["ignore","pipe","pipe"]});
  p.out="";p.err="";p.stderr.on("data",d=>{p.err+=d;});
- return new Promise((ok,ko)=>{p.stdout.on("data",d=>{p.out+=d;if(/PolitiGo API/.test(p.out))ok(p);});p.on("exit",code=>ko(new Error("server exited "+code+": "+p.err)));});
+ // Bounded: a server that never says it is up fails the test instead of holding the whole suite.
+ return new Promise((ok,ko)=>{const t=setTimeout(()=>{p.kill("SIGKILL");ko(new Error("server not up within 30 s: "+p.err.slice(-500)));},30e3);
+  p.stdout.on("data",d=>{p.out+=d;if(/PolitiGo API/.test(p.out)){clearTimeout(t);ok(p);}});p.on("exit",code=>{clearTimeout(t);ko(new Error("server exited "+code+": "+p.err));});});
 }
-export const stop=p=>new Promise(r=>{if(p.exitCode!==null)return r();p.on("exit",r);p.kill("SIGTERM");});
+// SIGTERM, then SIGKILL after 5 s: a server slow to stop never holds the suite.
+export const stop=p=>new Promise(r=>{if(p.exitCode!==null||p.signalCode!==null)return r();p.on("exit",()=>{clearTimeout(t);r();});p.kill("SIGTERM");const t=setTimeout(()=>p.kill("SIGKILL"),5e3);});
 
 let ipSeq=0;
 export function client(port){

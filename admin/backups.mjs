@@ -7,11 +7,13 @@ import fs from "node:fs";
 import {randomBytes} from "node:crypto";
 import {join,basename} from "node:path";
 import {pipeline} from "node:stream/promises";
+import {spawn} from "node:child_process";
+import {fileURLToPath} from "node:url";
 
 export const FREQS=["quotidienne","hebdomadaire","mensuelle"],MANUAL="manuelle",MANUAL_KEEP=5,KEEP_MAX=90;
 export const DEFAULTS={hour:4,quotidienne:{on:true,keep:7},hebdomadaire:{on:true,keep:4},mensuelle:{on:true,keep:12}};
-const FILE=/^(quotidienne|hebdomadaire|mensuelle|manuelle)-(\d{4})-(\d{2})-(\d{2})-(\d{2})(\d{2})\.db$/,TEMP=/^(quotidienne|hebdomadaire|mensuelle|manuelle)-\d{4}-\d{2}-\d{2}-\d{4}\.db\.tmp-[0-9a-f]+$/;
-const VAPID="vapid.json",RETRY_MS=30*60e3,MARGIN_MIN=16*1024*1024,PRIVATE=0o600,PRIVATE_DIR=0o700;
+const FILE=/^(quotidienne|hebdomadaire|mensuelle|manuelle)-(\d{4})-(\d{2})-(\d{2})-(\d{2})(\d{2})\.db$/,TEMP=/^(quotidienne|hebdomadaire|mensuelle|manuelle)-\d{4}-\d{2}-\d{2}-\d{4}\.db\.tmp-[0-9a-f]+(-shm|-wal|-journal)?$/;
+const VAPID="vapid.json",RETRY_MS=30*60e3,PARTY_MS=20*60e3,PARALLEL=3,ID=/^[a-z0-9-]{1,40}$/,MARGIN_MIN=16*1024*1024,PRIVATE=0o600,PRIVATE_DIR=0o700;
 
 // The last time a frequency was due at t, and the next one. Built from local dates: a clock change moves no appointment.
 export function lastSlot(freq,hour,t){
@@ -46,28 +48,50 @@ async function writeJson(file,v){
  catch(e){await fs.promises.unlink(tmp).catch(()=>{});throw e;}
 }
 const disk=async dir=>{const s=await fs.promises.statfs(dir);return {free:s.bavail*s.bsize,total:s.blocks*s.bsize};};
-// A base that opens, passes SQLite's own check and holds the players. Absent node:sqlite: the size check stands alone.
-let sqlite;
-async function verify(path){
- sqlite??=await import("node:sqlite").catch(()=>false);
- if(!sqlite)return;
- const db=new sqlite.DatabaseSync(path,{readOnly:true});
- try{
-  const r=db.prepare("PRAGMA quick_check").get();if(r?.quick_check!=="ok")throw new Error(`base abîmée (${String(r?.quick_check).slice(0,80)})`);
-  if(!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='players'").get())throw new Error("table players absente");
- }finally{db.close();}
+// A base that opens, passes SQLite's own check and holds the players: checked in a child process (verify.mjs), within
+// 5 minutes, so that the console keeps answering while a big base is read. Past the delay the process is killed
+// (SIGKILL: SQLite cannot be stopped from inside), and one check runs at a time: the next one starts only once the
+// previous process has exited. onStart(pid), script: for the tests (script: a stand-in for verify.mjs).
+const VERIFY=fileURLToPath(new URL("./verify.mjs",import.meta.url)),VERIFY_MS=5*60e3;
+const human=ms=>ms>=60e3?`${Math.round(ms/60e3)} min`:`${Math.ceil(ms/1000)} s`;
+let checking=Promise.resolve();
+export function verify(path,{timeout=VERIFY_MS,onStart,script=VERIFY}={}){
+ const check=()=>new Promise((ok,ko)=>{
+  let done=false,late=false,out="",c;
+  const end=(f,v)=>{if(done)return;done=true;clearTimeout(t);f(v);};
+  const t=setTimeout(()=>{late=true;c?.kill("SIGKILL");},timeout);
+  try{c=spawn(process.execPath,[script,path],{stdio:["ignore","pipe","ignore"],env:{NODE_NO_WARNINGS:"1"}});}catch(e){return end(ko,e);}
+  if(c.pid)onStart?.(c.pid);
+  c.stdout.setEncoding("utf8");c.stdout.on("data",d=>{if(out.length<4096)out+=d;});
+  c.on("error",e=>{if(!c.pid)end(ko,e);});   // not even started: no exit will come
+  c.on("close",(code,sig)=>{
+   if(late)return end(ko,new Error(`vérification trop longue (plus de ${human(timeout)})`));
+   let m=null;try{m=JSON.parse(out);}catch{}
+   m?.ok===true?end(ok):end(ko,new Error(m?.error||`vérification interrompue (${sig||`code ${code}`})`));
+  });
+ });
+ const p=checking.then(check,check);checking=p.catch(()=>{});
+ return p;
 }
+// A wait given up after ms (the work behind it goes on, but the others no longer wait for it).
+const settle=(p,ms,msg)=>{let t;return Promise.race([p,new Promise((_,ko)=>{t=setTimeout(()=>ko(new Error(msg)),ms);})]).finally(()=>clearTimeout(t));};
 
 // take(srv): {path, vapid?}, the API's copy. note(srv,text): a line in that game's admin log. Err(status,message): the
-// caller's HTTP error. now and freeSpace can be replaced by the tests.
-export function createBackups({root,servers,take,note,Err,now=Date.now,freeSpace=disk,retryMs=RETRY_MS,log=console.error}){
+// caller's HTTP error. partyMs: the most one server's backup may hold the others back; parallel: how many servers are
+// backed up at once. now, freeSpace, verifyMs can be replaced by the tests.
+export function createBackups({root,servers,take,note,Err,now=Date.now,freeSpace=disk,retryMs=RETRY_MS,log=console.error,partyMs=PARTY_MS,verifyMs=VERIFY_MS,parallel=PARALLEL}){
  const base=join(root,"backups"),confFile=join(root,"backups.json"),stateFile=join(root,"backups-state.json");
  let conf=cleanConfig(readJson(confFile))??structuredClone(DEFAULTS);
  const saved=readJson(stateFile),state={last:saved?.last&&typeof saved.last==="object"?saved.last:{},fail:saved?.fail&&typeof saved.fail==="object"?saved.fail:{}};
- let running=false;
+ let running=false,booked=0;const slow=new Set();   // slow: servers whose last try outlived partyMs and still runs; booked: room promised to the copies under way
  const dirOf=srv=>join(base,srv.id);
- const server=id=>{const s=servers.find(x=>x.id===id);if(!s)throw new Err(404,"Serveur inconnu.");return s;};
- const tell=(srv,text)=>Promise.resolve().then(()=>note(srv,text)).catch(e=>log(`backups: log line for ${srv.id} failed: ${e.message}`));
+ // The folders of servers no longer there (a party removed): their backups stay listed and can be downloaded.
+ function orphans(){
+  let l=[];try{l=fs.readdirSync(base,{withFileTypes:true});}catch{return [];}
+  return l.filter(d=>d.isDirectory()&&ID.test(d.name)&&!servers.some(s=>s.id===d.name)).map(d=>({id:d.name,removed:true}));
+ }
+ const server=id=>{const s=servers.find(x=>x.id===id)??(typeof id==="string"?orphans().find(x=>x.id===id):null);if(!s)throw new Err(404,"Partie inconnue.");return s;};
+ const tell=(srv,text)=>srv.removed?Promise.resolve():Promise.resolve().then(()=>note(srv,text)).catch(e=>log(`backups: log line for ${srv.id} failed: ${e.message}`));
  const saveState=()=>writeJson(stateFile,state).catch(e=>log(`backups: state not saved: ${e.message}`));
  function files(srv){
   let names=[];try{names=fs.readdirSync(dirOf(srv));}catch{return [];}
@@ -107,14 +131,16 @@ export function createBackups({root,servers,take,note,Err,now=Date.now,freeSpace
   await fs.promises.mkdir(dir,{recursive:true,mode:PRIVATE_DIR});await fs.promises.chmod(base,PRIVATE_DIR);await fs.promises.chmod(dir,PRIVATE_DIR);
   await sweep(dir);
   const {path,vapid}=await take(srv),temps=[];
-  let bytes=0;
+  let bytes=0,want=0;
   try{
-   const need=(await fs.promises.stat(path)).size,room=(await freeSpace(dir)).free,want=need*freqs.length+Math.max(MARGIN_MIN,need/10);
-   if(room<want)throw new Error(`espace insuffisant : ${size(want)} nécessaires, ${size(room)} libres`);
+   // Several servers at once: the room the others' copies were promised is not free.
+   const need=(await fs.promises.stat(path)).size,room=(await freeSpace(dir)).free-booked,w=need*freqs.length+Math.max(MARGIN_MIN,need/10);
+   if(room<w)throw new Error(`espace insuffisant : ${size(w)} nécessaires, ${size(Math.max(0,room))} libres`);
+   want=w;booked+=want;
    const first=tempName(join(dir,`${freqs[0]}-${stamp(t)}.db`));temps.push(first);
    bytes=await copy(path,first);
    if((await fs.promises.stat(first)).size!==bytes)throw new Error("copie incomplète");
-   await verify(first);await sync(first);
+   await verify(first,{timeout:verifyMs});await sync(first);
    for(const f of freqs.slice(1)){
     const tmp=tempName(join(dir,`${f}-${stamp(t)}.db`));temps.push(tmp);
     await fs.promises.copyFile(first,tmp,fs.constants.COPYFILE_EXCL);await fs.promises.chmod(tmp,PRIVATE);await sync(tmp);
@@ -123,6 +149,7 @@ export function createBackups({root,servers,take,note,Err,now=Date.now,freeSpace
    temps.length=0;
    if(vapid&&typeof vapid==="object")await writeJson(join(dir,VAPID),vapid);
   }finally{
+   booked-=want;
    await fs.promises.unlink(path).catch(()=>{});
    for(const x of temps)await fs.promises.unlink(x).catch(()=>{});
   }
@@ -131,16 +158,26 @@ export function createBackups({root,servers,take,note,Err,now=Date.now,freeSpace
   for(const f of freqs)await rotate(srv,f,`${f}-${stamp(t)}.db`);
   await tell(srv,`Sauvegarde ${freqs.join(", ")} : ${size(bytes)}.`);
  }
- async function run(plan){
-  const out=[];
-  for(const {srv,freqs} of plan){
-   try{await one(srv,freqs);out.push({id:srv.id,ok:true});}
-   catch(e){
-    const error=(e?.code==="ENOSPC"?"disque plein dans le volume de la console (/data-admin) : libère de la place ou garde moins de sauvegardes":String(e?.message||e)).slice(0,200);
-    state.fail[srv.id]={t:now(),error,freqs};out.push({id:srv.id,ok:false,error});
-    log(`backups: ${srv.id}: ${error}`);await tell(srv,`Sauvegarde ${freqs.join(", ")} en échec.`);   // the admin log is open to moderators: the cause stays in the logs and the owner's alert
-   }
+ // A few servers at once (PARALLEL): a slow one no longer delays the whole list; each keeps its own delay.
+ async function attempt({srv,freqs}){
+  try{
+   if(slow.has(srv.id))throw new Error("la sauvegarde précédente de cette partie n'est pas encore finie");
+   const job=one(srv,freqs);job.catch(()=>{});
+   await settle(job,partyMs,`délai dépassé (${human(partyMs)}) : la partie répond trop lentement, les autres passent`).catch(e=>{
+    slow.add(srv.id);job.finally(()=>slow.delete(srv.id)).catch(()=>{});throw e;});
+   return {id:srv.id,ok:true};
   }
+  catch(e){
+   const error=(e?.code==="ENOSPC"?"disque plein dans le volume de la console (/data-admin) : libère de la place ou garde moins de sauvegardes":String(e?.message||e)).slice(0,200);
+   state.fail[srv.id]={t:now(),error,freqs};
+   log(`backups: ${srv.id}: ${error}`);await tell(srv,`Sauvegarde ${freqs.join(", ")} en échec.`);   // the admin log is open to moderators: the cause stays in the logs and the owner's alert
+   return {id:srv.id,ok:false,error};
+  }
+ }
+ async function run(plan){
+  const out=[];let next=0;
+  const lane=async()=>{while(next<plan.length){const i=next++;out[i]=await attempt(plan[i]);}};
+  await Promise.all(Array.from({length:Math.min(parallel,plan.length)},lane));
   await saveState();
   return out;
  }
@@ -161,6 +198,7 @@ export function createBackups({root,servers,take,note,Err,now=Date.now,freeSpace
    if(running)return;
    const t=now(),plan=[];
    for(const srv of servers){
+    if(slow.has(srv.id))continue;
     const f=state.fail[srv.id];if(f&&t-f.t<retryMs&&t>=f.t)continue;
     const last=lastOf(srv),freqs=FREQS.filter(x=>conf[x].on&&(last[x]??0)<lastSlot(x,conf.hour,t));
     if(freqs.length)plan.push({srv,freqs});
@@ -172,9 +210,10 @@ export function createBackups({root,servers,take,note,Err,now=Date.now,freeSpace
    return locked(()=>run(servers.map(srv=>({srv,freqs:[MANUAL]}))));
   },
   status(){
-   const t=now(),list=servers.map(s=>{
+   const t=now(),list=[...servers,...orphans()].map(s=>{
     const l=files(s);
-    return {id:s.id,name:s.label||s.id,files:l,last:lastOf(s,l),failure:state.fail[s.id]?{t:state.fail[s.id].t,error:state.fail[s.id].error}:null,vapid:fs.existsSync(join(dirOf(s),VAPID))};
+    return {id:s.id,name:s.removed?`Partie retirée (${s.id})`:s.label||s.id,...(s.removed?{removed:true}:{}),files:l,last:lastOf(s,l),
+     failure:!s.removed&&state.fail[s.id]?{t:state.fail[s.id].t,error:state.fail[s.id].error}:null,vapid:fs.existsSync(join(dirOf(s),VAPID))};
    });
    return {config:structuredClone(conf),running,next:Object.fromEntries(FREQS.map(f=>[f,conf[f].on?nextSlot(f,conf.hour,t):null])),servers:list,
     total:list.flatMap(s=>s.files).reduce((n,f)=>n+f.size,0),lastSuccess:Math.max(0,...list.flatMap(s=>Object.values(s.last).map(v=>v??0)))||null};
