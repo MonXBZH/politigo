@@ -4,6 +4,7 @@
 // what it already knows (its own presses at once, the other side's as the batches bring them, a ghost at its time, a
 // replay whole). Nothing touches the DOM before the first open: the pure helpers load in node for the tests.
 import {BD,chart,roundSeed,sim,verdict,timeline} from "./duel.mjs";
+import {createBand,soundOn,setSound} from "./hardcore.mjs";
 
 // ---------------------------------------------------------------- pure helpers (tests/batonduel.client.test.mjs)
 const SAFE=150;          // a batch claims a little less than the local clock: never "up" ahead of the server's
@@ -137,7 +138,6 @@ export function createBatonDuel(o){
  const btn=(text,cls,fn)=>{const b=el("button",`btn${cls?` ${cls}`:""}`,text);b.type="button";b.addEventListener("click",fn);return b;};
  const view=()=>o.view()||null,duel=()=>view()?.duel||null;
  const names=()=>{const d=duel();return [d?.c||Wt?.names?.c||"Challenger",d?.b||Wt?.names?.b||"Porteur"];};
- let soundOn=false;try{soundOn=localStorage.getItem("politigo.duelSound")==="1";}catch{}
  // The round under way, kept over a reload (roundLeft): the card then says how long it still runs, the clock too.
  const RKEY="politigo.batonRound";
  const keepRound=v=>{try{localStorage.setItem(RKEY,JSON.stringify(v));}catch{}};
@@ -175,7 +175,7 @@ export function createBatonDuel(o){
   E={col,nb,sb,db,nc,scn,dc,timer,tsub,snd,close,live,stage,arena,ac:arena.getContext("2d"),floaters,ball,tl0,tl1,play,wrap,lanes,judge,combo,padB,watch,pickB,feed,ov,cardCv:null,cardDraw:null,
    lo:Object.assign(document.createElement("canvas"),{width:L,height:AH}),sp:Object.assign(document.createElement("canvas"),{width:64,height:64}),flash:[0,0],sparks:[],feedKeys:new Set()};
   syncSound();syncPick();
-  snd.addEventListener("click",()=>{soundOn=!soundOn;try{localStorage.setItem("politigo.duelSound",soundOn?"1":"0");}catch{}syncSound();if(!soundOn)stopSound();});
+  snd.addEventListener("click",()=>{const on=!soundOn();setSound(on);syncSound();if(!on)stopSound();else if(screen==="play"&&G?.phase==="play")soundRound(G);});
   close.addEventListener("click",askClose);
   // Touch first: the two pads and the lanes themselves (each half of the falling-notes area), several fingers at once.
   padB.forEach((b,l)=>b.addEventListener("pointerdown",e=>{e.preventDefault();press(l,e.timeStamp);}));
@@ -192,7 +192,7 @@ export function createBatonDuel(o){
     const a=f.indexOf(document.activeElement);if(e.shiftKey&&a<=0){e.preventDefault();f[f.length-1].focus();}else if(!e.shiftKey&&a===f.length-1){e.preventDefault();f[0].focus();}}
   });
  }
- function syncSound(){E.snd.textContent=soundOn?"🔊":"🔇";E.snd.setAttribute("aria-label",soundOn?"Couper le son du duel":"Mettre le son du duel");E.snd.setAttribute("aria-pressed",String(soundOn));}
+ function syncSound(){const on=soundOn();E.snd.textContent=on?"🔊":"🔇";E.snd.setAttribute("aria-label",on?"Couper le son du duel":"Mettre le son du duel");E.snd.setAttribute("aria-pressed",String(on));}
  function syncPick(){const [c,b]=names();E.pickB[0].textContent=`Je soutiens ${b}`;E.pickB[1].textContent=`Je soutiens ${c}`;for(const x of E.pickB)x.setAttribute("aria-pressed",String(+x.dataset.side===side));}
 
  // ---------------------------------------------------------------- open / close
@@ -588,31 +588,34 @@ export function createBatonDuel(o){
   });
  }
 
- // ---------------------------------------------------------------- the riff: a kick on every beat, a power chord per note
- // Only with the duel's own sound switch on (the game has no other sound). The kicks follow the tempo, the same in every
- // chart; the chords are scheduled as the notes are revealed.
- let ac=null,master=null,shaper=null,roundT0=0;
+ // ---------------------------------------------------------------- the riff: the band of hardcore.mjs on the round's beats
+ // A kick and a snare in turn on every beat (the tempo of the chart, the same in every round), the hi-hat on the beats and
+ // between them, the bass on E; a power chord per note (E on the left lane, A on the right), scheduled as the notes are
+ // revealed. Only with the sound on (the switch is the legend's too).
+ let band=null,roundT0=0;
  function soundRound(g){
-  if(!soundOn)return;
+  if(!soundOn())return;
   try{
-   ac=ac||new AudioContext();if(ac.state==="suspended")ac.resume();
-   stopSound();master=ac.createGain();master.gain.value=0.5;master.connect(ac.destination);
-   shaper=ac.createWaveShaper();const curve=new Float32Array(1024);for(let i=0;i<1024;i++)curve[i]=Math.tanh((i/512-1)*6);shaper.curve=curve;shaper.connect(master);
-   roundT0=ac.currentTime-(performance.now()-g.t0)/1000;
-   for(const b of BEATS){const at=roundT0+b/1000;if(at<ac.currentTime)continue;const o2=ac.createOscillator(),gn=ac.createGain();o2.frequency.setValueAtTime(140,at);o2.frequency.exponentialRampToValueAtTime(40,at+0.12);gn.gain.setValueAtTime(0.9,at);gn.gain.exponentialRampToValueAtTime(0.001,at+0.14);o2.connect(gn).connect(master);o2.start(at);o2.stop(at+0.15);}
-   scheduleNotes(g);
-  }catch{master=null;}
+   stopSound();band=createBand(0.4);
+   roundT0=band.now()-(performance.now()-g.t0)/1000;
+   BEATS.forEach((b,j)=>{
+    const at=roundT0+b/1000,gap=((BEATS[j+1]??b+400)-b)/1000;if(at<band.now())return;
+    if(j===0)band.crash(at);
+    if(j%2)band.snare(at);else band.kick(at);
+    band.hat(at);band.hat(at+gap/2);band.bass(at,40,gap/2);band.bass(at+gap/2,40,gap/2);
+   });
+   g.heard=new Set();scheduleNotes(g);
+  }catch{band=null;}
  }
  function scheduleNotes(g){
-  if(!master||!ac)return;
+  if(!band)return;
   for(const [nt,lane] of g.notes){
    const k=`${nt}:${lane}`;if(g.heard.has(k))continue;g.heard.add(k);
-   const at=roundT0+nt/1000;if(at<ac.currentTime)continue;
-   const gn=ac.createGain();gn.gain.setValueAtTime(0.12,at);gn.gain.exponentialRampToValueAtTime(0.001,at+0.13);gn.connect(shaper);
-   for(const m of [1,1.5]){const o2=ac.createOscillator();o2.type="sawtooth";o2.frequency.value=[82.41,110][lane]*m;o2.connect(gn);o2.start(at);o2.stop(at+0.14);}
+   const at=roundT0+nt/1000;if(at<band.now())continue;
+   band.chord(at,[40,45][lane],0.16);
   }
  }
- function stopSound(){if(master&&ac){try{master.gain.setValueAtTime(0,ac.currentTime);master.disconnect();}catch{}master=null;}}
+ function stopSound(){band?.stop(0.15);band=null;}
 
  return {open,close:shut,isOpen,update,frame,onEvent,onLive,onCheer,markWon,
   // a round under way: the game keeps its toasts and banners for later

@@ -6,7 +6,9 @@ import {cmpRelease} from "./rules.mjs";
 
 export const CHANGELOG=[
  {version:"1.7.3",date:"2026-11-11",
-  added:[],
+  added:[
+   "Le jeu a ses premiers sons : certains moments rares ont maintenant leur bande-son, et un bouton 🔊 la coupe (le choix est retenu sur l'appareil)."
+  ],
   fixed:[],
   admin:[
    "Une seule console pour plusieurs parties, même sur d'autres machines : la nouvelle page Parties en ajoute une et donne trois lignes à coller dans sa stack, puis la partie se connecte toute seule.",

@@ -425,9 +425,10 @@ footer{max-width:1120px;margin:0 auto;padding:0 max(16px,env(safe-area-inset-rig
 .legend-title small{display:block;font:600 12px ui-monospace,monospace;letter-spacing:.3em;color:#ffb347;margin-bottom:8px}
 .legend-hint{position:absolute;left:0;right:0;bottom:22px;text-align:center;font:600 12.5px Inter,sans-serif;color:#ffd0b0;animation:blink 1.6s ease-in-out infinite;pointer-events:none}
 @keyframes blink{50%{opacity:.35}}
-.legend-count{position:absolute;top:max(20px,env(safe-area-inset-top));left:16px;font:700 11px ui-monospace,monospace;color:#ffffff88;letter-spacing:.1em;pointer-events:none}
+.legend-count{position:absolute;top:max(20px,env(safe-area-inset-top));left:68px;font:700 11px ui-monospace,monospace;color:#ffffff88;letter-spacing:.1em;pointer-events:none}
+.legend-snd{position:absolute;top:max(14px,env(safe-area-inset-top));left:14px;z-index:2;background:#0008;color:#fff}
 .legend-skip{position:absolute;top:max(14px,env(safe-area-inset-top));right:14px;font-size:13px;padding:10px 14px;min-height:44px;background:#0008}
-.legend-final{display:grid;grid-template-columns:minmax(0,1fr);overflow-wrap:anywhere;place-content:center;gap:10px;text-align:center;padding:24px;width:min(100vw,460px);max-height:100dvh;overflow:auto;background:radial-gradient(60% 45% at 50% 42%,#ff6a1a40,transparent 70%)}
+.legend-final{position:relative;display:grid;grid-template-columns:minmax(0,1fr);overflow-wrap:anywhere;place-content:center;gap:10px;text-align:center;padding:24px;width:min(100vw,460px);max-height:100dvh;overflow:auto;background:radial-gradient(60% 45% at 50% 42%,#ff6a1a40,transparent 70%)}
 .legend-tag{display:inline-block;justify-self:center;padding:2px 10px;border-radius:99px;font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#ff6a1a;border:1px solid currentColor;box-shadow:0 0 14px #ff6a1a80}
 .legend-frame{justify-self:center;border:2px solid #ff6a1a;border-radius:22px;padding:8px;box-shadow:0 0 30px #ff6a1a88,inset 0 0 20px #ff6a1a55;animation:pulse 1.6s ease-in-out infinite}
 @keyframes pulse{50%{box-shadow:0 0 46px #ff6a1acc,inset 0 0 26px #ff6a1a88}}

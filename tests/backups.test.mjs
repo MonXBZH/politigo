@@ -236,11 +236,13 @@ test("F3, N2: a big base is checked in a child process: the console keeps answer
   await assert.rejects(verify(big,{timeout:1}),/vérification trop longue/);
   await assert.rejects(verify(join(dir,"absent.db")),e=>e instanceof Error);
   // N2: a process of its own, gone (SIGKILL) as soon as the check gives up; the next one starts once it has exited.
+  // A check that never ends, whatever the machine's speed (a fast runner reads the big base within 150 ms).
+  const stuck=join(dir,"stuck.mjs");writeFileSync(stuck,"setInterval(()=>{},1e9);");
   const pids=[];
-  await assert.rejects(within(verify(big,{timeout:150,onStart:pid=>pids.push(pid)}),10000,"a check past its delay"),/vérification trop longue/);
+  await assert.rejects(within(verify(big,{timeout:150,script:stuck,onStart:pid=>pids.push(pid)}),10000,"a check past its delay"),/vérification trop longue/);
   assert.equal(pids.length,1,"a child process");assert.throws(()=>process.kill(pids[0],0),e=>e.code==="ESRCH","killed and gone once given up");
   const seen=[];let firstAlive=null;
-  const v1=verify(big,{timeout:150,onStart:pid=>seen.push(pid)}),v2=verify(big,{timeout:150,onStart:pid=>{try{process.kill(seen[0],0);firstAlive=true;}catch{firstAlive=false;}seen.push(pid);}});
+  const v1=verify(big,{timeout:150,script:stuck,onStart:pid=>seen.push(pid)}),v2=verify(big,{timeout:150,script:stuck,onStart:pid=>{try{process.kill(seen[0],0);firstAlive=true;}catch{firstAlive=false;}seen.push(pid);}});
   await within(Promise.allSettled([v1,v2]),10000,"two checks");
   assert.equal(seen.length,2);assert.equal(firstAlive,false,"the second check starts once the first process has exited");
   await within(verify(big),60000,"a check with its full delay");

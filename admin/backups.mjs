@@ -51,16 +51,16 @@ const disk=async dir=>{const s=await fs.promises.statfs(dir);return {free:s.bava
 // A base that opens, passes SQLite's own check and holds the players: checked in a child process (verify.mjs), within
 // 5 minutes, so that the console keeps answering while a big base is read. Past the delay the process is killed
 // (SIGKILL: SQLite cannot be stopped from inside), and one check runs at a time: the next one starts only once the
-// previous process has exited. onStart(pid): for the tests.
+// previous process has exited. onStart(pid), script: for the tests (script: a stand-in for verify.mjs).
 const VERIFY=fileURLToPath(new URL("./verify.mjs",import.meta.url)),VERIFY_MS=5*60e3;
 const human=ms=>ms>=60e3?`${Math.round(ms/60e3)} min`:`${Math.ceil(ms/1000)} s`;
 let checking=Promise.resolve();
-export function verify(path,{timeout=VERIFY_MS,onStart}={}){
+export function verify(path,{timeout=VERIFY_MS,onStart,script=VERIFY}={}){
  const check=()=>new Promise((ok,ko)=>{
   let done=false,late=false,out="",c;
   const end=(f,v)=>{if(done)return;done=true;clearTimeout(t);f(v);};
   const t=setTimeout(()=>{late=true;c?.kill("SIGKILL");},timeout);
-  try{c=spawn(process.execPath,[VERIFY,path],{stdio:["ignore","pipe","ignore"],env:{NODE_NO_WARNINGS:"1"}});}catch(e){return end(ko,e);}
+  try{c=spawn(process.execPath,[script,path],{stdio:["ignore","pipe","ignore"],env:{NODE_NO_WARNINGS:"1"}});}catch(e){return end(ko,e);}
   if(c.pid)onStart?.(c.pid);
   c.stdout.setEncoding("utf8");c.stdout.on("data",d=>{if(out.length<4096)out+=d;});
   c.on("error",e=>{if(!c.pid)end(ko,e);});   // not even started: no exit will come
