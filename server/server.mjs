@@ -2187,6 +2187,8 @@ function wardrobeOf(p){
  const S=p.state,w=S.wardrobe??{},item=id=>{const it=W.ITEMS?.[id];return {id,name:it?.name??id,kind:it?.kind??null,rarity:it?.rarity??null};};
  return {flame:Math.floor(S.flame?.pts??0),bulletins:w.bulletins??0,confetti:w.confetti??0,draws:w.draws??0,
   own:(Array.isArray(w.own)?w.own:[]).map(item),worn:{outfit:w.worn?.outfit?item(w.worn.outfit):null,object:w.worn?.object?item(w.worn.object):null},
+  // What can still be offered (the « give » command): every item of both camps they lack, the mythic aside.
+  gifts:Object.entries(W.ITEMS??{}).filter(([id,it])=>it.rarity!=="mythique"&&!(w.own??[]).includes(id)).map(([id,it])=>({id,name:it.name,kind:it.kind,rarity:it.rarity,pool:it.pool})),
   baton:q.mythicOf.get(MYTHIC)?.player_id===p.id};
 }
 function mutedUntil(id){try{return chat.admin.mutedUntil(id)??null;}catch{return null;}}
@@ -2308,6 +2310,34 @@ async function adminCommand(b){
   const p=who(b);q.setProtected.run(b.on?1:0,p.id);p.protected=b.on;
   audit(via,cmd,p.name,b.on?"Compte protégé":"Protection retirée");
   return {name:p.name,protected:p.protected};
+ }
+ // A gift from the organisation (the moderators' « give » right): levels (up only, through the game's own XP rule, so
+ // the hand-over and the legend happen as if earned), bulletins (up to the usual 9999), any item of either camp but the
+ // mythic, which is only ever won. Nothing tells the player: their screen just shows it.
+ if(cmd==="give"){
+  const p=target(),has=k=>b[k]!==undefined&&b[k]!==null,S0=p.state;
+  if(!has("lvl")&&!has("bulletins")&&!has("item"))throw new HttpError(400,"Rien à offrir : lvl, bulletins ou item.");
+  if(has("lvl")){
+   if(!Number.isSafeInteger(b.lvl)||b.lvl<2||b.lvl>100)throw new HttpError(400,"Niveau : un nombre entier de 2 à 100.");
+   if(b.lvl<=S0.lvl)throw new HttpError(409,`${p.name} est déjà au niveau ${S0.lvl}.`);
+  }
+  if(has("bulletins")){
+   if(!Number.isSafeInteger(b.bulletins)||b.bulletins<1||b.bulletins>999)throw new HttpError(400,"Bulletins : un nombre entier de 1 à 999.");
+   if((S0.wardrobe?.bulletins??0)>=9999)throw new HttpError(409,`${p.name} a déjà le maximum de bulletins (9999).`);
+  }
+  const it=has("item")?(typeof b.item==="string"&&Object.hasOwn(W.ITEMS,b.item)?W.ITEMS[b.item]:null):undefined;
+  if(it===null)throw new HttpError(404,"Objet inconnu.");
+  if(it&&it.rarity==="mythique")throw new HttpError(403,"Cet objet ne s'offre pas : il se gagne.");
+  if(it&&S0.wardrobe.own.includes(b.item))throw new HttpError(409,`${p.name} a déjà ${it.name}.`);
+  if(has("wear")&&typeof b.wear!=="boolean")throw new HttpError(400,"wear : true ou false.");
+  const done=[];
+  update(p,S=>{
+   if(has("lvl")){const from=S.lvl;R.addXp(S,R.xpFloor(b.lvl)-S.xp);done.push(`niveau ${from} → ${S.lvl}`);}
+   if(has("bulletins")){const w=S.wardrobe,n=Math.min(9999,w.bulletins+b.bulletins)-w.bulletins;w.bulletins+=n;done.push(`+${n} bulletin${n>1?"s":""}`);}
+   if(it){S.wardrobe.own.push(b.item);if(b.wear===true)S.wardrobe.worn[it.kind]=b.item;done.push(`${it.kind==="outfit"?"tenue":"objet"} « ${it.name} »${b.wear===true?` (${it.kind==="outfit"?"portée":"porté"})`:""}`);}
+  });
+  audit(via,cmd,p.name,`Offert : ${done.join(", ")}`);
+  return {name:p.name,done,lvl:p.state.lvl,bulletins:p.state.wardrobe.bulletins};
  }
  if(cmd==="abandoned-list"){
   const bearer=q.mythicOf.get(MYTHIC)?.player_id;

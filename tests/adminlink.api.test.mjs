@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import tls from "node:tls";
 import net from "node:net";
 import crypto from "node:crypto";
+import util from "node:util";
 import {mkdtempSync,mkdirSync,readFileSync,readdirSync,statSync,writeFileSync,existsSync,utimesSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join,dirname} from "node:path";
@@ -105,7 +106,10 @@ it("right fingerprint: the hello carries the token, a kept instance, the name, t
 it("a request answers exactly what the socket answers, refusals included, with the same actor",async()=>{
  const c=adm.conns[0];
  for(const body of [{cmd:"list"},{cmd:"nope"},{cmd:"mythic-reset",by:"Modo"},{cmd:"backup-note",self:3,detail:"x"},{cmd:"invite-get"}]){
-  const s=await viaSocket(SOCK,JSON.stringify(body)),r=await req(c,body);
+  // The game saves its players on its own (a player's « updated » moves): a pair of calls caught on either side of a
+  // save is asked again, the answers must still be exactly the same.
+  let s,r;
+  for(let k=0;k<5;k++){s=await viaSocket(SOCK,JSON.stringify(body));r=await req(c,body);if(util.isDeepStrictEqual(r.body,s))break;}
   assert.deepEqual(r.body,s,JSON.stringify(body));
  }
  assert.deepEqual((await req(c,[1,2])).body,await viaSocket(SOCK,"[1,2]"),"not an object");

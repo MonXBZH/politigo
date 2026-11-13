@@ -468,6 +468,7 @@ async function viewPlayer(id){
    h("div",{class:"card"},h("h2",{},"Partie"),kv(["Niveau",String(p.lvl??"—")],["XP",String(p.xp??"—")],["Score",String(p.score??"—")],["Fonds (FM)",String(p.fm??"—")],["Morts",String(p.deaths??"—")],["Morts d'affilée sans jouer",String(p.idleDeaths??"—")],
     ...GAUGES.map(([k,l])=>[l,p[k]==null?"—":typeof p[k]==="number"?String(Math.round(p[k])):String(p[k])])))),
   wardrobeCard(p),
+  ok("give")?giftCard(p):null,
   batonCard(p,self),
   h("div",{class:"card"},h("h2",{},"Derniers duels"),p.duels?.length?h("div",{class:"table-wrap"},h("table",{},
    h("thead",{},h("tr",{},["Date","Contre","Rôle","Statut","Résultat","Signaux",""].map(t=>h("th",{},t)))),
@@ -494,6 +495,35 @@ function wardrobeCard(p){
    .flatMap(([k,v])=>[h("dt",{},k),h("dd",{},v)])),
   w.own.length?h("p",{class:"wrap muted small"},w.own.map(x=>x.name).join(" · ")):null,
   reset?h("div",{class:"btn-row"},reset):null);
+}
+
+// Gifts (the « give » right): levels, up to 100 and never down; bulletins; any item of either camp they lack (the
+// mythic is not among them). Nothing can be taken back, so each gift is confirmed; the player is told nothing.
+function giftCard(p){
+ const w=p.wardrobe;if(!w)return null;
+ const by={id:p.id},gift=(b,body,what)=>confirmBox("Offrir ?",`${p.name} reçoit ${what}. Ça ne se reprend pas.`,"Offrir",false)
+  .then(ok=>ok&&act(b,()=>call("give",{...by,...body}),r=>`${r.name} : ${r.done.join(", ")}.`));
+ const btn=(label,fn)=>h("button",{class:"btn small go",type:"button",onclick:e=>fn(e.currentTarget)},label);
+ const int=(inp,min,max)=>{const v=Number(inp.value);if(!Number.isInteger(v)||v<min||v>max){toast(`Un nombre entier de ${min} à ${max}.`,true);inp.focus();return null;}return v;};
+ const lvl=h("input",{id:"gift-lvl",type:"number",min:p.lvl+1,max:100,step:1,value:Math.min(100,p.lvl+1)});
+ const bul=h("input",{id:"gift-bul",type:"number",min:1,max:999,step:1,value:10});
+ const order=["ultra","legendaire","epique","rare","commun"],kinds=[["outfit","Tenues"],["object","Objets"]];
+ const item=h("select",{id:"gift-item"},h("option",{value:""},"Choisir…"),kinds.flatMap(([k,kl])=>order.map(r=>{
+  const xs=(w.gifts||[]).filter(x=>x.kind===k&&x.rarity===r).sort((a,b)=>a.name.localeCompare(b.name,"fr"));
+  return xs.length?h("optgroup",{label:`${kl} · ${RARITY[r]}`},xs.map(x=>h("option",{value:x.id},`${x.name}${x.pool==="all"?"":` (${CAMP[x.pool]||x.pool})`}`))):null;
+ }).filter(Boolean)));
+ const wear=h("input",{id:"gift-wear",type:"checkbox"});
+ const row=(...xs)=>h("div",{class:"btn-row"},...xs);
+ return h("div",{class:"card"},h("h2",{},"Offrir"),
+  h("p",{class:"muted small"},"Le joueur n'est pas prévenu : il le découvre en jeu. Chaque don est inscrit au journal d'admin."),
+  p.lvl>=100?h("p",{class:"muted small"},"Niveau 100 : le maximum est atteint."):row(lab("Jusqu'au niveau",lvl),lvl,
+   btn("Offrir les niveaux",b=>{const v=int(lvl,p.lvl+1,100);if(v!=null)gift(b,{lvl:v},`les niveaux ${p.lvl+1} à ${v} (passations comprises)`);})),
+  w.bulletins>=9999?h("p",{class:"muted small"},"Bulletins : le maximum (9999) est atteint."):row(lab("Bulletins",bul),bul,
+   btn("Offrir les bulletins",b=>{const v=int(bul,1,999);if(v!=null)gift(b,{bulletins:v},`${v} bulletin${v>1?"s":""}`);})),
+  (w.gifts||[]).length?row(lab("Tenue ou objet",item),item,h("label",{class:"check"},wear,"Le porter tout de suite"),
+   btn("Offrir l'objet",b=>{const x=(w.gifts||[]).find(g=>g.id===item.value);if(!x){toast("Choisis une tenue ou un objet.",true);item.focus();return;}
+    gift(b,{item:x.id,wear:wear.checked},`${x.kind==="outfit"?"la tenue":"l'objet"} « ${x.name} »${wear.checked?`, ${x.kind==="outfit"?"portée":"porté"} tout de suite`:""}`);}))
+   :h("p",{class:"muted small"},"Il possède déjà toutes les tenues et tous les objets."));
 }
 
 // The player's duels for the Bâton: a held one (the anti-cheat flagged a part) waits for a judgement, with the right
@@ -601,7 +631,7 @@ async function viewAnnounces(){
 
 // ===================================================================== Events
 const EV_WHO={all:"Tout le monde",left:"La gauche",right:"La droite"},EV_REP={"":"",day:"Chaque jour",week:"Chaque semaine"};
-const EV_HOURS=[[1,"1 h"],[2,"2 h"],[4,"4 h"],[12,"12 h"],[24,"24 h"],[72,"3 jours"],[168,"7 jours (maximum)"]];
+const EV_HOURS=[[1,"1 h"],[2,"2 h"],[4,"4 h"],[12,"12 h"],[24,"24 h"],[72,"3 jours"],[168,"7 jours (maximum)"],["end","Jusqu'à une date précise…"]];
 const localInput=t=>new Date(t-new Date(t).getTimezoneOffset()*6e4).toISOString().slice(0,16);
 async function viewEvents(){
  const {items,types,games,reminds,tokens}=await call("events-list"),H=36e5;
@@ -609,6 +639,11 @@ async function viewEvents(){
  const typeSel=h("select",{id:"ev-type",onchange:()=>typeChanged()},Object.entries(types).map(([k,t])=>h("option",{value:k},t.label)));
  const desc=h("p",{class:"muted small"}),name=h("input",{type:"text",id:"ev-name",maxLength:50,oninput:()=>texts()}),msg=h("textarea",{id:"ev-msg",maxLength:160}),params=h("div",{onchange:()=>texts()});
  const start=h("input",{type:"datetime-local",id:"ev-start",onchange:()=>texts()}),len=h("select",{id:"ev-len",onchange:()=>texts()},EV_HOURS.map(([v,t])=>h("option",{value:v},t)));
+ // The end: a duration from the list, or a date of its own (« Jusqu'à une date précise… »), within 7 days of the start.
+ const end=h("input",{type:"datetime-local",id:"ev-end",onchange:()=>texts()}),endPart=h("div",{hidden:true},h("label",{for:"ev-end"},"Fin (heure de ce navigateur)"),end);
+ len.addEventListener("change",()=>{const on=len.value==="end";endPart.hidden=!on;if(on&&!end.value){const t=new Date(start.value).getTime();end.value=localInput((Number.isSafeInteger(t)?t:Date.now()+H)+2*H);}});
+ // The end for a start at base: the date chosen, or base plus the duration.
+ const endOf=base=>len.value==="end"?new Date(end.value).getTime():base+Number(len.value)*H;
  const rep=h("select",{id:"ev-rep",onchange:()=>texts()},h("option",{value:""},"Une seule fois"),h("option",{value:"day"},"Chaque jour"),h("option",{value:"week"},"Chaque semaine"));
  const who=h("select",{id:"ev-who"},Object.entries(EV_WHO).map(([k,t])=>h("option",{value:k},t)));
  const push=h("input",{type:"checkbox",checked:true,onchange:()=>texts()}),title=h("h2",{},"Nouvel événement");
@@ -629,7 +664,8 @@ async function viewEvents(){
   seenTimer=setTimeout(async()=>{
    const t=new Date(start.value).getTime();if(!Number.isSafeInteger(t))return;
    try{
-    const r=await call("event-preview",{type:typeSel.value,name:name.value,params:readParams(),starts:t,ends:t+Number(len.value)*H,ann:annBox.value,rtext:remBox.value});
+    const ends=endOf(t);if(!(ends>t)){seenBad.textContent="La fin doit venir après le début.";seenBad.hidden=false;return;}
+    const r=await call("event-preview",{type:typeSel.value,name:name.value,params:readParams(),starts:t,ends,ann:annBox.value,rtext:remBox.value});
     if(run!==seenRun)return;
     annSeen.textContent=`Aperçu : ${r.ann}`;remSeen.textContent=`Aperçu, 15 minutes avant : ${r.remind}`;seenBad.hidden=true;
    }catch(e){if(run!==seenRun)return;seenBad.textContent=e.message;seenBad.hidden=false;}
@@ -655,10 +691,12 @@ async function viewEvents(){
  const plan=h("button",{class:"btn go",type:"button",onclick:e=>save(e.currentTarget,false)},"Programmer");
  const nowBtn=h("button",{class:"btn",type:"button",onclick:e=>save(e.currentTarget,true)},"Lancer maintenant");
  const cancel=h("button",{class:"btn",type:"button",hidden:true,onclick:()=>reset()},"Annuler");
- function reset(){editing=null;title.textContent="Nouvel événement";plan.textContent="Programmer";cancel.hidden=true;nowBtn.hidden=false;start.value=localInput(Date.now()+H);len.value="2";rep.value="";who.value="all";push.checked=true;for(const [c] of remChecks)c.checked=false;lastType=null;typeSel.selectedIndex=0;typeChanged();}
+ function reset(){editing=null;title.textContent="Nouvel événement";plan.textContent="Programmer";cancel.hidden=true;nowBtn.hidden=false;start.value=localInput(Date.now()+H);len.value="2";end.value="";endPart.hidden=true;rep.value="";who.value="all";push.checked=true;for(const [c] of remChecks)c.checked=false;lastType=null;typeSel.selectedIndex=0;typeChanged();}
  function fill(e,edit){
   editing=edit?e:null;typeSel.value=e.type;desc.textContent=types[e.type].desc;name.value=e.name;msg.value=e.msg;drawParams(e.params);
-  start.value=localInput(edit?e.starts:Date.now()+H);const hrs=(e.ends-e.starts)/H;len.value=String((EV_HOURS.find(([v])=>v>=hrs)??EV_HOURS.at(-1))[0]);
+  // A length off the list (an end chosen by date) keeps its exact end instead of being rounded to the next duration.
+  const s0=edit?e.starts:Date.now()+H,hrs=(e.ends-e.starts)/H,std=EV_HOURS.find(([v])=>v===hrs);
+  start.value=localInput(s0);len.value=std?String(hrs):"end";end.value=std?"":localInput(s0+e.ends-e.starts);endPart.hidden=!!std;
   rep.value=e.rep;who.value=e.who;push.checked=e.push;for(const [c,m] of remChecks)c.checked=e.reminds.includes(m);
   annBox.value=e.ann??types[e.type].ann;remBox.value=e.rtext??types[e.type].rem;lastType=e.type;texts();
   title.textContent=edit?`Modifier « ${e.name} »`:`Dupliquer « ${e.name} »`;plan.textContent=edit?"Enregistrer":"Programmer";nowBtn.hidden=edit;cancel.hidden=false;
@@ -666,8 +704,14 @@ async function viewEvents(){
  }
  function save(btn,launch){
   const t=new Date(start.value).getTime(),base=launch?Date.now():t;
-  act(btn,()=>call("event-save",{...(editing?{id:editing.id}:{}),type:typeSel.value,name:name.value,msg:msg.value,params:readParams(),starts:base,ends:base+Number(len.value)*H,who:who.value,rep:rep.value,push:push.checked,ann:annBox.value,rtext:remBox.value,reminds:picked(),now:launch}),
-   launch?"Événement lancé.":editing?"Événement modifié.":"Événement programmé.");
+  // « Lancer maintenant » with an end date: it ends at that date (with a duration, the duration counts from now).
+  const ends=len.value==="end"?new Date(end.value).getTime():base+Number(len.value)*H;
+  act(btn,()=>{
+   if(len.value==="end"&&!Number.isSafeInteger(ends))throw new Error("Choisis la date et l'heure de fin.");
+   if(!(ends>base))throw new Error(launch?"La date de fin est déjà passée.":"La fin doit venir après le début.");
+   if(ends-base>7*24*H)throw new Error("Un événement dure 7 jours au plus.");
+   return call("event-save",{...(editing?{id:editing.id}:{}),type:typeSel.value,name:name.value,msg:msg.value,params:readParams(),starts:base,ends,who:who.value,rep:rep.value,push:push.checked,ann:annBox.value,rtext:remBox.value,reminds:picked(),now:launch});
+  },launch?"Événement lancé.":editing?"Événement modifié.":"Événement programmé.");
  }
  const row=e=>h("div",{class:"ev"},
   h("div",{class:"btn-row"},h("b",{},e.name),e.state==="on"?h("span",{class:"badge good"},"En cours"):e.state==="soon"?h("span",{class:"badge warn"},"Programmé"):null,
@@ -683,7 +727,7 @@ async function viewEvents(){
  const part=(t,s,none,sort)=>{const l=items.filter(e=>e.state===s).sort(sort);return h("div",{class:"card"},h("h2",{},t),l.length?l.map(row):empty(none));};
  const up=(a,b)=>a.starts-b.starts;
  const form=can("events-edit")&&h("div",{class:"card"},title,h("label",{for:"ev-type"},"Type"),typeSel,desc,h("label",{for:"ev-name"},"Nom vu par les joueurs"),name,h("label",{for:"ev-msg"},"Message du bandeau"),msg,params,
-  h("label",{for:"ev-start"},"Début (heure de ce navigateur)"),start,h("label",{for:"ev-len"},"Durée"),len,h("label",{for:"ev-rep"},"Répétition"),rep,h("label",{for:"ev-who"},"Pour qui"),who,
+  h("label",{for:"ev-start"},"Début (heure de ce navigateur)"),start,h("label",{for:"ev-len"},"Durée"),len,endPart,h("label",{for:"ev-rep"},"Répétition"),rep,h("label",{for:"ev-who"},"Pour qui"),who,
   h("h3",{},"Annonces"),h("label",{class:"check"},push,"Annonce au début (notification, et fil si l'événement vise tout le monde)"),annPart,
   h("p",{class:"muted small"},"Rappels avant le début :"),remChecks.map(([c,,t])=>h("label",{class:"check"},c,`${t} avant`)),dayNote,remPart,
   h("p",{class:"muted small"},`Remplacés à l'envoi : ${tokens.map(t=>`{${t}}`).join(", ")}.`),seenBad,

@@ -286,6 +286,12 @@ Une seule console peut gérer plusieurs parties, sur cette machine ou ailleurs (
   modérateur (page Modérateurs). *Protéger le compte* est réservé à l'organisateur : aucun modérateur ne peut plus agir sur ce compte
   (mot de passe, renommage, suspension, chat, duels, annonce ciblée, suppression), mais il peut toujours lire sa fiche.
   **Protégez votre propre compte de joueur.** Retirez la protection avant de supprimer.
+- **Offrir (fiche joueur)** : des niveaux (jusqu'à 100, jamais vers le bas : les passations de pouvoir se font comme en
+  jeu), des bulletins (de 1 à 999 à la fois, 9999 au plus) et n'importe quelle tenue ou objet des deux camps que le joueur
+  n'a pas encore, à porter tout de suite si on veut. Le Bâton de feu ne s'offre pas : il se gagne. Le joueur n'est pas
+  prévenu. Chaque don est inscrit au journal d'admin, et rien ne se reprend. Le droit « Offrir des niveaux, des bulletins
+  et des objets » n'est dans aucun modèle : cochez-le pour chaque modérateur concerné. Comme pour les autres actions, ni
+  sur son propre compte, ni sur celui d'un autre modérateur, ni sur un compte protégé.
 - **Comptes abandonnés (Joueurs → Comptes abandonnés)** : un compte y apparaît après 3 morts d'affilée sans aucune action du
   joueur et 5 jours sans connexion. Une seule alerte dans À traiter ; vue à N comptes, elle ne revient que s'il y en a plus.
   *Ignorer* retire le compte de la liste jusqu'à son retour. Les comptes protégés et les joueurs en ligne n'y figurent pas.
@@ -445,7 +451,8 @@ Le panneau **Events** de l'administration crée et gère des événements à dur
 événement), **Soldes à la Buvette** (−25 % ou −50 %, Soins compris), **Sac postal** (une lettre de plus toutes les 10 ou 15 minutes, et jusqu'à 6 bulletins du courrier dans la journée),
 **Nuit des duels** (défis en plus, gains ×1,5 ou ×2) et **Immunité parlementaire** (jauges ÷2 ou ÷3, pas de mort politique).
 
-- **Programmation** : de 5 minutes à 7 jours, pour tous ou un seul camp, une fois, chaque jour ou chaque semaine (à la même
+- **Programmation** : de 5 minutes à 7 jours (une durée de la liste, ou « Jusqu'à une date précise… » pour choisir la date et
+  l'heure de fin ; lancé tout de suite, il s'arrête alors à cette date), pour tous ou un seul camp, une fois, chaque jour ou chaque semaine (à la même
   heure, changement d'heure compris). Un événement se lance tout de suite ou à sa date, se modifie ou se supprime tant qu'il
   n'a pas commencé, s'arrête à tout moment et se duplique. Arrêter une occurrence ne supprime pas les suivantes : la prochaine
   se supprime dans « À venir ». 100 événements à venir au plus.
