@@ -5,6 +5,13 @@
 import {cmpRelease} from "./rules.mjs";
 
 export const CHANGELOG=[
+ {version:"1.7.4",date:"2026-11-13",
+  added:[],
+  fixed:[],
+  admin:[
+   "Events : la fin d'un événement se choisit aussi par date et heure (« Jusqu'à une date précise… »), comme le début ; une durée qui n'est pas dans la liste n'est plus arrondie quand on le modifie."
+  ]
+ },
  {version:"1.7.3",date:"2026-11-11",
   added:[
    "Le jeu a ses premiers sons : certains moments rares ont maintenant leur bande-son, et un bouton 🔊 la coupe (le choix est retenu sur l'appareil)."

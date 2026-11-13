@@ -445,7 +445,8 @@ Le panneau **Events** de l'administration crée et gère des événements à dur
 événement), **Soldes à la Buvette** (−25 % ou −50 %, Soins compris), **Sac postal** (une lettre de plus toutes les 10 ou 15 minutes, et jusqu'à 6 bulletins du courrier dans la journée),
 **Nuit des duels** (défis en plus, gains ×1,5 ou ×2) et **Immunité parlementaire** (jauges ÷2 ou ÷3, pas de mort politique).
 
-- **Programmation** : de 5 minutes à 7 jours, pour tous ou un seul camp, une fois, chaque jour ou chaque semaine (à la même
+- **Programmation** : de 5 minutes à 7 jours (une durée de la liste, ou « Jusqu'à une date précise… » pour choisir la date et
+  l'heure de fin ; lancé tout de suite, il s'arrête alors à cette date), pour tous ou un seul camp, une fois, chaque jour ou chaque semaine (à la même
   heure, changement d'heure compris). Un événement se lance tout de suite ou à sa date, se modifie ou se supprime tant qu'il
   n'a pas commencé, s'arrête à tout moment et se duplique. Arrêter une occurrence ne supprime pas les suivantes : la prochaine
   se supprime dans « À venir ». 100 événements à venir au plus.
