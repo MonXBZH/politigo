@@ -468,6 +468,7 @@ async function viewPlayer(id){
    h("div",{class:"card"},h("h2",{},"Partie"),kv(["Niveau",String(p.lvl??"—")],["XP",String(p.xp??"—")],["Score",String(p.score??"—")],["Fonds (FM)",String(p.fm??"—")],["Morts",String(p.deaths??"—")],["Morts d'affilée sans jouer",String(p.idleDeaths??"—")],
     ...GAUGES.map(([k,l])=>[l,p[k]==null?"—":typeof p[k]==="number"?String(Math.round(p[k])):String(p[k])])))),
   wardrobeCard(p),
+  ok("give")?giftCard(p):null,
   batonCard(p,self),
   h("div",{class:"card"},h("h2",{},"Derniers duels"),p.duels?.length?h("div",{class:"table-wrap"},h("table",{},
    h("thead",{},h("tr",{},["Date","Contre","Rôle","Statut","Résultat","Signaux",""].map(t=>h("th",{},t)))),
@@ -494,6 +495,35 @@ function wardrobeCard(p){
    .flatMap(([k,v])=>[h("dt",{},k),h("dd",{},v)])),
   w.own.length?h("p",{class:"wrap muted small"},w.own.map(x=>x.name).join(" · ")):null,
   reset?h("div",{class:"btn-row"},reset):null);
+}
+
+// Gifts (the « give » right): levels, up to 100 and never down; bulletins; any item of either camp they lack (the
+// mythic is not among them). Nothing can be taken back, so each gift is confirmed; the player is told nothing.
+function giftCard(p){
+ const w=p.wardrobe;if(!w)return null;
+ const by={id:p.id},gift=(b,body,what)=>confirmBox("Offrir ?",`${p.name} reçoit ${what}. Ça ne se reprend pas.`,"Offrir",false)
+  .then(ok=>ok&&act(b,()=>call("give",{...by,...body}),r=>`${r.name} : ${r.done.join(", ")}.`));
+ const btn=(label,fn)=>h("button",{class:"btn small go",type:"button",onclick:e=>fn(e.currentTarget)},label);
+ const int=(inp,min,max)=>{const v=Number(inp.value);if(!Number.isInteger(v)||v<min||v>max){toast(`Un nombre entier de ${min} à ${max}.`,true);inp.focus();return null;}return v;};
+ const lvl=h("input",{id:"gift-lvl",type:"number",min:p.lvl+1,max:100,step:1,value:Math.min(100,p.lvl+1)});
+ const bul=h("input",{id:"gift-bul",type:"number",min:1,max:999,step:1,value:10});
+ const order=["ultra","legendaire","epique","rare","commun"],kinds=[["outfit","Tenues"],["object","Objets"]];
+ const item=h("select",{id:"gift-item"},h("option",{value:""},"Choisir…"),kinds.flatMap(([k,kl])=>order.map(r=>{
+  const xs=(w.gifts||[]).filter(x=>x.kind===k&&x.rarity===r).sort((a,b)=>a.name.localeCompare(b.name,"fr"));
+  return xs.length?h("optgroup",{label:`${kl} · ${RARITY[r]}`},xs.map(x=>h("option",{value:x.id},`${x.name}${x.pool==="all"?"":` (${CAMP[x.pool]||x.pool})`}`))):null;
+ }).filter(Boolean)));
+ const wear=h("input",{id:"gift-wear",type:"checkbox"});
+ const row=(...xs)=>h("div",{class:"btn-row"},...xs);
+ return h("div",{class:"card"},h("h2",{},"Offrir"),
+  h("p",{class:"muted small"},"Le joueur n'est pas prévenu : il le découvre en jeu. Chaque don est inscrit au journal d'admin."),
+  p.lvl>=100?h("p",{class:"muted small"},"Niveau 100 : le maximum est atteint."):row(lab("Jusqu'au niveau",lvl),lvl,
+   btn("Offrir les niveaux",b=>{const v=int(lvl,p.lvl+1,100);if(v!=null)gift(b,{lvl:v},`les niveaux ${p.lvl+1} à ${v} (passations comprises)`);})),
+  w.bulletins>=9999?h("p",{class:"muted small"},"Bulletins : le maximum (9999) est atteint."):row(lab("Bulletins",bul),bul,
+   btn("Offrir les bulletins",b=>{const v=int(bul,1,999);if(v!=null)gift(b,{bulletins:v},`${v} bulletin${v>1?"s":""}`);})),
+  (w.gifts||[]).length?row(lab("Tenue ou objet",item),item,h("label",{class:"check"},wear,"Le porter tout de suite"),
+   btn("Offrir l'objet",b=>{const x=(w.gifts||[]).find(g=>g.id===item.value);if(!x){toast("Choisis une tenue ou un objet.",true);item.focus();return;}
+    gift(b,{item:x.id,wear:wear.checked},`${x.kind==="outfit"?"la tenue":"l'objet"} « ${x.name} »${wear.checked?`, ${x.kind==="outfit"?"portée":"porté"} tout de suite`:""}`);}))
+   :h("p",{class:"muted small"},"Il possède déjà toutes les tenues et tous les objets."));
 }
 
 // The player's duels for the Bâton: a held one (the anti-cheat flagged a part) waits for a judgement, with the right

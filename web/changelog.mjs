@@ -9,7 +9,7 @@ export const CHANGELOG=[
   added:[],
   fixed:[],
   admin:[
-   "Events : la fin d'un événement se choisit aussi par date et heure (« Jusqu'à une date précise… »), comme le début ; une durée qui n'est pas dans la liste n'est plus arrondie quand on le modifie."
+   "Events : la fin d'un événement se choisit aussi par date et heure (« Jusqu'à une date précise… »), comme le début ; une durée qui n'est pas dans la liste n'est plus arrondie quand on le modifie.","Fiche joueur : une carte « Offrir » donne des niveaux, des bulletins et des tenues ou objets de la garde-robe, avec un droit de modérateur à cocher à part."
   ]
  },
  {version:"1.7.3",date:"2026-11-11",

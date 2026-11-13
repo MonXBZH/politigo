@@ -311,6 +311,45 @@ test("chat hooks: reports, delete and mute go through chat.admin",async()=>{
 });
 
 // Last but one: the regenerated code no longer matches the helpers' INVITE.
+test("give (1.7.4): levels up through the game's rule, bulletins to 9999, any item of either camp but the mythic; logged, the screen told",async()=>{
+ const a=await player(PORT,"Donataire");const s=stream(a);await until(()=>got(s,"me").length);
+ const id=(await ok({cmd:"player",name:"Donataire"})).player.id;
+ const sheet=async()=>(await ok({cmd:"player",id})).player;
+ const gifts=(await sheet()).wardrobe.gifts;
+ assert.ok(gifts.some(x=>x.id==="sacre")&&gifts.some(x=>x.id==="camarade"),"both camps are offered");
+ assert.ok(!gifts.some(x=>x.rarity==="mythique"),"never the mythic");
+ for(const [body,re] of [[{},/Rien à offrir/],[{lvl:1},/2 à 100/],[{lvl:101},/2 à 100/],[{lvl:"20"},/2 à 100/],[{bulletins:0},/1 à 999/],[{bulletins:1000},/1 à 999/],
+  [{item:"nope"},/inconnu/],[{item:"baton"},/se gagne/],[{item:"sacre",wear:"oui"},/wear/]]){
+  const r=await adm({cmd:"give",id,...body});assert.equal(r.ok,false,JSON.stringify(body));assert.match(r.error,re,JSON.stringify(body));
+ }
+ // Levels: the game's own climb, never down.
+ assert.deepEqual((await ok({cmd:"give",id,lvl:12,via:"web"})).done,["niveau 1 → 12"]);
+ let p=await sheet();assert.equal(p.lvl,12);
+ assert.ok(await until(()=>got(s,"me").some(m=>m.state.lvl===12)),"the screen is told");
+ assert.match((await adm({cmd:"give",id,lvl:12})).error,/déjà au niveau 12/);
+ assert.match((await adm({cmd:"give",id,lvl:5})).error,/déjà au niveau 12/);
+ // Bulletins, capped.
+ assert.deepEqual((await ok({cmd:"give",id,bulletins:999})).done,["+999 bulletins"]);
+ for(let k=0;k<10;k++)await adm({cmd:"give",id,bulletins:999});
+ assert.equal((await sheet()).wardrobe.bulletins,9999);
+ assert.match((await adm({cmd:"give",id,bulletins:1})).error,/maximum/);
+ // An item of the other camp, worn at once; then it is no longer offered, nor given twice.
+ const r=await ok({cmd:"give",id,item:"sacre",wear:true});assert.match(r.done[0],/Sacre de Reims.*porté/);
+ p=await sheet();assert.ok(p.wardrobe.own.some(x=>x.id==="sacre"));assert.equal(p.wardrobe.worn.outfit.id,"sacre");assert.ok(!p.wardrobe.gifts.some(x=>x.id==="sacre"));
+ assert.match((await adm({cmd:"give",id,item:"sacre"})).error,/a déjà/);
+ // Several at once, logged; never on a moderator's own account, another moderator's or a protected one.
+ const two=await ok({cmd:"give",id,lvl:20,item:"camarade"});assert.equal(two.done.length,2);assert.equal(two.lvl,20);
+ const log=(await ok({cmd:"audit"})).items.find(x=>x.cmd==="give"&&/Camarade/.test(x.detail));
+ assert.equal(log.target,"Donataire");assert.match(log.detail,/^Offert : niveau 12 → 20, tenue « Le Camarade, 1917 »$/);
+ assert.match((await adm({cmd:"give",id,bulletins:1,by:"Moi",self:id})).error,/propre compte/);
+ assert.match((await adm({cmd:"give",id,lvl:30,by:"Autre",self:-1,mods:[id]})).error,/modérateur/);
+ await ok({cmd:"player-protect",id,on:true});
+ assert.match((await adm({cmd:"give",id,lvl:30,by:"Autre"})).error,/protégé/);
+ await ok({cmd:"give",id,lvl:30});assert.equal((await sheet()).lvl,30,"the owner may");
+ await ok({cmd:"player-protect",id,on:false});
+ s.close();
+});
+
 test("registrations closed, the invite regenerated, the CLI's invite command; players never see the code",async()=>{
  const a=await player(PORT,"Parrain");
  assert.equal((await a.call("GET","/api/invite")).status,404,"no in-game route for the code");

@@ -286,6 +286,12 @@ Une seule console peut gérer plusieurs parties, sur cette machine ou ailleurs (
   modérateur (page Modérateurs). *Protéger le compte* est réservé à l'organisateur : aucun modérateur ne peut plus agir sur ce compte
   (mot de passe, renommage, suspension, chat, duels, annonce ciblée, suppression), mais il peut toujours lire sa fiche.
   **Protégez votre propre compte de joueur.** Retirez la protection avant de supprimer.
+- **Offrir (fiche joueur)** : des niveaux (jusqu'à 100, jamais vers le bas : les passations de pouvoir se font comme en
+  jeu), des bulletins (de 1 à 999 à la fois, 9999 au plus) et n'importe quelle tenue ou objet des deux camps que le joueur
+  n'a pas encore, à porter tout de suite si on veut. Le Bâton de feu ne s'offre pas : il se gagne. Le joueur n'est pas
+  prévenu. Chaque don est inscrit au journal d'admin, et rien ne se reprend. Le droit « Offrir des niveaux, des bulletins
+  et des objets » n'est dans aucun modèle : cochez-le pour chaque modérateur concerné. Comme pour les autres actions, ni
+  sur son propre compte, ni sur celui d'un autre modérateur, ni sur un compte protégé.
 - **Comptes abandonnés (Joueurs → Comptes abandonnés)** : un compte y apparaît après 3 morts d'affilée sans aucune action du
   joueur et 5 jours sans connexion. Une seule alerte dans À traiter ; vue à N comptes, elle ne revient que s'il y en a plus.
   *Ignorer* retire le compte de la liste jusqu'à son retour. Les comptes protégés et les joueurs en ligne n'y figurent pas.

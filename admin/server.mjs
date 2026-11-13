@@ -126,11 +126,11 @@ const ACTIONS=[["chat-delete","Supprimer un message du chat"],["chat-mute","Coup
  ["reset-password","Réinitialiser le mot de passe d'un joueur"],["announce","Envoyer et planifier des annonces"],["feed-delete","Supprimer une ligne du fil"],
  ["duel-cancel","Annuler un duel en cours"],["duel-annul","Annuler un duel terminé (rendre les gains), arbitrer un duel du Bâton"],["alerts-ack","Marquer une alerte comme vue, ignorer un compte abandonné"],["player-delete","Supprimer un joueur"],
  ["events-edit","Créer et modifier un événement"],["events-run","Lancer et arrêter un événement"],["events-delete","Supprimer un événement"],
- ["invite","Voir et copier le code d'invitation"]];
+ ["invite","Voir et copier le code d'invitation"],["give","Offrir des niveaux, des bulletins et des objets à un joueur"]];
 const PANEL_IDS=PANELS.map(x=>x[0]),ACTION_IDS=ACTIONS.map(x=>x[0]);
 const PRESETS=[{id:"chat",label:"Modo chat",panels:["traiter","chat"],actions:["chat-delete","chat-mute","alerts-ack"]},
  {id:"events",label:"Modo événements",panels:["events","annonces"],actions:["events-edit","events-run","events-delete","announce"]},
- {id:"full",label:"Modo complet",panels:PANEL_IDS,actions:ACTION_IDS.filter(a=>a!=="invite"&&a!=="player-delete")}];   // the code and deleting a player stay out unless checked
+ {id:"full",label:"Modo complet",panels:PANEL_IDS,actions:ACTION_IDS.filter(a=>a!=="invite"&&a!=="player-delete"&&a!=="give")}];   // the code, deleting a player and gifts stay out unless checked
 // What each command asks of a moderator: one of these panels (p:) or actions (a:). Not listed: the owner's alone.
 const NEEDS={stats:PANEL_IDS.map(p=>"p:"+p),list:["p:tableau","p:joueurs","p:annonces"],player:["p:joueurs"],
  "schedule-list":["p:annonces"],"events-list":["p:events"],"event-save":["a:events-edit"],"event-preview":["a:events-edit"],"event-start":["a:events-run"],"event-stop":["a:events-run"],"event-delete":["a:events-delete"],"announce-history":["p:annonces"],"feed-list":["p:fil"],"duels-list":["p:duels"],"duels-suspects":["p:duels"],
@@ -138,7 +138,7 @@ const NEEDS={stats:PANEL_IDS.map(p=>"p:"+p),list:["p:tableau","p:joueurs","p:ann
  signout:["a:signout"],rename:["a:rename"],suspend:["a:suspend"],unlock:["a:unlock"],announce:["a:announce"],"schedule-add":["a:announce"],
  "schedule-delete":["a:announce"],"schedule-toggle":["a:announce"],"feed-delete":["a:feed-delete"],"duel-cancel":["a:duel-cancel"],
  "duel-annul":["a:duel-annul"],"baton-judge":["a:duel-annul"],"chat-delete":["a:chat-delete"],"chat-mute":["a:chat-mute"],"alerts-ack":["a:alerts-ack"],"reset-password":["a:reset-password"],
- "player-delete":["a:player-delete"],"abandoned-list":["p:joueurs","p:traiter"],"abandoned-ignore":["a:alerts-ack"]};   // player-protect: not listed, the owner's alone
+ "player-delete":["a:player-delete"],give:["a:give"],"abandoned-list":["p:joueurs","p:traiter"],"abandoned-ignore":["a:alerts-ack"]};   // player-protect: not listed, the owner's alone
 const WRITES=c=>c!=="invite-get"&&c!=="event-preview"&&(NEEDS[c]||[]).some(n=>n.startsWith("a:"));   // what changes the game: rate-limited for moderators
 const may=(mod,cmd)=>!mod||(NEEDS[cmd]||[]).some(n=>n.startsWith("p:")?mod.panels.includes(n.slice(2)):mod.actions.includes(n.slice(2)));
 const modKey=s=>String(s).normalize("NFC").trim().toLowerCase();
@@ -297,7 +297,7 @@ const CMDS={
  "duels-list":[],"duel-cancel":["id"],"duels-suspects":[],"duel-annul":["id"],"baton-judge":["id","accept"],alerts:[],"alerts-ack":["keys"],"invite-get":[],"invite-regenerate":[],"registrations-set":["open"],"event-set":["mode"],
  bots:[],"chat-reports":[],"chat-feed":["before","limit","room"],"chat-media":["id"],"chat-delete":["id"],"chat-mute":[...WHO,"hours"],"chat-set":["global","camp"],audit:["limit"],
  "mythic-reset":[],   // the owner's alone: not in NEEDS, so no moderator profile can ever grant it
- "player-delete":[...WHO,"confirm"],"player-protect":[...WHO,"on"],"abandoned-list":[],"abandoned-ignore":["id"],
+ "player-delete":[...WHO,"confirm"],give:[...WHO,"lvl","bulletins","item","wear"],"player-protect":[...WHO,"on"],"abandoned-list":[],"abandoned-ignore":["id"],
 };
 const pick=(b,keys)=>Object.fromEntries(keys.filter(k=>b[k]!==undefined).map(k=>[k,b[k]]));
 

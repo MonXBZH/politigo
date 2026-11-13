@@ -194,6 +194,7 @@ test("moderators: chosen among a server's players, only their panels and actions
  const cat=(await b.req("/api/mods")).json;
  assert.ok(cat.presets.some(p=>p.id==="chat")&&cat.presets.some(p=>p.id==="full"));
  assert.ok(!cat.presets.find(p=>p.id==="full").actions.includes("invite"),"the invite code stays out of the full profile");
+ assert.ok(!cat.presets.find(p=>p.id==="full").actions.includes("give"),"gifts stay out of the full profile");assert.ok(cat.actions.some(([id])=>id==="give"),"the right can be checked");
  const evp=cat.presets.find(p=>p.id==="events");
  assert.deepEqual([evp.label,evp.panels,evp.actions],["Modo événements",["events","annonces"],["events-edit","events-run","events-delete","announce"]]);
  assert.ok(cat.presets.find(p=>p.id==="full").panels.includes("events"));
@@ -211,10 +212,12 @@ test("moderators: chosen among a server's players, only their panels and actions
  assert.equal((await m.req("/api/servers",{full:true})).json.servers.some(s=>"invite" in s),false,"no invite code without the right");
  assert.equal((await m.call("prod","stats")).status,200);
  assert.equal((await m.call("prod","chat-reports")).status,200);
- for(const [c,a] of [["bots",{}],["invite-get",{}],["suspend",{name:"Cible Modo",on:true}],["chat-set",{global:true}],["registrations-set",{open:false}],["audit",{}],["mythic-reset",{}]])
+ for(const [c,a] of [["give",{name:"Cible Modo",bulletins:5}],["bots",{}],["invite-get",{}],["suspend",{name:"Cible Modo",on:true}],["chat-set",{global:true}],["registrations-set",{open:false}],["audit",{}],["mythic-reset",{}]])
   assert.equal((await m.call("prod",c,a)).status,403,c);
  // The staff's reset is the owner's alone: it reaches the game (which finds nothing to take back here).
  assert.equal((await b.call("prod","mythic-reset")).json.error,"Le Bâton de feu est déjà dans l'urne.");
+ // A gift goes through the console with every field it needs (the owner has every right).
+ assert.deepEqual((await b.call("prod","give",{name:"Cible Modo",bulletins:5,item:"sacre",wear:true})).json.done,["+5 bulletins","tenue « Le Sacre de Reims » (portée)"]);
  assert.equal((await m.req("/api/s/prod/reset-password",{name:"Cible Modo"})).status,403);
  assert.equal((await m.req("/api/s/prod/backup")).status,403);
  assert.equal((await m.req("/api/mods")).status,403);
