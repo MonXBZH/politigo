@@ -182,12 +182,12 @@ export const ANSWER_KINDS=["left","right","decoy"];
 // Halloween: 31 October and 1 November in the game's time zone, then gone by itself. The server's POLITIGO_EVENT
 // can force it ("halloween", to test) or switch it off early ("off"); "auto" follows the calendar. Everything is a
 // costume (names, drawings, lines) with the same prices and effects, except the daily treat below.
-export const EVENT_MODES=["auto","off","halloween"];
+export const EVENT_MODES=["auto","off","halloween","noel"];
 export function eventAt(ms,mode="auto"){
- if(mode==="halloween")return "halloween";
+ if(mode==="halloween"||mode==="noel")return mode;
  if(mode!=="auto"||!Number.isFinite(ms))return "";
  const p=parts(ms),md=Number(p.month)*100+Number(p.day);
- return md===1031||md===1101?"halloween":"";
+ return md===1031||md===1101?"halloween":md>=1201||md===101?"noel":"";
 }
 export const HALLOWEEN={
  // Same keys, prices and effects as the shop: only the names change, as unfair to both camps.
@@ -228,11 +228,54 @@ export const HALLOWEEN={
   right:["Bonbons mérités, avec un chocolat suisse en prime.","Bonbons défiscalisés : pas un centime pour l'État.","Un donateur t'offre des pralines : du pur mécénat."]
  }}
 };
+// Trêve des confiseurs: 1 December to 1 January in the game's time zone (or forced with POLITIGO_EVENT=noel). Same
+// rule as Halloween: only costumes (names, lines, drawings), the same keys, prices and effects.
+export const NOEL={
+ shop:{
+  bread:{left:"Pain d'épices de la coopé",right:"Brioche du boulanger du village"},
+  soup:{left:"Soupe à l'oignon du réveillon solidaire",right:"Velouté de châtaignes à la truffe"},
+  snack:{left:"Papillotes de la kermesse",right:"Marrons glacés du confiseur"},
+  coffee:{left:"Vin chaud du piquet de grève",right:"Chocolat chaud du chalet"},
+  meal:{left:"Dinde aux marrons de la cantine",right:"Chapon farci du traiteur"},
+  banquet:{left:"Réveillon de la Bourse du travail",right:"Foie gras et champagne du Fouquet's"},
+  soap:{left:"Bain moussant aux aiguilles de pin",right:"Spa du chalet de Courchevel"},
+  rest:{left:"Sieste au coin du poêle",right:"Sieste au coin de la cheminée"},
+  garden:{left:"Balade au marché de Noël",right:"Promenade sous les illuminations des Champs"}
+ },
+ // What each camp throws at the other in the Pong, on top of the usual lines.
+ pong:{
+  left:["Rends les cadeaux fiscaux !","Père Fouettard du CAC 40 !","Ta bûche est en sucre de canne exploité !","Du charbon pour les patrons !",
+   "Le Père Noël est une ordure, et toi aussi !","Et la prime de Noël ?","Pas de trêve pour les riches !","Ta dinde est délocalisée !",
+   "Tes cadeaux sont défiscalisés !","Lutin du patronat !","Un SMIC dans mon sabot !","Ton sapin est en niche fiscale !"],
+  right:["Père Noël des allocs !","Le Père Noël n'existe pas, la dette si !","Ton programme, c'est une lettre au Père Noël !","Du charbon pour les dépensiers !",
+   "Pas de cadeau, il faut rembourser !","Et la facture du réveillon ?","Ta liste au Père Noël coûte un milliard !","Lutin de la dépense publique !",
+   "Tes cadeaux, c'est la dette de demain !","Ton sapin est en dette publique !","Trêve des confiseurs, pas des déficits !","Moins de rennes, plus de rigueur !"]
+ },
+ // Solo debate only, as for Halloween. Nine of them, so that the deck's size tells it from Halloween's eight.
+ questions:[
+  ["Le Père Noël ?","Il travaille la nuit : majoration !","Un auto-entrepreneur modèle","Un lutin en CDD"],
+  ["La prime de Noël ?","La doubler","La défiscaliser","La payer en papillotes"],
+  ["Le sapin ?","Replanter une forêt","Une tradition à défendre","Un sapin en location"],
+  ["Les cadeaux ?","Pour tous les enfants","Selon le mérite","Livrés par drone"],
+  ["Le marché de Noël ?","Des artisans solidaires","Des commerçants du terroir","Un vin chaud sans alcool"],
+  ["Le réveillon ?","Un repas pour tous","Chacun reçoit chez soi","Réveillon à la cantine de l'Assemblée"],
+  ["Les travailleurs du 25 décembre ?","Double paie obligatoire","Liberté d'ouvrir","Un renne par salarié"],
+  ["Les bonnes résolutions ?","Réduire les inégalités","Réduire la dépense publique","Réduire les résolutions"],
+  ["La trêve des confiseurs ?","Une trêve sociale","Une trêve des impôts","Une trêve du dimanche"]
+ ],
+ sleep:{left:"Zzz… le Père Noël est une ordure…",right:"Zzz… pourvu que les rennes ne fassent pas grève…"},
+ voeux:{left:"« Mes chers camarades, pour 2027, je vous souhaite la retraite à 60 ans, des lendemains qui chantent… et une bonne santé, remboursée à 100 %. »",
+  right:"« Françaises, Français, pour 2027, je vous souhaite moins d'impôts, plus de croissance… et l'ordre, partout, même dans vos réveillons. »"},
+ labels:{missions:{left:"Tournée des marchés de Noël solidaires",right:"Tournée des marchés de Noël du terroir"},
+  mail:"Lettres au Père Noël",goals:"Bonnes résolutions",urn:{left:"La Tombola du réveillon",right:"La Loterie du gala de Noël"}}
+};
+export const isNoel=event=>event==="noel";
 // A shop item's name, in costume while an event lasts.
-export const itemName=(it,camp,event="")=>event==="halloween"&&HALLOWEEN.shop[it.key]?HALLOWEEN.shop[it.key][camp]:it[camp];
+const costume=event=>event==="halloween"?HALLOWEEN:event==="noel"?NOEL:null;
+export const itemName=(it,camp,event="")=>costume(event)?.shop[it.key]?.[camp]??it[camp];
 // A line for one camp: half of them from the event's while it lasts.
 export function pongLine(camp,event="",random=Math.random){
- const l=event==="halloween"&&random()<0.5?HALLOWEEN.pong[camp]:pongLines[camp];
+ const l=costume(event)&&random()<0.5?costume(event).pong[camp]:pongLines[camp];
  return l[Math.floor(random()*l.length)];
 }
 
@@ -709,10 +752,11 @@ export function replayDebate(seed,camp,picks,count=QUESTIONS.length){
 // question at a time without saying which answer is right, times each answer itself and counts the score.
 // Pure and deterministic (the clock is an argument); a turn is plain JSON, so it can be stored as it is.
 // count: the deck's size (QUESTIONS, plus the event's questions for a solo debate in costume).
-export const debateCount=event=>event==="halloween"?QUESTIONS.length+HALLOWEEN.questions.length:QUESTIONS.length;
-const debatePool=count=>count>QUESTIONS.length?[...QUESTIONS,...HALLOWEEN.questions]:QUESTIONS;
+export const debateCount=event=>costume(event)?QUESTIONS.length+costume(event).questions.length:QUESTIONS.length;
+// The two costumes' decks differ in size (8 and 9), so the count alone says which one is dealt.
+const debatePool=count=>count===QUESTIONS.length+NOEL.questions.length?[...QUESTIONS,...NOEL.questions]:count>QUESTIONS.length?[...QUESTIONS,...HALLOWEEN.questions]:QUESTIONS;
 export function debateNew(seed,camp,{count=QUESTIONS.length,now=null,id=null}={}){
- const max=QUESTIONS.length+HALLOWEEN.questions.length;
+ const max=QUESTIONS.length+Math.max(HALLOWEEN.questions.length,NOEL.questions.length);
  return {seed:Number(seed)>>>0,camp,count:Number.isInteger(count)&&count>0&&count<=max?count:QUESTIONS.length,id,created:now,
   idx:0,t0:null,lost:0,points:0,errors:0,shownAt:null,gaps:[],fast:0};
 }
