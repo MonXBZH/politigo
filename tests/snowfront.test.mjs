@@ -18,9 +18,10 @@ const T=120000,it=(name,fn)=>test(name,{timeout:T},fn);
 const paris=(y,mo,d,h,mi)=>Date.UTC(y,mo-1,d,h-1,mi);
 const MIN=60e3;
 
+// camps: the players who still exist (and their camp NOW, which the Front ignores: it pays the camp fought for).
 function freshFront(camps={}){
  const db=new DatabaseSync(":memory:");
- return SF.createSnowFront(db,{campOf:id=>camps[id]??null});
+ return SF.createSnowFront(db,{exists:id=>id in camps});
 }
 
 // ---------------------------------------------------------------- the module alone
@@ -62,6 +63,24 @@ it("closing pays only those of the winning camp who played, once",()=>{
  assert.equal(h.result(2025),null);
  // nobody played: a 0-0 tie, nobody to pay
  assert.deepEqual(freshFront().close(2030),{winner:"tie",left:0,right:0,paid:[]});
+});
+
+it("a player is paid by the camp he fought for, once, whatever his camp at the closing",()=>{
+ // 1 fought on the left then switched to the right; 2 fought on the right; 3 fought for both camps
+ const f=freshFront({1:"right",2:"right",3:"left"});
+ f.add(2026,"left",1,10);f.add(2026,"right",2,4);f.add(2026,"left",3,1);f.add(2026,"right",3,1);
+ assert.deepEqual(f.close(2026),{winner:"left",left:11,right:5,paid:[1,3]});
+ const g=freshFront({3:"left"});
+ g.add(2026,"left",3,1);g.add(2026,"right",3,1);
+ assert.deepEqual(g.close(2026).paid,[3],"a tie pays the two-camp player once");
+});
+
+it("lastOpen: the most recent year anybody fought in, while it is not closed",()=>{
+ const f=freshFront({1:"left"});
+ assert.equal(f.lastOpen(),null);
+ f.add(2025,"left",1,3);assert.equal(f.lastOpen(),2025);
+ f.add(2026,"left",1,0);assert.equal(f.lastOpen(),2026);
+ f.close(2026);assert.equal(f.lastOpen(),null,"only the most recent year is looked at");
 });
 
 it("closing in the caller's transaction rolls back with it",()=>{
@@ -167,6 +186,8 @@ it("no Front outside the theme; a test instant is refused off a dev server",asyn
  finally{await stop(p);}
  await assert.rejects(boot(3990,mkdtempSync(join(tmpdir(),"pgsf-v-")),{POLITIGO_VERSION:"v1.8.0",POLITIGO_NEWYEAR_AT:String(Date.now())}),/server exited 1[\s\S]*POLITIGO_NEWYEAR_AT/);
  await assert.rejects(boot(3990,mkdtempSync(join(tmpdir(),"pgsf-n-")),{POLITIGO_NEWYEAR_AT:"demain"}),/server exited 1[\s\S]*POLITIGO_NEWYEAR_AT/);
+ // the raw variable decides: a version the server would show as "dev" is still not "dev"
+ await assert.rejects(boot(3990,mkdtempSync(join(tmpdir(),"pgsf-w-")),{POLITIGO_VERSION:"pas une version !",POLITIGO_NEWYEAR_AT:String(Date.now())}),/server exited 1[\s\S]*POLITIGO_NEWYEAR_AT/);
 });
 
 test("midnight: one toast push, the Front closes after the fights begun before it, 3 bulletins to the winners, once",{timeout:180000},async t=>{
@@ -221,6 +242,7 @@ test("midnight: one toast push, the Front closes after the fights begun before i
  assert.equal(ny.others,1,"Réveillon Un, seen today but not online");
  assert.deepEqual(ny.front,{winner:"left",left:sc1,right:0});
  assert.equal(ny.until,AT+5*MIN);
+ assert.equal(ny.live,true,"the toast is live");
  assert.equal((await me(S)).newYearBanner,undefined);
  assert.deepEqual((await me(S)).snowFront,{left:sc1,right:0,closed:true});
  // a restart within the window repeats nothing: no second push, no second payment, no second line
@@ -232,4 +254,49 @@ test("midnight: one toast push, the Front closes after the fights begun before i
  assert.equal(await bulletins(L1b),b0.L1+3);
  assert.equal((await Sb.call("GET","/api/board")).json.feed.filter(e=>e.text===line).length,1);
  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM admin_log WHERE cmd='noel-front'").get().n,1);
+});
+
+it("after the toast's five minutes: newYear stays for the banner's replay (live:false), with newYearBanner",async t=>{
+ const dir=mkdtempSync(join(tmpdir(),"pgsf-b-")),AT=Date.now()-6*MIN,port=3997;
+ const p=await boot(port,dir,{POLITIGO_EVENT:"noel",POLITIGO_NEWYEAR_AT:String(AT)});t.after(()=>stop(p));
+ const a=await player(port,"Bandeau Gauche","left"),b=await player(port,"Bandeau Droite","right");
+ const s=stream(port,b);t.after(()=>s.close());await until(()=>got(s,"me").length);
+ const m=await me(a);
+ assert.equal(m.newYearBanner,true);
+ assert.deepEqual(m.newYear,{names:["Bandeau Droite"],others:0,front:null,until:AT+5*MIN,live:false});
+});
+
+it("with the season off, no toast at all: no newYear, no banner, no push",async t=>{
+ const dir=mkdtempSync(join(tmpdir(),"pgsf-o-")),LOG=join(dir,"fetch.log");writeFileSync(LOG,"");
+ const AT=Date.now()+2000,port=3976;
+ const p=await boot(port,dir,{POLITIGO_EVENT:"off",POLITIGO_NEWYEAR_AT:String(AT),NODE_OPTIONS:"--import /w/tests/stub-fetch.mjs",STUB_FETCH_LOG:LOG});t.after(()=>stop(p));
+ const c=await player(port,"Saison Coupée","left");
+ assert.equal((await c.call("POST","/api/push/subscribe",{endpoint:FCM+"off",keys:keys()})).status,200);
+ await until(()=>Date.now()>=AT+11000,20000);   // inside the toast's window, a 10 s tick past
+ const m=await me(c);
+ assert.equal(m.newYear,undefined);assert.equal(m.newYearBanner,undefined);assert.equal(m.snowFront,undefined);
+ assert.equal(readFileSync(LOG,"utf8").split("\n").filter(l=>l.includes(FCM+"off")).length,0,"no push attempted");
+ const db=new DatabaseSync(join(dir,"t.db"),{readOnly:true});t.after(()=>db.close());
+ assert.equal(db.prepare("SELECT value FROM settings WHERE key='newyear_sent'").get(),undefined);
+});
+
+it("a Front an earlier year left open (server down through January) is closed at the next tick, once",async t=>{
+ const dir=mkdtempSync(join(tmpdir(),"pgsf-s-")),port=3972,env={POLITIGO_EVENT:"noel"};
+ let p=await boot(port,dir,env);t.after(()=>stop(p));
+ const l=await player(port,"Vieux Front","left");const b0=(await me(l)).state.wardrobe.bulletins;
+ await stop(p);
+ {const db=new DatabaseSync(join(dir,"t.db"));
+  const id=db.prepare("SELECT id FROM players WHERE name=?").get("Vieux Front").id;
+  db.exec("INSERT INTO snowfront(year,camp,points) VALUES(2025,'left',7),(2025,'right',2)");
+  db.prepare("INSERT INTO snowfront_players(year,player_id,camp) VALUES(2025,?,'left'),(2025,999,'left'),(2025,?,'right')").run(id,id+1);
+  db.close();}
+ p=await boot(port,dir,env);
+ const db=new DatabaseSync(join(dir,"t.db"),{readOnly:true});t.after(()=>db.close());
+ assert.ok(await until(()=>db.prepare("SELECT 1 FROM snowfront_results WHERE year=2025").get(),15000),"closed");
+ assert.deepEqual({...db.prepare("SELECT winner,left_pts,right_pts FROM snowfront_results WHERE year=2025").get()},{winner:"left",left_pts:7,right_pts:2});
+ const l2=await login(port,"Vieux Front");
+ assert.equal((await me(l2)).state.wardrobe.bulletins,b0+3);
+ const line="❄️ Le Front de neige est tombé : la Gauche l'emporte (7 contre 2).";
+ assert.equal((await l2.call("GET","/api/board")).json.feed.filter(e=>e.text===line).length,1);
+ assert.equal(db.prepare("SELECT COUNT(*) AS n FROM admin_log WHERE cmd='noel-front' AND target='2025'").get().n,1);
 });

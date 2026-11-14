@@ -41,16 +41,20 @@ export function newYearWindow(ms,at=null){
 }
 export const toastEnd=(year,at=null)=>closingAt(year,at)+TOAST_MS;
 
-// ---- the counter. campOf(id): a player's camp now ("left" | "right"), anything else for a deleted player.
-export function createSnowFront(db,{campOf=()=>null}={}){
+// ---- the counter. A player is paid for the camp he FOUGHT for (kept with each fight), whatever his camp at the
+// closing; one who fought for both camps is paid once if either won. exists(id): false for a deleted player (skipped).
+// (campOf(id), the first version's option, still works as "exists": a deleted player has no camp.)
+export function createSnowFront(db,{exists,campOf}={}){
+ const alive=exists??(campOf?id=>campOf(id)!=null:()=>true);
  db.exec(`CREATE TABLE IF NOT EXISTS snowfront(year INTEGER NOT NULL,camp TEXT NOT NULL,points INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(year,camp));
-CREATE TABLE IF NOT EXISTS snowfront_players(year INTEGER NOT NULL,player_id INTEGER NOT NULL,PRIMARY KEY(year,player_id));
+CREATE TABLE IF NOT EXISTS snowfront_players(year INTEGER NOT NULL,player_id INTEGER NOT NULL,camp TEXT NOT NULL,PRIMARY KEY(year,player_id,camp));
 CREATE TABLE IF NOT EXISTS snowfront_results(year INTEGER PRIMARY KEY,winner TEXT NOT NULL,left_pts INTEGER NOT NULL,right_pts INTEGER NOT NULL,t INTEGER NOT NULL);`);
  const q={
   addPts:db.prepare("INSERT INTO snowfront(year,camp,points) VALUES(?,?,?) ON CONFLICT(year,camp) DO UPDATE SET points=points+excluded.points"),
-  addPlayer:db.prepare("INSERT OR IGNORE INTO snowfront_players(year,player_id) VALUES(?,?)"),
+  addPlayer:db.prepare("INSERT OR IGNORE INTO snowfront_players(year,player_id,camp) VALUES(?,?,?)"),
   totals:db.prepare("SELECT camp,points FROM snowfront WHERE year=?"),
-  players:db.prepare("SELECT player_id AS id FROM snowfront_players WHERE year=? ORDER BY player_id"),
+  winners:db.prepare("SELECT DISTINCT player_id AS id FROM snowfront_players WHERE year=? AND camp IN (?,?) ORDER BY player_id"),
+  last:db.prepare("SELECT MAX(year) AS y FROM snowfront"),
   result:db.prepare("SELECT winner,left_pts,right_pts FROM snowfront_results WHERE year=?"),
   close:db.prepare("INSERT INTO snowfront_results(year,winner,left_pts,right_pts,t) VALUES(?,?,?,?,?)"),
  };
@@ -76,7 +80,7 @@ CREATE TABLE IF NOT EXISTS snowfront_results(year INTEGER PRIMARY KEY,winner TEX
   if(!okYear(year)||!CAMPS.includes(camp)||!Number.isSafeInteger(playerId)||!Number.isSafeInteger(points)||points<0)return false;
   return atomic(()=>{
    if(q.result.get(year))return false;
-   q.addPts.run(year,camp,points);q.addPlayer.run(year,playerId);
+   q.addPts.run(year,camp,points);q.addPlayer.run(year,playerId,camp);
    return true;
   });
  }
@@ -87,10 +91,12 @@ CREATE TABLE IF NOT EXISTS snowfront_results(year INTEGER PRIMARY KEY,winner TEX
   return atomic(()=>{
    const done=result(year);if(done)return {...done,paid:[]};
    const t=totals(year),winner=winnerOf(t),win=winner==="tie"?CAMPS:[winner];
-   const paid=q.players.all(year).map(r=>Number(r.id)).filter(id=>win.includes(campOf(id)));
+   const paid=q.winners.all(year,win[0],win.at(-1)).map(r=>Number(r.id)).filter(id=>alive(id));
    q.close.run(year,winner,t.left,t.right,now);
    return {winner,left:t.left,right:t.right,paid};
   });
  }
- return {add,totals,result,close};
+ // The most recent year anybody fought in, when it was never closed (a server down through January); else null.
+ function lastOpen(){const y=q.last.get()?.y;return Number.isInteger(y)&&!q.result.get(y)?y:null;}
+ return {add,totals,result,close,lastOpen};
 }

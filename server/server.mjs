@@ -91,7 +91,9 @@ const eventNow=()=>R.eventAt(Date.now(),EVENT_MODE);
 // released image refuses to start with it (it would close the Front de neige and send the toast at any time).
 let NEWYEAR_AT=null;
 if(env.POLITIGO_NEWYEAR_AT!==undefined&&env.POLITIGO_NEWYEAR_AT!==""){
- if(VERSION!=="dev"){console.error(`POLITIGO_NEWYEAR_AT is a test setting: refused on a released server (${VERSION}). Remove it.`);process.exit(1);}
+ // The raw variable: anything but unset, empty or "dev" (even a value VERSION would show as "dev") is refused.
+ const rawVersion=env.POLITIGO_VERSION??"";
+ if(rawVersion!==""&&rawVersion!=="dev"){console.error("POLITIGO_NEWYEAR_AT is a test setting: refused unless POLITIGO_VERSION is unset or \"dev\". Remove it.");process.exit(1);}
  const n=Number(env.POLITIGO_NEWYEAR_AT);
  if(!Number.isSafeInteger(n)||n<=0){console.error("POLITIGO_NEWYEAR_AT must be an instant in ms since 1970.");process.exit(1);}
  NEWYEAR_AT=n;console.warn(`New Year test setting active: midnight at ${new Date(n).toISOString()}.`);
@@ -212,8 +214,8 @@ for(const col of ["deaths","warned"]){
 // Settings changed from the admin interface win over the environment and the files, from then on.
 const getSetting=k=>db.prepare("SELECT value FROM settings WHERE key=?").get(k)?.value??null;
 const setSetting=(k,v)=>db.prepare("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(k,v);
-// The Front de neige's tables (snowfront.mjs). A player's camp is read at the closing, from the live game.
-const front=SF.createSnowFront(db,{campOf:id=>players.get(id)?.state.camp??null});
+// The Front de neige's tables (snowfront.mjs). A player is paid for the camp he fought for; a deleted one is skipped.
+const front=SF.createSnowFront(db,{exists:id=>players.has(id)});
 let INVITE_SOURCE=env.POLITIGO_INVITE?"env":"file";
 {const v=getSetting("invite");if(v&&v.length>=16){INVITE=v;INVITE_SOURCE="admin";INVITE_GENERATED=false;}}
 let REG_OPEN=getSetting("registrations")!=="closed";
@@ -627,13 +629,15 @@ const SNOW_BOT_FLAGS=new Set(["taps_rapides","precision","reflexe"]);
 const FRONT_EVERY=10e3,FRONT_PRIZE=3,TOAST_TEXT="🥂 Bonne année ! Toute la République trinque, gauche et droite réunies. Viens lever ton verre !";
 const nyYear=now=>SF.frontYear(now,NEWYEAR_AT),nyClosing=y=>SF.closingAt(y,NEWYEAR_AT);
 function frontView(now){const y=nyYear(now),t=front.totals(y);return {left:t.left,right:t.right,closed:now>=nyClosing(y)};}
-// In /api/me: the counter while the theme is on; the toast during its five minutes, its banner until 2 Jan 00:00.
+// In /api/me, only while the theme is on (the console's "off" cuts the whole season): the counter; the toast, live
+// during its five minutes (newYear.live), then until 2 Jan 00:00 for the banner's « Revoir » (live:false, newYearBanner).
 function noelView(p,now){
  const o={};
  try{
-  if(R.isNoel(eventNow()))o.snowFront=frontView(now);
+  if(!R.isNoel(eventNow()))return o;
+  o.snowFront=frontView(now);
   const w=SF.newYearWindow(now,NEWYEAR_AT);
-  if(w.on)o.newYear=newYearView(p,now);
+  if(w.on||w.banner)o.newYear={...newYearView(p,now),live:w.on};
   if(w.banner)o.newYearBanner=true;
  }catch(e){console.error(`player ${p.id}: Trêve view`,e);}
  return o;
@@ -665,12 +669,14 @@ function frontChanged(){
   try{if(R.isNoel(eventNow()))broadcast("snowFront",frontView(frontSent));}catch(e){console.error("snowFront broadcast:",e);}},Math.max(0,frontSent+FRONT_EVERY-Date.now()));
  frontTimer.unref?.();
 }
-// Every 10 s, from 1 Jan 00:00: once a year the toast (to every subscribed device, only during its five minutes: a
-// server down at midnight does not wish a late "come and raise your glass"), and once a year the closing.
+// Every 10 s. First a Front an earlier year left open (a server down through January): closed at once. Then, from
+// 1 Jan 00:00, once a year the toast (to every subscribed device, only during its five minutes, so a server down at
+// midnight does not wish a late "come and raise your glass", and only while the theme is on), and once a year the closing.
 function newYearTick(now=Date.now()){
- const y=nyYear(now),at=nyClosing(y);
+ const y=nyYear(now),at=nyClosing(y),stale=front.lastOpen();
+ if(stale!==null&&stale<y&&now>=nyClosing(stale))closeFront(stale,now);
  if(now<at)return;
- if(getSetting("newyear_sent")!==String(y)){
+ if(R.isNoel(eventNow())&&getSetting("newyear_sent")!==String(y)){
   setSetting("newyear_sent",String(y));   // first: a crash right after loses the toast rather than sending it twice
   if(now<SF.toastEnd(y,NEWYEAR_AT)){
    let n=0;
