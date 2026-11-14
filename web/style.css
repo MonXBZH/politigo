@@ -530,3 +530,21 @@ footer{max-width:1120px;margin:0 auto;padding:0 max(16px,env(safe-area-inset-rig
 .has-event .sheet{padding-top:var(--event-h,46px)}   /* a low screen: the sheet's top stays below the bar */
 .has-event .announce-bar,.has-event .net{top:calc(var(--event-h,46px) + 10px)}
 .price.boost{color:#2a1c05;background:var(--accent-2,#ffd59a)}
+
+/* Trêve des confiseurs (set by app.js from rules.mjs eventAt): a fir-green night with a gold glint, for both camps. */
+body[data-season=noel],body[data-camp][data-season=noel]{--accent-2:#f4c84a;--bg1:#0a1a17;--bg2:#163a2e;--bg3:#7a1f2a}
+/* The Advent calendar's sheet: 24 boxes in a shuffled order (noelui.mjs ADVENT_ORDER), 6 per row. */
+.advent-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin:6px 0 12px}
+.advent-box{aspect-ratio:1;min-height:44px;border-radius:14px;border:1px solid var(--line);background:var(--glass);font:700 18px/1 Fredoka,system-ui,sans-serif;cursor:pointer;
+ display:grid;place-items:center;padding:0;transition:transform .12s}
+.advent-box:active{transform:scale(.95)}
+.advent-box.today{background:#c8283a;border-color:#f4c84a;color:#fff;box-shadow:0 0 0 2px #f4c84a66,0 0 18px 4px #f4c84a88;animation:advent-glow 1.6s ease-in-out infinite alternate}
+.advent-box.open{background:#2f7d4f55;border-color:#7fd6a066;color:#bff0cf}
+.advent-box.missed{opacity:.4;border-style:dashed}
+.advent-box.later{color:var(--muted)}
+.advent-box.d24{border:2px solid #f4c84a;color:#f4c84a;background:#f4c84a22}
+.advent-box.today.d24{background:#c8283a;color:#fff}
+@keyframes advent-glow{to{box-shadow:0 0 0 2px #f4c84aaa,0 0 26px 8px #f4c84aaa}}
+.advent-said{margin:0 0 6px;min-height:1.45em}
+.advent-said .gold{color:#f4c84a}
+@media(prefers-reduced-motion:reduce){.advent-box.today{animation:none}}

@@ -265,8 +265,9 @@ export const NOEL={
   ["La trêve des confiseurs ?","Une trêve sociale","Une trêve des impôts","Une trêve du dimanche"]
  ],
  sleep:{left:"Zzz… le Père Noël est une ordure…",right:"Zzz… pourvu que les rennes ne fassent pas grève…"},
- voeux:{left:"« Mes chers camarades, pour 2027, je vous souhaite la retraite à 60 ans, des lendemains qui chantent… et une bonne santé, remboursée à 100 %. »",
-  right:"« Françaises, Français, pour 2027, je vous souhaite moins d'impôts, plus de croissance… et l'ordre, partout, même dans vos réveillons. »"},
+ // voeux: {annee} is the year to come, filled in at display time (noelui.mjs voeuxText).
+ voeux:{left:"« Mes chers camarades, pour {annee}, je vous souhaite la retraite à 60 ans, des lendemains qui chantent… et une bonne santé, remboursée à 100 %. »",
+  right:"« Françaises, Français, pour {annee}, je vous souhaite moins d'impôts, plus de croissance… et l'ordre, partout, même dans vos réveillons. »"},
  labels:{missions:{left:"Tournée des marchés de Noël solidaires",right:"Tournée des marchés de Noël du terroir"},
   mail:"Lettres au Père Noël",goals:"Bonnes résolutions",urn:{left:"La Tombola du réveillon",right:"La Loterie du gala de Noël"}}
 };

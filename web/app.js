@@ -12,6 +12,7 @@ import * as E from "./events.mjs";
 import {outfitLook,drawObject,dressColors} from "./looks.mjs";
 import {createLegend,volcanoRoom} from "./legend.mjs";
 import {createBatonDuel,screenOf,feedParts} from "./batonduel.mjs";
+import {noelMoment,noelYear,voeuxText,adventCells,adventGiftText} from "./noelui.mjs";
 const {people,personalItems,stresses,shop,fxNames,XP,xpCost,xpFloor,stage}=R;
 const $=s=>document.querySelector(s);
 const motionQuery=matchMedia("(prefers-reduced-motion: reduce)");
@@ -51,11 +52,16 @@ const serverNow=()=>Date.now()+skew;
 // The seasonal event (rules.mjs eventAt), asked every frame: worked out once a second, Intl is not free.
 let EVENT_MODE="auto",seasonAt=0,seasonVal="";
 function season(){const n=Date.now();if(n-seasonAt>1000){seasonAt=n;seasonVal=R.eventAt(serverNow(),EVENT_MODE);}return seasonVal;}
-const hw=()=>season()==="halloween";
+const hw=()=>season()==="halloween",noel=()=>R.isNoel(season());
+// The Trêve des confiseurs' moment (noelui.mjs): "", "day", "eve" (the sleigh) or "voeux", by the server's clock, once a second.
+let momentAt=0,momentVal="";
+function moment(){const n=Date.now();if(n-momentAt>1000){momentAt=n;momentVal=noelMoment(serverNow(),season());}return momentVal;}
+// What the screen calls the activities and the urn, in costume while the theme lasts (rules.mjs NOEL.labels).
+const urnName=c=>noel()?R.NOEL.labels.urn[c]:W.URN_NAME[c];
 function applyMe(m,{replay=false}={}){
  if(!m||!m.state)return;
  if(Number.isFinite(m.serverNow))skew=m.serverNow-Date.now();
- if(R.EVENT_MODES.includes(m.event)&&m.event!==EVENT_MODE){EVENT_MODE=m.event;seasonAt=0;}
+ if(R.EVENT_MODES.includes(m.event)&&m.event!==EVENT_MODE){EVENT_MODE=m.event;seasonAt=0;momentAt=0;}
  if(Array.isArray(m.events))liveEvents=m.events;
  const first=!S||me!==m.name;
  // The action answer and the live stream race each other: an older copy of the state never replaces a newer one.
@@ -114,6 +120,7 @@ function playJournal(onlyMajor){
   else if(act.k==="sync")toast(act.text);              // back from a maintenance: said once, nothing to animate
   else if(act.k==="duel"){if(d.res==="win")playAnim("win",2500);toast(act.text);duelJournalT=Date.now();}
   else if(act.k==="treat"){playAnim("eat",2500,{food:"candy"});toast(act.text);}
+  else if(act.k==="advent"){playAnim("win",1500);toast(`🎁 ${act.text}`);}
   // Reached on their own (a visit, a purchase…): said once. Missions, letters and draws answer the player's tap instead.
   else if(act.k==="goal"){playAnim("win",1500);toast(act.text);}
   else if(act.k==="flame")toast(`🔥 ${act.text}`);
@@ -376,8 +383,9 @@ function fitCanvas(){
 }
 addEventListener("resize",fitCanvas);
 const GAUGES=[{k:"sat",l:"SAT",c:"#f1bc72",a:200},{k:"moral",l:"MOR",c:"#ef91ae",a:290},{k:"energy",l:"ÉNE",c:"#85cbbb",a:20},{k:"hyg",l:"HYG",c:"#93b4ec",a:110}];
-function bigSprite(p,state,size,cx,ground,t,legend=false,food,costume=""){
- sprite(scratch.getContext("2d"),p,t,state,legend,food,costume);
+// over(c): drawn on the 64x64 sprite once it is done (the Trêve des confiseurs' hat and scarf).
+function bigSprite(p,state,size,cx,ground,t,legend=false,food,costume="",over=null){
+ const sc=scratch.getContext("2d");sprite(sc,p,t,state,legend,food,costume);over?.(sc);
  ctx.imageSmoothingEnabled=false;ctx.drawImage(scratch,cx-size/2,ground-size,size,size);
 }
 // Fits a centred label inside the round panel: shrink first, then split into two balanced lines.
@@ -502,6 +510,105 @@ function hwCandle(t){
  ctx.fillStyle="#ffcf5a";ctx.beginPath();ctx.ellipse(330,293,3,5+f*2,0,0,Math.PI*2);ctx.fill();
  ctx.fillStyle="#fff3c0";ctx.beginPath();ctx.ellipse(330,295,1.5,2.5,0,0,Math.PI*2);ctx.fill();
 }
+// ---------- Trêve des confiseurs (1 December to 1 January, rules.mjs eventAt): decor only, like Halloween ----------
+// Ported from the validated mockup (maquette/noel.js). The moments (noelui.mjs noelMoment) follow the server's clock.
+const NW={x:60,y:150,w:104,h:88};                                  // the window's pane, left of the élu
+const FLAKES=[...Array(28)].map((_,i)=>({x:(i*37)%NW.w,y:(i*61)%NW.h,s:1+i%2,v:10+(i*13)%18}));
+// The tricolour garland hangs along the top of the round panel, between the gauges, clear of the name: its wire
+// (four swags) and its bulbs are worked out once.
+let garlandCache=null;
+function garlandPath(){
+ if(garlandCache)return garlandCache;
+ const a0=238*Math.PI/180,a1=302*Math.PI/180,at=(k,drop)=>{const f=(k*4)%1,r=202-9*Math.sin(Math.PI*f)-drop,a=a0+(a1-a0)*k;return [233+Math.cos(a)*r,233+Math.sin(a)*r];};
+ return garlandCache={wire:Array.from({length:49},(_,i)=>at(i/48,0)),bulbs:Array.from({length:13},(_,i)=>at((i+1)/14,6))};
+}
+const GARLAND=["#2f6fe0","#f4f1ea","#e0413a"];
+function garland(c,t){
+ const G=garlandPath();
+ c.strokeStyle="#2e5d3a";c.lineWidth=3;c.beginPath();G.wire.forEach(([x,y],i)=>i?c.lineTo(x,y):c.moveTo(x,y));c.stroke();
+ G.bulbs.forEach(([x,y],i)=>{
+  const on=(Math.floor(t/500)+i)%3!==0,col=GARLAND[i%3];
+  if(on){c.fillStyle=col+"44";c.beginPath();c.arc(x,y,8,0,Math.PI*2);c.fill();}
+  c.fillStyle=on?col:"#555a66";c.beginPath();c.ellipse(x,y,3.5,5,0,0,Math.PI*2);c.fill();
+ });
+}
+// The tree, its blinking lights, the star and the presents, in the mockup's coordinates (base at 0), scaled k.
+const TREE_LIGHTS=[[-30,-82],[18,-90],[-12,-120],[26,-128],[-20,-160],[10,-168],[0,-140],[-38,-100],[36,-104],[-4,-190]];
+const PRESENTS=[[-50,30,24,"#c8283a","#f4c84a"],[-16,26,32,"#2f5fb4","#f4f1ea"],[14,34,22,"#f4c84a","#c8283a"],[44,22,18,"#2f7d4f","#f4f1ea"]];
+function noelTree(c,t,cx,base,k){
+ c.save();c.translate(cx,base);c.scale(k,k);
+ rect(c,-8,-26,16,26,"#6b4426");
+ for(const [w,y0,h] of [[110,-70,60],[86,-115,56],[60,-155,50]]){
+  c.fillStyle="#2f7d4f";c.beginPath();c.moveTo(0,y0-h);c.lineTo(w/2,y0);c.lineTo(-w/2,y0);c.closePath();c.fill();
+  c.fillStyle="#256941";c.beginPath();c.moveTo(0,y0-h);c.lineTo(w/2,y0);c.lineTo(w/6,y0);c.closePath();c.fill();
+ }
+ TREE_LIGHTS.forEach(([dx,dy],i)=>{const on=(Math.floor(t/400)+i)%4!==0;c.fillStyle=on?["#ffd23f","#ff5a5a","#7fb2ff","#ffffff"][i%4]:"#24452f";c.beginPath();c.arc(dx,dy,4,0,Math.PI*2);c.fill();});
+ c.fillStyle="#f4c84a";c.beginPath();for(let i=0;i<10;i++){const a=-Math.PI/2+i*Math.PI/5,r=i%2?6:14;c.lineTo(Math.cos(a)*r,-212+Math.sin(a)*r);}c.closePath();c.fill();
+ for(const [dx,w,h,col,rib] of PRESENTS){rect(c,dx-w/2,-h,w,h,col);rect(c,dx-2,-h,4,h,rib);rect(c,dx-w/2,-h/2-2,w,4,rib);}
+ c.restore();
+}
+// Two reindeer, the sleigh and its driver, (x, y) the first reindeer's top-left.
+function sleigh(c,x,y,k=1){
+ for(const dx of [0,26]){rect(c,x+dx,y+6*k,18*k,8*k,"#8a5a32");rect(c,x+dx+14*k,y,6*k,8*k,"#8a5a32");rect(c,x+dx+15*k,y-4*k,2*k,4*k,"#d9c9a0");rect(c,x+dx+19*k,y+2*k,2*k,2*k,dx?"#8a5a32":"#ff3b3b");rect(c,x+dx+2*k,y+14*k,2*k,5*k,"#5a3a20");rect(c,x+dx+13*k,y+14*k,2*k,5*k,"#5a3a20");}
+ c.strokeStyle="#d9c9a0";c.lineWidth=1;c.beginPath();c.moveTo(x-4,y+10*k);c.lineTo(x+18,y+8*k);c.stroke();
+ rect(c,x-46*k,y+4*k,40*k,14*k,"#c8283a");rect(c,x-48*k,y+18*k,46*k,3*k,"#f4c84a");
+ rect(c,x-34*k,y-8*k,14*k,14*k,"#d23a3a");rect(c,x-32*k,y-12*k,10*k,6*k,"#f4f1ea");rect(c,x-30*k,y-4*k,6*k,6*k,"#f4f1ea");
+ rect(c,x-46*k,y-6*k,12*k,10*k,"#7a4a24");rect(c,x-44*k,y-8*k,4*k,4*k,"#2f7d4f");
+}
+// A flag on its pole (pole 150 high in the mockup's units): the French one, or the European one.
+function flag(c,x,y,eu,t,k){
+ c.save();c.translate(x,y);c.scale(k,k);
+ rect(c,0,0,3,150,"#b8b2a4");
+ const w=56,h=38,wv=reduced?0:Math.sin(t/300)*2;
+ if(eu){rect(c,3,4+wv,w,h,"#203f9a");for(let i=0;i<12;i++){const a=i/12*Math.PI*2;rect(c,3+w/2+Math.cos(a)*12-1,4+wv+h/2+Math.sin(a)*12-1,3,3,"#f4c84a");}}
+ else{rect(c,3,4+wv,w/3,h,"#2f5fb4");rect(c,3+w/3,4+wv,w/3,h,"#f4f1ea");rect(c,3+2*w/3,4+wv,w/3,h,"#e0413a");}
+ c.restore();
+}
+// The window: snow falling outside, the town's roofs, the sleigh on Christmas Eve; snow piled on the sill.
+function noelWindow(c,t,night,m){
+ const {x,y,w,h}=NW,dark=night||m==="eve"||m==="voeux",frame=night?"#c9cfdc":"#f4f1ea";
+ c.save();c.beginPath();c.rect(x,y,w,h);c.clip();
+ c.fillStyle=night?"#0b1530":dark?"#1c3462":"#a8cdf0";c.fillRect(x,y,w,h);
+ for(const [dx,bw,bh] of [[0,30,30],[28,22,44],[48,32,26],[78,26,38]])rect(c,x+dx,y+h-bh,bw,bh,dark?"#0a1022":"#7f97b4");
+ for(const [dx,bh] of [[32,44],[82,38]])for(let i=0;i<3;i++)rect(c,x+dx+i*6,y+h-bh+8,3,4,dark?"#f4c84a":"#dfe9f4");
+ if(m==="eve"){const p=reduced?0.5:(t%7000)/7000;c.save();c.translate(x+w+30-p*(w+90),y+26+Math.sin(p*9)*4);c.scale(0.55,0.55);sleigh(c,0,0);c.restore();}
+ for(const f of FLAKES)rect(c,x+(f.x+Math.sin(t/900+f.y)*5+w)%w,y+(f.y+t*f.v/1000)%h,f.s,f.s,"#ffffff");
+ c.restore();
+ rect(c,x-6,y-6,w+12,6,frame);rect(c,x-6,y-6,6,h+14,frame);rect(c,x+w,y-6,6,h+14,frame);rect(c,x+w/2-2,y,4,h,frame);rect(c,x,y+h/2-2,w,4,frame);
+ rect(c,x-6,y+h,w+12,8,frame);rect(c,x-8,y+h-3,w+16,5,"#ffffff");
+}
+// The room's Christmas decor, behind the élu: the window, the garland, the tree; the flags on New Year's Eve.
+function drawNoelRoom(c,t,S){
+ const night=R.isNight(S),m=moment();
+ noelWindow(c,t,night,m);
+ garland(c,t);
+ noelTree(c,t,372,324,0.62);
+ if(m==="voeux"&&!R.isAsleep(S)){flag(c,150,206,false,t,0.75);flag(c,292,206,true,t,0.75);}
+}
+// The vœux's lectern, in front of the élu (a tricolour band, a microphone).
+function lectern(c){
+ rect(c,189,258,88,7,"#5a4430");rect(c,193,265,80,53,"#3a2a1c");
+ rect(c,207,280,18,8,"#2f5fb4");rect(c,225,280,17,8,"#f4f1ea");rect(c,242,280,17,8,"#e0413a");
+ rect(c,231,240,3,18,"#222222");rect(c,227,233,11,8,"#333333");
+}
+// The Santa hat (both camps) and the scarf (red on the left, tricolour on the right), drawn on the 64x64 sprite after
+// the body and over the wardrobe's outfit, which it never replaces. It follows the sprite's own bob (app.js sprite).
+function noelCostume(c,t,camp,state="idle",hat="#d23a3a"){
+ const phase=Math.floor(t/300)%4,bob=state==="sleep"?0:state==="win"?[0,-3,-5,-2][phase]:state==="run"?[0,-2,0,-2][phase]:[0,-1,0,0][phase];
+ const sway=reduced?0:Math.round(Math.sin(t/400));
+ c.save();c.translate(state==="stress"?(phase%2?1:-1):0,bob);
+ if(camp==="left"){rect(c,23,33,19,4,"#c8283a");rect(c,23,33,19,1,"#e6545f");rect(c,36,36,4,9,"#c8283a");rect(c,36,44,4,1,"#f1e9da");}
+ else{rect(c,23,33,7,4,"#2f5fb4");rect(c,30,33,6,4,"#f1e9da");rect(c,36,33,6,4,"#c8283a");rect(c,37,36,4,9,"#c8283a");rect(c,37,40,4,1,"#f1e9da");}
+ rect(c,21,10,23,4,"#f4f1ea");rect(c,21,13,23,1,"#d6d0c4");
+ rect(c,23,5,18,5,hat);rect(c,27,2,13,3,hat);rect(c,33,0,8,2,hat);rect(c,40+sway,1,4,4,hat);
+ rect(c,42+sway,0,5,5,"#f4f1ea");rect(c,43+sway,1,3,3,"#ffffff");
+ c.restore();
+}
+// The Pong's tiny tree, in front of the words (instead of Halloween's pumpkin).
+function miniTree(c,x,y){
+ c.fillStyle="#2f7d4f";c.beginPath();c.moveTo(x,y-8);c.lineTo(x+6,y+4);c.lineTo(x-6,y+4);c.closePath();c.fill();
+ rect(c,x-1,y+4,2,3,"#6b4426");rect(c,x-1,y-10,2,2,"#f4c84a");rect(c,x-2,y-2,1,1,"#ff5a5a");rect(c,x+2,y+1,1,1,"#ffd23f");
+}
 function gauges(now){
  ctx.lineCap="round";
  for(const g of GAUGES){
@@ -535,13 +642,14 @@ function render(now){
  if(scene&&drawScene(now))return;
  if(pong){drawPong(now);return;}
  if(mini){mini.draw(miniClock);return;}
- const night=isAsleep(),t=reduced?0:now,spooky=hw();
+ const night=isAsleep(),t=reduced?0:now,spooky=hw(),xmas=noel(),m=xmas?moment():"";
  if(anim&&now>anim.until)anim=null;
- const state=anim?(anim.name==="bath"?"idle":anim.name):night?"sleep":"idle";
+ // New Year's Eve: the élu stands at the lectern, arms up, for the vœux.
+ const state=anim?(anim.name==="bath"?"idle":anim.name):night?"sleep":m==="voeux"?"win":"idle";
  const costume=spooky&&state==="sleep"?(S.camp==="left"?"hunter":"vampire"):"";
  // The Bâton de feu held: the hemicycle gives way to the erupting volcano (legend.mjs), Halloween's decor included.
  if(worn().object==="baton")volcanoRoom(ctx,t);
- else{room(isNight());if(spooky){hwRoom(t,now);hwProps(costume);}}
+ else{room(isNight());if(spooky){hwRoom(t,now);hwProps(costume);}else if(xmas)drawNoelRoom(ctx,t,S);}
  if(S.sleeping&&!isNight()){ctx.fillStyle="rgba(6,8,22,.62)";ctx.fillRect(0,0,466,466);if(spooky)hwCandle(t);}   // light off during a nap
  gauges(now);
  const p=look();
@@ -549,7 +657,8 @@ function render(now){
  ctx.font="600 13px ui-monospace, monospace";ctx.fillStyle="#ffffffc0";ctx.fillText(`NIVEAU ${S.lvl}${S.lvl===100?" · LÉGENDE":""}`,233,112);
  const part=S.lvl>=100?1:Math.min(1,(S.xp-xpFloor(S.lvl))/xpCost(S.lvl));
  ctx.fillStyle="#ffffff26";ctx.fillRect(173,119,120,4);ctx.fillStyle="#ffd59a";ctx.fillRect(173,119,Math.round(120*part),4);
- bigSprite(p,state,192,233,318,t,S.lvl===100,anim&&anim.food,costume);
+ bigSprite(p,state,192,233,318,t,S.lvl===100,anim&&anim.food,costume,xmas?c=>noelCostume(c,t,S.camp,state):null);
+ if(m==="voeux"&&!night)lectern(ctx);
  if(lvlFx){                                        // the small level-up burst
   const e=(now-lvlFx.t0)/1000;
   if(e>1.6)lvlFx=null;
@@ -566,7 +675,8 @@ function render(now){
  else if(anim&&anim.line)bubble(anim.line);
  else{
   ctx.fillStyle=S.zero?"#ff9aa5":"#ffd59a";
-  fitLabel(night?(spooky?R.HALLOWEEN.sleep[S.camp]:S.sleeping&&!isNight()?"Zzz… sieste en cours":"Zzz… il dort"):S.zero?`Jauge à zéro depuis ${S.zero} h : danger !`:S.form==="Excellente"?(S.streak>=6?`En pleine forme · série de ${S.streak} h`:"En pleine forme"):`Forme ${S.form.toLowerCase()}`,356);
+  const xmasLine=xmas&&!S.zero?{eve:"Réveillon de Noël · le traîneau passe !",voeux:"En direct de l'hémicycle : les vœux"}[m]:"";
+  fitLabel(night?(spooky?R.HALLOWEEN.sleep[S.camp]:xmas?R.NOEL.sleep[S.camp]:S.sleeping&&!isNight()?"Zzz… sieste en cours":"Zzz… il dort"):xmasLine||(S.zero?`Jauge à zéro depuis ${S.zero} h : danger !`:S.form==="Excellente"?(S.streak>=6?`En pleine forme · série de ${S.streak} h`:"En pleine forme"):`Forme ${S.form.toLowerCase()}`),356);
  }
 }
 
@@ -722,17 +832,18 @@ function stepPong(now){
  if(pong.by>PONG.lost){pong.missed++;pong.flashT=now;pongServe();}
 }
 function drawPong(now){
- const left=S.camp==="left",spooky=hw();
+ const left=S.camp==="left",spooky=hw(),xmas=noel();
  sceneBackdrop(left);
  ctx.textAlign="center";ctx.fillStyle="#fff6ea";ctx.font="700 18px Fredoka, system-ui, sans-serif";ctx.fillText(spooky?"PONG DES REVENANTS":"PONG DES ARGUMENTS",233,72);
  ctx.fillStyle=left?"#7fa8f8":"#ef7c91";ctx.fillRect(198,104,70,26);ctx.fillStyle="#202330";ctx.fillRect(228,96,10,8);
  ctx.fillStyle="#202330";ctx.font="700 10px ui-monospace, monospace";ctx.fillText("ADVERSAIRE",233,121);
  bigSprite(look(),now-pong.hitT<400?"debate":"idle",96,pong.px,358,now);
  if(!pong.endT){
-  // While Halloween lasts: an orange border and a tiny pumpkin before the words.
-  ctx.font="700 13px Inter, system-ui, sans-serif";const pad=spooky?16:0,w=Math.max(70,ctx.measureText(pong.text).width+18+pad);
+  // While Halloween lasts: an orange border and a tiny pumpkin before the words; at Christmas, a candy-cane border and a tree.
+  ctx.font="700 13px Inter, system-ui, sans-serif";const pad=spooky||xmas?16:0,w=Math.max(70,ctx.measureText(pong.text).width+18+pad);
   ctx.fillStyle=pong.mine?"#fff3cf":"#f8efdf";ctx.beginPath();ctx.roundRect(pong.bx-w/2,pong.by-14,w,28,12);ctx.fill();
-  ctx.strokeStyle=spooky?"#ff9f43":pong.mine?"#ffd59a":(left?"#7fa8f8":"#ef7c91");ctx.lineWidth=3;ctx.stroke();
+  ctx.strokeStyle=spooky?"#ff9f43":xmas?"#3fa35b":pong.mine?"#ffd59a":(left?"#7fa8f8":"#ef7c91");ctx.lineWidth=3;ctx.stroke();
+  if(xmas){ctx.setLineDash([6,6]);ctx.strokeStyle="#e0413a";ctx.stroke();ctx.setLineDash([]);miniTree(ctx,pong.bx-w/2+13,pong.by+1);}
   if(spooky)pumpkin(pong.bx-w/2+13,pong.by+1,6,-1);
   ctx.fillStyle="#2a2230";ctx.fillText(pong.text,pong.bx+pad/2,pong.by+5);
  }
@@ -1060,7 +1171,7 @@ function armedButton(label,armedLabel,cls,onConfirm){
 // 1.6.0: the missions (a report ready), the letter, the goals' progress, the wardrobe and the urn.
 const sheetSig=()=>[S.fm,curIdx(),R.actsToday(S),R.actsThisVisit(S),S.energy<20,S.coffees,S.breadIdx,S.lvl,S.best,S.equipped[person().name]||0,isAsleep(),S.camp,!rematchBlock(),season(),S.treatDay,
  S.missions?.cur?.id,A.missionReady(S),A.missionsToday(S),S.energy<A.MISSION_RULES.minEnergy,S.mail?.letter?.id,A.lettersWaiting(S),A.lettersToday(S),S.mail?.b,S.goals?.list?.map(x=>`${x.n}${x.done?"d":""}`).join(),
- running().map(e=>e.id).join(),S.wardrobe?.own?.length,worn().outfit,worn().object,S.wardrobe?.bulletins,S.wardrobe?.confetti,W.freeDrawToday(S),A.flameOf(S),urnHint,batonSig()].join("|");
+ running().map(e=>e.id).join(),S.wardrobe?.own?.length,worn().outfit,worn().object,S.wardrobe?.bulletins,S.wardrobe?.confetti,W.freeDrawToday(S),A.flameOf(S),urnHint,batonSig(),S.advent?.y,S.advent?.opened?.join("-")].join("|");
 let shownSig="";
 function setBackgroundInert(on){for(const el of document.querySelectorAll(".topbar,.app,footer"))el.inert=on;lockScroll(on);}
 // The page behind an open sheet does not move: a swipe that reaches the end of a list (the chat) no longer scrolls the
@@ -1109,6 +1220,8 @@ function renderSheet(kind,opener){
  if(kind==="food"){
   set("La Buvette",`${S.fm} FM (frais de mandat) en caisse · 2 FM gagnés par heure de vie`);
   // Halloween's daily gift, the only thing the event changes in the game (rules.mjs treatBlock).
+  // The Trêve des confiseurs' Advent calendar, at the top (noelui.mjs adventCells); Halloween's gift is not offered then.
+  if(noel()){const v=adventCells(S,season(),S.vclock);body.append(list(boosted(itemButton("🎁 Calendrier de l'Avent",v.canOpen?"La case du jour t'attend : un petit cadeau, une fois par jour.":v.note,"Ouvrir",false,()=>{adventSaid=null;openSheet("advent");}),v.canOpen)));}
   if(hw()){const e=R.treatBlock(S,season());body.append(list(itemButton("Des bonbons ou un amendement ?",e||`Cadeau d'Halloween : moral +${R.HALLOWEEN.treat.moral}, une fois par jour.`,"gratuit",!!e,()=>{closeSheet();send({type:"treat"});})));}
   body.append(shopList("food"));
  }
@@ -1141,6 +1254,7 @@ function renderSheet(kind,opener){
  }
  if(kind==="wardrobe")renderWardrobe(body,set);
  if(kind==="urn")renderUrn(body,set);
+ if(kind==="advent")renderAdvent(body,set);
  if(kind==="player")renderPlayer(body,set);
  if(kind==="duels")renderDuels(body,set);
  if(kind==="test"){
@@ -1192,7 +1306,7 @@ function renderSheet(kind,opener){
   const wearing=[wo.outfit,wo.object].filter(id=>id&&W.ITEMS[id]).map(id=>W.ITEMS[id].name).join(" et ");
   body.append(blockTitle("Garde-robe"),list(
    itemButton("Garde-robe",`${got} sur ${vis.length} tenues et objets${wearing?` · porte ${wearing}`:""}. Purement cosmétique.`,"Ouvrir",false,()=>openSheet("wardrobe")),
-   itemButton(W.URN_NAME[S.camp],W.freeDrawToday(S)?"Ton tirage gratuit du jour t'attend.":`Tirage gratuit déjà pris aujourd'hui · ${plural(w.bulletins,"bulletin")} en poche.`,`🎟️ ${w.bulletins}`,false,()=>openSheet("urn"))));
+   itemButton(urnName(S.camp),W.freeDrawToday(S)?"Ton tirage gratuit du jour t'attend.":`Tirage gratuit déjà pris aujourd'hui · ${plural(w.bulletins,"bulletin")} en poche.`,`🎟️ ${w.bulletins}`,false,()=>openSheet("urn"))));
   body.append(blockTitle("Objets personnels"),list(...personalItems[p.name].map((it,i)=>{
    const on=(S.equipped[p.name]||0)===i,held=on&&!wo.object;
    return itemButton(it.name,held?"Dans sa main":on?"Équipé, mais rangé : un objet de la garde-robe est dans sa main. Toucher pour le reprendre.":"Toucher pour équiper",on?"équipé":"",false,()=>equip(i),held);
@@ -1320,7 +1434,7 @@ function missionReward(m){
 }
 function renderActivities(body){
  const c=S.camp,f=fx(),cur=S.missions.cur,ready=A.missionReady(S),n=A.missionsToday(S),max=A.missionLimit(f);
- body.append(blockTitle("Missions"),fine(`Quelques heures sur le terrain, pendant que tu fais autre chose : des jauges, de l'XP à chaque rapport et des bulletins pour ${W.URN_NAME[c]}, une fois par mission et par jour. Plus elle dure, plus elle rapporte. Une à la fois.`),
+ body.append(blockTitle(noel()?R.NOEL.labels.missions[c]:"Missions"),fine(`Quelques heures sur le terrain, pendant que tu fais autre chose : des jauges, de l'XP à chaque rapport et des bulletins pour ${urnName(c)}, une fois par mission et par jour. Plus elle dure, plus elle rapporte. Une à la fois.`),
   fine(`Missions ${n}/${max===Infinity?"∞":max} · Bulletins du jour ${A.bulletinsToday(S)}/${A.MISSION_RULES.bulletinsPerDay*f.bulletins}`));
  if(cur){
   const m=A.missionOf(cur.id);
@@ -1334,7 +1448,7 @@ function renderActivities(body){
   const e=A.missionBlock(S,m.id,f),desc=`${R.fxText(m.fx)}${m.risk?` ; ou, une fois sur deux : ${R.fxText(m.risk.fx)}`:""}${m.night&&!e?" · le soir seulement, de 20 h à minuit":""} · ${missionReward(m)}`;
   return boosted(itemButton(m[c],e&&e!==shared?`${e} ${desc}`:desc,`${A.missionTime(m.ms/f.div)}${f.div>1?` (÷${f.div})`:""}`,!!e,()=>missionStart(m)),f.div>1);
  })));
- body.append(blockTitle("Courrier"));
+ body.append(blockTitle(noel()?R.NOEL.labels.mail:"Courrier"));
  const l=S.mail.letter&&A.letterOf(S.mail.letter.id);
  if(l){
   const d=document.createElement("div"),b=document.createElement("b"),q=document.createElement("q");d.className="dossier letter";
@@ -1345,7 +1459,7 @@ function renderActivities(body){
  }else body.append(fine(R.clockOf(vnow()).hour<A.MAIL.quietTo?`Le facteur passe à partir de ${A.MAIL.quietTo} h.`:`Pas de lettre pour l'instant : les électeurs écrivent environ toutes les ${A.MAIL.slotMin} minutes${f.mailGap?`, et une lettre en plus toutes les ${f.mailGap} minutes pendant l'événement`:""} (heure du jeu).`));
  const lt=A.lettersToday(S),bl=A.mailBulletinsLeft(S,f);
  body.append(fine(`${plural(lt,"lettre")} répondue${lt>1?"s":""} aujourd'hui · 1 bulletin toutes les ${A.MAIL.bulletinEvery} lettres, ${bl?`encore ${plural(bl,"bulletin")} à gagner aujourd'hui`:"plus de bulletin du courrier aujourd'hui (les jauges, toujours)"}.`));
- body.append(blockTitle("Objectifs du jour"));
+ body.append(blockTitle(noel()?R.NOEL.labels.goals:"Objectifs du jour"));
  const goals=A.goalView(S);
  if(!goals.length)body.append(fine("Les objectifs du jour arrivent à la prochaine heure de jeu."));
  else{
@@ -1358,7 +1472,7 @@ function renderActivities(body){
   }
   body.append(ul);
  }
- body.append(fine(`🎟️ ${plural(S.wardrobe.bulletins,"bulletin")} en poche : à jouer dans Dossier → ${W.URN_NAME[c]}. Les missions rapportent aussi de l'XP ; le courrier et les objectifs, seulement des jauges et des bulletins.`));
+ body.append(fine(`🎟️ ${plural(S.wardrobe.bulletins,"bulletin")} en poche : à jouer dans Dossier → ${urnName(c)}. Les missions rapportent aussi de l'XP ; le courrier et les objectifs, seulement des jauges et des bulletins.`));
 }
 
 // ---------- the wardrobe (wardrobe.mjs, looks.mjs) ----------
@@ -1430,7 +1544,42 @@ function renderWardrobe(body,set){
  }
  body.append(fine(wardTab==="object"?"Un objet de la garde-robe remplace l'objet personnel dans sa main ; équiper un objet personnel (Dossier) le range.":"Une tenue s'enfile par-dessus son costume ; touche-la de nouveau pour l'enlever."),
   fine("Les doublons d'un tirage deviennent des confettis : 5 pour un commun, jusqu'à 100 pour un ultra rare."));
- const go=document.createElement("div");go.className="btn-row";go.append(smallButton(`Aller à ${W.URN_NAME[S.camp]}`,"go",()=>openSheet("urn")));body.append(go);
+ const go=document.createElement("div");go.className="btn-row";go.append(smallButton(`Aller à ${urnName(S.camp)}`,"go",()=>openSheet("urn")));body.append(go);
+}
+
+// ---------- the Advent calendar (Trêve des confiseurs: rules.mjs "advent", noelui.mjs adventCells) ----------
+// adventSaid: what the line under the grid says until the sheet is reopened, {day} after opening a box, {msg} otherwise.
+let adventSaid=null;
+async function adventOpen(){
+ const r=await send({type:"advent"});        // a refusal is toasted by send()
+ if(!r)return;
+ adventSaid=r.ok&&Number.isInteger(r.day)?{day:r.day}:{msg:r.error||"La case ne s'ouvre pas pour l'instant."};
+ if(sheetKind==="advent"&&!$("#sheet").hidden)liveSheet(true);
+}
+function adventTap(c,v){
+ if(c.state==="today"&&v.canOpen){adventOpen();return;}
+ const g=adventGiftText(c.day);
+ adventSaid={msg:c.state==="open"?`Case ${c.day}, déjà ouverte : ${g.text} (${g.pay})`
+  :c.state==="missed"?`Case ${c.day} : oubliée. Pas de rattrapage, reviens chaque jour !`
+  :`Case ${c.day} : patience, elle s'ouvre le ${c.day} décembre.`};
+ liveSheet(true);
+}
+function renderAdvent(body,set){
+ const v=adventCells(S,season(),S.vclock);
+ set("🎁 Calendrier de l'Avent","Une case par jour, du 1er au 24 décembre : des jauges ou des bulletins, jamais de FM.");
+ const grid=document.createElement("div");grid.className="advent-grid";grid.setAttribute("role","group");grid.setAttribute("aria-label","Les 24 cases du calendrier");
+ for(const c of v.cells){
+  const b=document.createElement("button");b.type="button";b.className=`advent-box ${c.state}${c.gold?" d24":""}`;
+  b.textContent=c.text;b.setAttribute("aria-label",c.label);if(c.state==="today")b.setAttribute("aria-current","date");
+  b.addEventListener("click",()=>adventTap(c,v));grid.append(b);
+ }
+ const said=document.createElement("p");said.className="advent-said";
+ if(adventSaid?.day){
+  const g=adventGiftText(adventSaid.day),b1=document.createElement("b"),b2=document.createElement("b");
+  b1.textContent=`Case ${adventSaid.day}`;b2.className="gold";b2.textContent=g.pay;said.append("🎁 ",b1,` : ${g.text} `,b2);
+ }else said.textContent=adventSaid?.msg||(v.canOpen?"Touche la case qui brille.":"");
+ const back=document.createElement("div");back.className="btn-row";back.append(smallButton("‹ La Buvette","",()=>openSheet("food")));
+ body.append(grid,said,fine(v.note),back);
 }
 
 // ---------- La Tombola de la Fête / La Loterie du Gala ----------
@@ -1481,7 +1630,7 @@ function revealCard(){
 }
 function renderUrn(body,set){
  const w=S.wardrobe,free=W.freeDrawToday(S);
- set(W.URN_NAME[S.camp],"Un tirage gratuit par jour, des bulletins à gagner avec les missions, le courrier et les objectifs du jour. Jamais d'argent réel.");
+ set(urnName(S.camp),"Un tirage gratuit par jour, des bulletins à gagner avec les missions, le courrier et les objectifs du jour. Jamais d'argent réel.");
  const pills=document.createElement("div");pills.className="meta";
  pills.append(pill(`🎟️ ${plural(w.bulletins,"bulletin")}`),pill(`🎊 ${w.confetti} confetti${w.confetti>1?"s":""}`),pill(free?"🎁 tirage gratuit prêt":"🎁 gratuit demain",free?"good":""));
  const stage=document.createElement("div"),cv=document.createElement("canvas");stage.className="urn";cv.setAttribute("role","img");cv.setAttribute("aria-label",drawing?"L'urne s'agite…":"L'urne");stage.append(cv);
@@ -2040,6 +2189,23 @@ function halloweenHello(){
  toast("🎃 Joyeux Halloween ! La République est hantée jusqu'au 1er novembre : bonbons à la Buvette, costumes la nuit…");
 }
 
+// ---------- Trêve des confiseurs ----------
+// Its first sight, once a year on this device (the year of the theme's December: 1 January does not ask again).
+let noelHi=false,voeuxHi=false;
+function noelHello(){
+ noelHi=true;
+ const key=`politigo.noel.${noelYear(serverNow())}`;
+ try{if(localStorage.getItem(key))return;localStorage.setItem(key,"1");}catch{}
+ toast("🎄 La Trêve des confiseurs commence ! Jusqu'au 1er janvier : calendrier de l'Avent et Buvette de fête, et bataille de boules de neige (Jouer → Boules de neige).");
+}
+// 31 December from 20 h: the élu's vœux, said once in the evening (the lectern and the flags stay until midnight).
+function voeuxHello(){
+ voeuxHi=true;
+ const key=`politigo.voeux.${noelYear(serverNow())}`;
+ try{if(localStorage.getItem(key))return;localStorage.setItem(key,"1");}catch{}
+ toast(`🎙️ Les vœux de ${look().name} : ${voeuxText(S.camp,serverNow())}`);
+}
+
 // The running mission's countdown, updated in place: the sheet is not redrawn every game minute.
 function missionClock(){const el=sheetKind==="play"&&S.missions?.cur&&$("#sheet-body .mission-left");if(el){const t=`Retour dans ${leftLabel(A.missionLeft(S))}`;if(el.textContent!==t)el.textContent=t;}}
 // ===================================================================== LOOP
@@ -2072,7 +2238,11 @@ function tickFrame(now){
    if(announceQ.length)showAnnounce();
    if(pushAskWanted)pushAsk();
   }
-  if(hw()&&!hwHello&&!scene&&!quiet()&&!toastQ.length&&sheetKind!=="news"&&Date.now()-toastAt>4000)halloweenHello();
+  if(!scene&&!quiet()&&!toastQ.length&&sheetKind!=="news"&&Date.now()-toastAt>4000){
+   if(hw()&&!hwHello)halloweenHello();
+   else if(noel()&&!noelHi)noelHello();
+   else if(!voeuxHi&&moment()==="voeux"&&!isAsleep())voeuxHello();
+  }
  }
 }
 
