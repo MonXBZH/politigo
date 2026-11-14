@@ -106,7 +106,7 @@ function playJournal(onlyMajor){
  if(act){
   const d=act.d||{};
   if(act.k==="buy"){const it=shop.find(i=>i.key===d.key);if(it){if(it.kind==="food")playAnim("eat",2500,{food:it.key});else playAnim(it.anim,3000);}toast(act.text);}
-  else if(act.k==="act"&&(d.kind==="debate"||d.kind==="manif"))toast(act.text);   // the mini-game takes the screen
+  else if(act.k==="act"&&(d.kind==="debate"||d.kind==="manif"||d.kind==="snowball"))toast(act.text);   // the mini-game takes the screen
   else if(act.k==="act"&&d.kind==="rematch"){playAnim("win",2500,{line:d.line});toast(act.text);}
   else if(act.k==="nap"){if(!d.on)playAnim("win",1200);toast(d.on?"Lumière éteinte : il se réveillera seul une fois reposé.":act.text);}
   else if(act.k==="wake"){playAnim("win",1500);toast("Il se réveille tout seul, reposé !");}

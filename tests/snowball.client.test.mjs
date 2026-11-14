@@ -272,20 +272,22 @@ test("snowStart only during the Trêve, as an activity",()=>{
  assert.equal(R.act(newS(),{type:"snowStart"},{now:at(10),random:noRandom}).ok,false,"no event given: refused");
 });
 
-test("snowStart: the event's XP multiplier applies, a challenge brings its seed",()=>{
+test("snowStart: the event's XP multiplier applies; a challenge comes from the server's options only",()=>{
  const S=newS();
  const fx=()=>({...NO_FX,xp:{...NO_FX.xp,snowball:2}});
  const xp0=S.xp;
- const r=R.act(S,{type:"snowStart",challenge:{id:"c1",seed:777}},{now:at(10),random:noRandom,event:"noel",boost:fx});
+ const r=R.act(S,{type:"snowStart"},{now:at(10),random:noRandom,event:"noel",boost:fx,challenge:{id:"c1",seed:777}});
  assert.equal(r.ok,true);assert.equal(r.game.seed,777);
  assert.equal(S.mini.ch,"c1");assert.equal(S.mini.x,2);
  assert.ok(S.xp-xp0>=70);
+ // a challenge in the action body is ignored: a normal game, a fresh seed, no ch
+ const T=newS(),b=doIt(T,{type:"snowStart",challenge:{id:"fake",seed:777}},10);
+ assert.equal(b.ok,true);assert.notEqual(b.game.seed,777);assert.equal(T.mini.ch,undefined);
+ // a malformed server challenge is refused before anything is spent
  for(const bad of [{id:"c",seed:-1},{id:"c",seed:1.5},{id:"c",seed:"3"},{id:"c",seed:2**40},{seed:5},{id:"",seed:5},{id:"a b",seed:5},"x"]){
-  const T=newS();
-  const b=doIt(T,{type:"snowStart",challenge:bad},10);
-  assert.equal(b.ok,false,JSON.stringify(bad));assert.equal(T.mini,null);
+  const U=newS(),xp1=U.xp,e=R.act(U,{type:"snowStart"},{now:at(10),random:noRandom,event:"noel",challenge:bad});
+  assert.equal(e.ok,false,JSON.stringify(bad));assert.equal(U.mini,null);assert.equal(U.xp,xp1);
  }
- const T=newS();assert.equal(doIt(T,{type:"snowStart",challenge:null},10).ok,true);assert.equal(T.mini.ch,undefined);
 });
 
 test("miniEnd replays the taps; a score sent is ignored",()=>{
@@ -346,13 +348,13 @@ test("a game started during the Trêve still ends after it was switched off",()=
 });
 
 test("the challenge id travels to the audit",()=>{
- const S=newS(),s=doIt(S,{type:"snowStart",challenge:{id:"duel42",seed:9}},10);
+ const S=newS(),s=R.act(S,{type:"snowStart"},{now:at(10),random:noRandom,event:"noel",challenge:{id:"duel42",seed:9}});
  const r=doIt(S,{type:"miniEnd",id:s.game.id,taps:[]},10,{ms:45000});
  assert.equal(r.audit.ch,"duel42");assert.equal(r.audit.seed,9);
 });
 
 test("bot signals: fast taps, too precise, too quick to react",()=>{
- const run=(seed,taps)=>{const S=newS(),s=doIt(S,{type:"snowStart",challenge:{id:"c",seed}},10),xp0=S.xp;
+ const run=(seed,taps)=>{const S=newS(),s=R.act(S,{type:"snowStart"},{now:at(10),random:noRandom,event:"noel",challenge:{id:"c",seed}}),xp0=S.xp;
   const r=doIt(S,{type:"miniEnd",id:s.game.id,taps},10,{ms:45000});return {r,S,xp0};};
  const burst=Array.from({length:25},(_,i)=>({t:2000+i*50,x:233,y:200}));
  const a=run(5,burst);assert.equal(a.r.ok,true);assert.ok(a.r.audit.flags.includes("taps_rapides"));
@@ -373,7 +375,7 @@ test("bot signals: fast taps, too precise, too quick to react",()=>{
 });
 
 test("a stored snowball game survives sanitize; a forged one carries nothing else",()=>{
- const S=newS();doIt(S,{type:"snowStart",challenge:{id:"c1",seed:12}},10);
+ const S=newS();R.act(S,{type:"snowStart"},{now:at(10),random:noRandom,event:"noel",challenge:{id:"c1",seed:12}});
  const json=()=>JSON.parse(JSON.stringify(S));
  assert.deepEqual(R.sanitize(json(),at(10)).mini,S.mini);
  assert.equal(S.mini.noel,true);
@@ -391,4 +393,22 @@ test("play: hit and pass events say which foe and which tap",()=>{
  assert.equal(r.events[0].kind,"hit");assert.equal(r.events[0].i,0);assert.equal(r.events[0].from,1200);
  const p=play({pops:[pop({passant:0})],...noSleigh},[tapAt(1200,centre(0))]);
  assert.equal(p.events[0].kind,"pass");assert.equal(p.events[0].i,0);assert.equal(p.events[0].from,1200);
+});
+
+test("taps from the future are refused: no finishing a 45 s fight in 3 s",()=>{
+ const S=newS(),s=doIt(S,{type:"snowStart"},10),xp0=S.xp;
+ const taps=tapsFor(s.game.seed,20,300);
+ assert.ok(Math.max(...taps.map(p=>p.t))>20000);
+ const r=doIt(S,{type:"miniEnd",id:s.game.id,taps},10,{ms:3500});
+ assert.equal(r.ok,false);assert.deepEqual(r.audit.flags,["touches_futures"]);assert.equal(S.mini,null);assert.equal(S.xp,xp0);
+ // a normal 46 s game with taps up to 44.9 s
+ const T=newS(),t=doIt(T,{type:"snowStart"},10);
+ const late=[...tapsFor(t.game.seed,3),{t:44900,x:233,y:200}];
+ const ok=doIt(T,{type:"miniEnd",id:t.game.id,taps:late},10,{ms:46000});
+ assert.equal(ok.ok,true);
+ // the margin: a tap 1.5 s ahead of the play time passes, 2.5 s ahead does not
+ const U=newS(),u=doIt(U,{type:"snowStart"},10);
+ assert.equal(doIt(U,{type:"miniEnd",id:u.game.id,taps:[{t:5000,x:233,y:200}]},10,{ms:3600}).ok,true);
+ const V=newS(),v=doIt(V,{type:"snowStart"},10);
+ assert.equal(doIt(V,{type:"miniEnd",id:v.game.id,taps:[{t:6500,x:233,y:200}]},10,{ms:3600}).ok,false);
 });

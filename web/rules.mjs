@@ -319,6 +319,7 @@ export const MINI={
 export const snowBonus=(score,x=1)=>score<MINI.snowball.minScore?0:Math.round(x*Math.min(MINI.snowball.bonusCap,Math.floor(score*MINI.snowball.bonusRate)));
 // The signals the admin reads on a fight (a flagged game still pays; the server keeps it out of the camp counter).
 // taps: the browser's taps; result: the replay; reactions: ms between a foe showing up and the tap that hit him.
+export const SNOW_FUTURE_MS=1500;
 export const SNOW_BOT={gapMs:80,gapTaps:20,precision:0.95,precisionThrows:40,reflexMs:180,reflexHits:4};
 export function snowFlags(taps,result,reactions){
  const flags=[],ts=taps.map(p=>p.t).sort((a,b)=>a-b);
@@ -634,7 +635,7 @@ const refused=audit=>hidden(fail("Score refusé."),"audit",audit);
 // claim} for a draw (absent: the mythic roll is off). The lowest gauge of the day is tracked after every action.
 // A player who acts is back: their run of idle deaths is over too (the abandoned list forgets them at once).
 export function act(S,a,opts){const r=actOn(S,a,opts);if(r?.ok&&a?.type!=="restart"){S.played=true;S.idleDeaths=0;}ACT.trackMin(S);return r;}   // a resignation opens a life nobody has played yet
-function actOn(S,a,{now,speed=1,random=Math.random,event="",mythic=null,boost=NONE}){
+function actOn(S,a,{now,speed=1,random=Math.random,event="",mythic=null,boost=NONE,challenge=null}){
  advance(S,now,speed,random,boost);
  const fx=boost(now);
  const type=a&&typeof a.type==="string"?a.type:"";
@@ -671,13 +672,14 @@ function actOn(S,a,{now,speed=1,random=Math.random,event="",mythic=null,boost=NO
  }
  case "snowStart":{
   if(!isNoel(event))return fail("La bataille de boules de neige a lieu seulement pendant la Trêve des confiseurs.");
-  const ch=a.challenge==null?null:snowChallenge(a.challenge);
-  if(a.challenge!=null&&!ch)return fail("Défi invalide.");
+  // The challenge comes from the server only (opts.challenge, once it checked it): one in the action body is ignored.
+  const ch=challenge==null?null:snowChallenge(challenge);
+  if(challenge!=null&&!ch)return fail("Défi invalide.");
   const e=activityBlock(S);if(e)return fail(e);
   const x=fx.xp.snowball??1,xp=Math.round(MINI.snowball.xp*x),visit=registerVisit(S);spendActivity(S,xp);
   const seed=ch?ch.seed:newSeed(random),id=gameId(random);
   S.mini={k:"snowball",t:now,seed,id,noel:true,...(ch?{ch:ch.id}:{}),...(x>1?{x}:{})};S.pong=null;S.rematchT=-1;
-  log(S,"act",`${MINI.snowball.label} : +${xp} XP${visit?`, visite +${XP.visit} XP`:""}.`,{kind:"manif",game:"snowball",visit});
+  log(S,"act",`${MINI.snowball.label} : +${xp} XP${visit?`, visite +${XP.visit} XP`:""}.`,{kind:"snowball",game:"snowball",visit});
   return done({visit,game:{k:"snowball",id,seed}});
  }
  case "miniEnd":{
@@ -688,6 +690,9 @@ function actOn(S,a,{now,speed=1,random=Math.random,event="",mythic=null,boost=NO
    // The score is the server's: the taps are replayed on the fight the seed deals. Anything the browser says about the score is ignored.
    const base={game:k,seed:m.seed,noel:m.noel===true,ch:m.ch,start:m.t},expiry=cfg.ms/1000+MINI_RULES.graceSeconds,taps=a.taps;
    if(!Number.isInteger(m.seed)||!validTaps(taps))return refused({...base,score:null,secs:Math.round(secs*10)/10,flags:["touches_invalides"]});
+   // A tap cannot be later than the time really played (plus the network margin): no finishing a 45 s fight in 3 s.
+   const lastTap=taps.reduce((mx,p)=>Math.max(mx,p.t),0);
+   if(lastTap>(secs+MINI_RULES.tolerance)*1000+SNOW_FUTURE_MS)return refused({...base,score:null,secs:Math.round(secs*10)/10,flags:["touches_futures"]});
    const sched=schedule(m.seed,S.camp),{events,...result}=play(sched,taps);
    const j=judge(k,cfg,{sc:result.score,secs,idOk,minSeconds:MINI_RULES.minSeconds,expiry});
    const reactions=events.filter(e=>e.kind==="hit").map(e=>e.from-sched.pops[e.i].t);
