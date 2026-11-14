@@ -374,7 +374,7 @@ export function freshState(camp,now){
  const S={v:2,camp,vclock:now,lastReal:now,hourIdx:Math.floor(now/H),born:now,
   fm:10,sat:80,moral:80,energy:80,hyg:80,xp:0,lvl:1,best:1,streak:0,bestStreak:0,neg:0,zero:0,form:"Excellente",mult:1.25,
   lastVisit:-99,visitDay:-1,visitsToday:0,actsToday:0,actsVisit:0,actWindow:-99,breadIdx:-1,coffeeDay:-1,coffees:0,petIdx:-1,
-  sleeping:false,equipped:{},deaths:0,idleDeaths:0,played:false,jn:0,journal:[],pong:null,mini:null,rematchT:-1,diedAt:-1,treatDay:-1};
+  sleeping:false,equipped:{},deaths:0,idleDeaths:0,played:false,jn:0,journal:[],pong:null,mini:null,rematchT:-1,diedAt:-1,treatDay:-1,advent:{y:0,opened:[]}};
  return Object.assign(S,ACT.freshActivities(S,now),{wardrobe:WR.freshWardrobe()});
 }
 export function newGame(camp,now){
@@ -409,6 +409,10 @@ export function sanitize(s,now){
  if(s.pong&&Number.isFinite(s.pong.t))o.pong=gameKeys({t:s.pong.t},s.pong);
  if(s.mini&&typeof s.mini.k==="string"&&Object.hasOwn(MINI,s.mini.k)&&Number.isFinite(s.mini.t))o.mini=gameKeys({k:s.mini.k,t:s.mini.t},s.mini);
  o.rematchT=num(s.rematchT,-1,o.vclock,-1);
+ if(s.advent&&typeof s.advent==="object"&&Number.isInteger(s.advent.y)&&s.advent.y>=0&&s.advent.y<=9999){
+  o.advent.y=s.advent.y;
+  if(Array.isArray(s.advent.opened))o.advent.opened=[...new Set(s.advent.opened.filter(d=>Number.isInteger(d)&&d>=1&&d<=24))].sort((a,b)=>a-b);
+ }
  // States saved before diedAt existed take it from their journal.
  o.diedAt=num(s.diedAt??o.journal.find(j=>j.k==="death")?.t,-1,o.vclock,-1);
  // 1.6.0: missions, mail, goals, Flamme, wardrobe (absent from older states: fresh ones).
@@ -453,6 +457,18 @@ export function treatBlock(S,event=""){
  if(event!=="halloween")return "Plus de bonbons : Halloween est fini.";
  if(isAsleep(S))return "Chut, il dort : les bonbons attendront.";
  if(S.treatDay===dayKey(curIdx(S)))return "Déjà servi aujourd'hui : reviens demain.";
+ return "";
+}
+// The Advent calendar (Trêve des confiseurs): one box per civil day from 1 to 24 December, in the server's zone.
+// Gauges or bulletins, never FM. Alternates gauge +8 and 1 to 2 bulletins; the 24th pays the big box.
+const ADVENT_CYCLE=[["moral",8],["energy",8],["bulletins",1],["sat",8],["hyg",8],["bulletins",2]];
+export const ADVENT=Array.from({length:24},(_,i)=>i<23?{k:ADVENT_CYCLE[i%6][0],n:ADVENT_CYCLE[i%6][1]}:{k:"all",n:5,bulletins:3});
+// Why today's box cannot be opened ("" when it can).
+export function adventBlock(S,event=""){
+ if(!isNoel(event))return "Il n'y a pas de calendrier de l'Avent en ce moment.";
+ const k=dayKey(curIdx(S)),month=Math.floor(k/100)%100,day=k%100;
+ if(month!==12||day>24)return "Le calendrier est fini : rendez-vous à la Saint-Sylvestre.";
+ if(S.advent.y===Math.floor(k/10000)&&S.advent.opened.includes(day))return "La case du jour est déjà ouverte : reviens demain.";
  return "";
 }
 // What an item costs right now (a sale never makes a paid item free).
@@ -524,7 +540,7 @@ function stressHit(S,random,factor=1){
 function die(S,reason,camp=S.camp,random=Math.random){
  const day={goals:S.goals,mDay:S.missions.day,mN:S.missions.n,mPaid:S.missions.paid,mB:S.missions.b,mail:S.mail};
  // idleDeaths: deaths in a row of a life the player never touched. Not by the XP: the hour tick pays some on its own.
- const name=person(S).name,keep={journal:S.journal,jn:S.jn,deaths:S.deaths+1,idleDeaths:reason==="neglect"&&!S.played?(S.idleDeaths||0)+1:0,best:S.best,bestStreak:S.bestStreak,equipped:S.equipped,treatDay:S.treatDay,
+ const name=person(S).name,keep={journal:S.journal,jn:S.jn,deaths:S.deaths+1,idleDeaths:reason==="neglect"&&!S.played?(S.idleDeaths||0)+1:0,best:S.best,bestStreak:S.bestStreak,equipped:S.equipped,treatDay:S.treatDay,advent:S.advent,
   wardrobe:S.wardrobe,flame:{...S.flame,pts:Math.round(S.flame.pts*ACT.FLAME.death*100)/100}};
  const fresh=Object.assign(freshState(camp,S.vclock),keep,{lastReal:S.lastReal,diedAt:S.vclock});
  for(const k of Object.keys(S))delete S[k];
@@ -697,6 +713,19 @@ function actOn(S,a,{now,speed=1,random=Math.random,event="",mythic=null,boost=NO
   const l=HALLOWEEN.treat.lines[S.camp],line=l[Math.floor(random()*l.length)];
   log(S,"treat",`Des bonbons ou un amendement ? ${line} Moral +${HALLOWEEN.treat.moral}.`,{line});
   return done();
+ }
+ case "advent":{
+  const e=adventBlock(S,event);if(e)return fail(e);
+  const k=dayKey(curIdx(S)),y=Math.floor(k/10000),day=k%100,gift=ADVENT[day-1];
+  if(S.advent.y!==y)S.advent={y,opened:[]};   // a new year starts with a shut calendar
+  S.advent.opened.push(day);S.advent.opened.sort((a,b)=>a-b);
+  // Bulletins are clamped here: activities.mjs's own helper is not exported.
+  const bulletin=n=>{S.wardrobe.bulletins=Math.min(9999,S.wardrobe.bulletins+n);};
+  if(gift.k==="all"){for(const g of ["sat","moral","energy","hyg"])S[g]=clamp(S[g]+gift.n);bulletin(gift.bulletins);}
+  else if(gift.k==="bulletins")bulletin(gift.n);
+  else S[gift.k]=clamp(S[gift.k]+gift.n);
+  log(S,"advent",`Calendrier de l'Avent, case ${day} : ${gift.k==="all"?`toutes les jauges +${gift.n}, ${gift.bulletins} bulletins`:gift.k==="bulletins"?`${gift.n} bulletin${gift.n>1?"s":""}`:`${fxNames[gift.k]} +${gift.n}`}.`,{day});
+  return done({day,gift});
  }
  // ---------- 1.6.0: missions, voter mail, Tombola / Loterie, wardrobe (activities.mjs, wardrobe.mjs)
  case "missionStart":return ACT.missionStart(S,a.id,fx);
