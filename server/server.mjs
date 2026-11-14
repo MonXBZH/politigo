@@ -16,6 +16,7 @@ import {createChat} from "./chat.mjs";
 import {linkConfig,instanceId,startLink} from "./adminlink.mjs";
 import * as W from "./wardrobe.mjs";
 import * as D from "./duel.mjs";
+import * as SF from "./snowfront.mjs";
 
 const env=process.env;
 process.umask(0o077);
@@ -86,6 +87,15 @@ let EVENT_MODE=R.EVENT_MODES.includes(env.POLITIGO_EVENT)?env.POLITIGO_EVENT:"au
 if(env.POLITIGO_EVENT&&EVENT_MODE!==env.POLITIGO_EVENT)console.error(`POLITIGO_EVENT must be one of ${R.EVENT_MODES.join(", ")}: using auto.`);
 if(EVENT_MODE!=="auto")console.warn(`Seasonal event forced: ${EVENT_MODE}.`);
 const eventNow=()=>R.eventAt(Date.now(),EVENT_MODE);
+// The Trêve's New Year midnight (1 Jan 00:00, server time) moved to another instant, in ms: a test setting, so a
+// released image refuses to start with it (it would close the Front de neige and send the toast at any time).
+let NEWYEAR_AT=null;
+if(env.POLITIGO_NEWYEAR_AT!==undefined&&env.POLITIGO_NEWYEAR_AT!==""){
+ if(VERSION!=="dev"){console.error(`POLITIGO_NEWYEAR_AT is a test setting: refused on a released server (${VERSION}). Remove it.`);process.exit(1);}
+ const n=Number(env.POLITIGO_NEWYEAR_AT);
+ if(!Number.isSafeInteger(n)||n<=0){console.error("POLITIGO_NEWYEAR_AT must be an instant in ms since 1970.");process.exit(1);}
+ NEWYEAR_AT=n;console.warn(`New Year test setting active: midnight at ${new Date(n).toISOString()}.`);
+}
 // The timed events still to come or running (the table holds them all): read by every action and every clock tick.
 let EVENTS=[];
 const fxOf=p=>t=>E.effectsOf(EVENTS,p.state.camp,t);
@@ -202,6 +212,8 @@ for(const col of ["deaths","warned"]){
 // Settings changed from the admin interface win over the environment and the files, from then on.
 const getSetting=k=>db.prepare("SELECT value FROM settings WHERE key=?").get(k)?.value??null;
 const setSetting=(k,v)=>db.prepare("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(k,v);
+// The Front de neige's tables (snowfront.mjs). A player's camp is read at the closing, from the live game.
+const front=SF.createSnowFront(db,{campOf:id=>players.get(id)?.state.camp??null});
 let INVITE_SOURCE=env.POLITIGO_INVITE?"env":"file";
 {const v=getSetting("invite");if(v&&v.length>=16){INVITE=v;INVITE_SOURCE="admin";INVITE_GENERATED=false;}}
 let REG_OPEN=getSetting("registrations")!=="closed";
@@ -604,7 +616,101 @@ function flushBoard(){
 }
 // The debate's seed deals its answers: it never leaves the server (the other games' seeds only shape what is drawn).
 const publicState=S=>S.mini?.k==="debate"&&"seed" in S.mini?{...S,mini:Object.fromEntries(Object.entries(S.mini).filter(([k])=>k!=="seed"))}:S;
-function mePayload(p){return {name:p.name,state:publicState(p.state),speed:SPEED,tz:R.timeZone(),serverNow:Date.now(),event:EVENT_MODE,events:publicEvents(Date.now()),version:VERSION,release:RELEASE,seenVersion:p.seen??null,chat:chatRooms(),urnHint:urnHintOf(p),baton:batonWon?batonView(p):null};}
+function mePayload(p){return {name:p.name,state:publicState(p.state),speed:SPEED,tz:R.timeZone(),serverNow:Date.now(),event:EVENT_MODE,events:publicEvents(Date.now()),version:VERSION,release:RELEASE,seenVersion:p.seen??null,chat:chatRooms(),urnHint:urnHintOf(p),baton:batonWon?batonView(p):null,...noelView(p,Date.now())};}
+
+// ===================================================================== TRÊVE: THE FRONT DE NEIGE AND THE NEW YEAR TOAST
+// Every snowball fight the server replayed adds its score to its player's camp (snowfront.mjs), unless flagged as a
+// bot, begun outside the Trêve, or begun at/after New Year's midnight: the start decides, so a fight begun at 23:59
+// and ended after midnight counts. The closing waits for those fights (their longest life is the judge's expiry).
+const SNOW_LIVE_MS=(R.MINI.snowball.ms/1000+R.MINI_RULES.graceSeconds)*1000+1000;
+const SNOW_BOT_FLAGS=new Set(["taps_rapides","precision","reflexe"]);
+const FRONT_EVERY=10e3,FRONT_PRIZE=3,TOAST_TEXT="🥂 Bonne année ! Toute la République trinque, gauche et droite réunies. Viens lever ton verre !";
+const nyYear=now=>SF.frontYear(now,NEWYEAR_AT),nyClosing=y=>SF.closingAt(y,NEWYEAR_AT);
+function frontView(now){const y=nyYear(now),t=front.totals(y);return {left:t.left,right:t.right,closed:now>=nyClosing(y)};}
+// In /api/me: the counter while the theme is on; the toast during its five minutes, its banner until 2 Jan 00:00.
+function noelView(p,now){
+ const o={};
+ try{
+  if(R.isNoel(eventNow()))o.snowFront=frontView(now);
+  const w=SF.newYearWindow(now,NEWYEAR_AT);
+  if(w.on)o.newYear=newYearView(p,now);
+  if(w.banner)o.newYearBanner=true;
+ }catch(e){console.error(`player ${p.id}: Trêve view`,e);}
+ return o;
+}
+// Up to 4 names drawn among those online (not the player): a draw stable for each viewer through the toast (a hash of
+// the year, the viewer and the name's owner), so the scene does not reshuffle at every push. Then a count of the other
+// players seen in the last 24 h. The Front's result once anybody fought.
+function newYearView(p,now){
+ const y=nyYear(now),on=onlineIds();
+ const names=[...on].filter(id=>id!==p.id).map(id=>players.get(id)).filter(o=>o&&!o.suspended)
+  .map(o=>({o,k:sha256(`${y}:${p.id}:${o.id}`)})).sort((a,b)=>a.k<b.k?-1:a.k>b.k?1:0).slice(0,4).map(x=>x.o);
+ const listed=new Set(names.map(o=>o.id));let others=0;
+ for(const o of players.values())if(o.id!==p.id&&!o.suspended&&!listed.has(o.id)&&(on.has(o.id)||(o.lastSeen??0)>=now-24*R.H))others++;
+ const t=front.result(y)??front.totals(y);
+ return {names:names.map(o=>o.name),others,front:t.left+t.right>0?{winner:SF.winnerOf(t),left:t.left,right:t.right}:null,until:SF.toastEnd(y,NEWYEAR_AT)};
+}
+// From /api/action, with the rules' hidden audit of an accepted fight.
+function frontAdd(p,a){
+ if(a.noel!==true||!Number.isFinite(a.start)||!Number.isSafeInteger(a.score)||a.score<0)return;
+ if(Array.isArray(a.flags)&&a.flags.some(f=>SNOW_BOT_FLAGS.has(f)))return;
+ const y=nyYear(a.start);if(a.start>=nyClosing(y))return;
+ if(front.add(y,p.state.camp,p.id,a.score))frontChanged();
+}
+// The open screens hear the counter through the "snowFront" event ({left,right,closed}), at most once per FRONT_EVERY.
+let frontSent=0,frontTimer=null;
+function frontChanged(){
+ if(frontTimer)return;
+ frontTimer=setTimeout(()=>{frontTimer=null;frontSent=Date.now();
+  try{if(R.isNoel(eventNow()))broadcast("snowFront",frontView(frontSent));}catch(e){console.error("snowFront broadcast:",e);}},Math.max(0,frontSent+FRONT_EVERY-Date.now()));
+ frontTimer.unref?.();
+}
+// Every 10 s, from 1 Jan 00:00: once a year the toast (to every subscribed device, only during its five minutes: a
+// server down at midnight does not wish a late "come and raise your glass"), and once a year the closing.
+function newYearTick(now=Date.now()){
+ const y=nyYear(now),at=nyClosing(y);
+ if(now<at)return;
+ if(getSetting("newyear_sent")!==String(y)){
+  setSetting("newyear_sent",String(y));   // first: a crash right after loses the toast rather than sending it twice
+  if(now<SF.toastEnd(y,NEWYEAR_AT)){
+   let n=0;
+   for(const {id} of q.subbedIds.all()){const o=players.get(id);if(o&&!o.suspended){notify(id,{title:"PolitiGo",body:TOAST_TEXT,tag:"newyear",url:"/"});n++;}}
+   console.log(`New Year toast pushed to ${n} player(s)`);
+  }
+ }
+ if(getSetting("snowfront_closed")!==String(y)&&!fightsBefore(at,now))closeFront(y,now);
+}
+const fightsBefore=(at,now)=>[...players.values()].some(p=>{const m=p.state.mini;return m?.k==="snowball"&&m.noel===true&&m.t<at&&now-m.t<=SNOW_LIVE_MS;});
+// The result, the bulletins and the "closed" setting in ONE transaction: a crash or an error pays everybody or nobody,
+// and the next tick retries; the live states are put back on an error. The feed line and the admin log come after.
+function closeFront(y,now){
+ const keep=new Map();let res,paid=0;
+ batonBusy=true;db.exec("BEGIN");
+ try{
+  res=front.close(y,now);
+  for(const id of res.paid){
+   const p=players.get(id);if(!p||p.suspended)continue;
+   keep.set(id,p.state);
+   update(p,S=>{const w=S.wardrobe;if(!w)return false;const b=Number.isFinite(w.bulletins)?w.bulletins:0;w.bulletins=Math.min(9999,b+FRONT_PRIZE);});
+   paid++;
+  }
+  setSetting("snowfront_closed",String(y));
+  db.exec("COMMIT");
+ }catch(e){
+  try{db.exec("ROLLBACK");}catch{}
+  for(const [id,s] of keep){const p=players.get(id);if(p)p.state=s;}
+  console.error(`Front de neige ${y} NOT closed (retried in 10 s):`,e);return;
+ }finally{batonBusy=false;}
+ const {winner,left,right}=res;
+ console.log(`Front de neige ${y} closed: left ${left}, right ${right}, ${paid} player(s) paid`);
+ if(R.isNoel(eventNow()))try{broadcast("snowFront",frontView(now));}catch(e){console.error("snowFront broadcast:",e);}
+ if(!left&&!right&&!res.paid.length)return;   // nobody fought: nothing to tell
+ const text=winner==="tie"?`❄️ Le Front de neige est tombé : égalité parfaite, ${left} partout.`
+  :`❄️ Le Front de neige est tombé : la ${winner==="left"?"Gauche":"Droite"} l'emporte (${Math.max(left,right)} contre ${Math.min(left,right)}).`;
+ feedLine("PolitiGo","snowfront",text);
+ audit("server","noel-front",String(y),`Gauche ${left} · Droite ${right} · ${winner==="tie"?"égalité":winner==="left"?"la Gauche gagne":"la Droite gagne"} · +${FRONT_PRIZE} bulletins à ${paid} joueur${paid>1?"s":""}`);
+}
+setInterval(()=>{try{newYearTick();}catch(e){console.error("New Year tick:",e);}},10e3).unref();
 // The clock runs for everyone, connected or not: needs drain and deaths happen while the page is closed.
 loadEvents();
 setInterval(()=>{try{eventsTick(Date.now());}catch(e){console.error("events tick:",e);}},1000).unref();
@@ -1459,7 +1565,10 @@ async function route(req,res){
   // A letter waiting behind another: from the moment it came to the head, i.e. the previous answer when later.
   if(lag!==null&&b.type==="mailAnswer"){try{const prev=q.lastAnswer.get(p.id,row??-1)?.t;if(Number.isFinite(prev))lag=Math.min(lag,now-prev);}catch{}}
   if(lag!==null)setLag(row,lag);
-  if(r.audit){recordMini(p,r.audit,now);delete r.audit;}   // for the admin, not for the player's script
+  if(r.audit){
+   const a=r.audit;recordMini(p,a,now);delete r.audit;   // for the admin, not for the player's script
+   if(r.ok&&a.game==="snowball"){try{frontAdd(p,a);}catch(e){console.error(`player ${p.id}: Front de neige`,e);}}
+  }
   if(r.ok&&b.type==="draw")drawNews(p,r,won.v,now);
   // The rules hand the turn (its seed included) to the server only, out of the reply.
   if(r.ok&&b.type==="debate"&&r.turn&&p.state.mini?.k==="debate")soloTurns.set(p.id,{t:miniKey(p.state.mini),st:r.turn,q:null});

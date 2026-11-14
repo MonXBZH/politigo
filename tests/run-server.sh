@@ -14,6 +14,7 @@ docker run --rm -e NODE_NO_WARNINGS=1 -e TZ=Europe/Paris "${extra[@]}" \
   -v "$(pwd -W 2>/dev/null || pwd)/server/push.mjs:/app/push.mjs:ro" \
   -v "$(pwd -W 2>/dev/null || pwd)/server/chat.mjs:/app/chat.mjs:ro" \
   -v "$(pwd -W 2>/dev/null || pwd)/server/adminlink.mjs:/app/adminlink.mjs:ro" \
+  -v "$(pwd -W 2>/dev/null || pwd)/server/snowfront.mjs:/app/snowfront.mjs:ro" \
   -v "$(pwd -W 2>/dev/null || pwd)/admin:/w/admin:ro" \
   -v "$(pwd -W 2>/dev/null || pwd)/web:/w/web:ro" \
   -v "$(pwd -W 2>/dev/null || pwd)/tests:/w/tests:ro" \
