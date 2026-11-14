@@ -17,6 +17,7 @@ import {linkConfig,instanceId,startLink} from "./adminlink.mjs";
 import * as W from "./wardrobe.mjs";
 import * as D from "./duel.mjs";
 import * as SF from "./snowfront.mjs";
+import {createChallenges} from "./snowchallenges.mjs";
 
 const env=process.env;
 process.umask(0o077);
@@ -717,6 +718,103 @@ function closeFront(y,now){
  audit("server","noel-front",String(y),`Gauche ${left} · Droite ${right} · ${winner==="tie"?"égalité":winner==="left"?"la Gauche gagne":"la Droite gagne"} · +${FRONT_PRIZE} bulletins à ${paid} joueur${paid>1?"s":""}`);
 }
 setInterval(()=>{try{newYearTick();}catch(e){console.error("New Year tick:",e);}},10e3).unref();
+
+// ===================================================================== TRÊVE: THE SNOWBALL CHALLENGES (snowchallenges.mjs)
+// A validated, unflagged, ordinary fight can be re-dealt to another player within SNOWCH_LAUNCH_MS: its seed and score
+// are those the server kept when the fight ended (in memory: a restart only loses the right to launch from it), never
+// the body's. The defender plays it through snowStart {challenge:id}; the best score takes +10 moral, a tie +5 each.
+// A fight flagged as a bot counts 0 for the challenge. Never XP, never FM. Open ones expire after 24 h (plus a fight's
+// longest life, so a fight begun in time still finishes), and are all cancelled once the theme is over.
+const SNOWCH_LAUNCH_MS=knob(env.POLITIGO_SNOW_CHALLENGE_MS,10*60e3);
+if(SNOWCH_LAUNCH_MS!==10*60e3)console.warn(`Snow challenge test setting active: launched within ${SNOWCH_LAUNCH_MS} ms of the fight (normal: 10 min).`);
+const snowCh=createChallenges(db),SNOWCH_WIN=10,SNOWCH_TIE=5;
+const snowGames=new Map();   // playerId -> {gameId,seed,score,bot,ch,t}: their last validated fight
+const isBotFight=flags=>Array.isArray(flags)&&flags.some(f=>SNOW_BOT_FLAGS.has(f));
+// A challenge id from a body: a positive whole number, or its decimal string.
+const snowChId=v=>Number.isSafeInteger(v)&&v>0?v:typeof v==="string"&&/^[1-9][0-9]{0,14}$/.test(v)?Number(v):null;
+const sseTo=(id,ev,data)=>{for(const c of clients)if(c.playerId===id)sse(c.res,ev,data);};
+// /api/action snowStart {challenge:id}: the rules' opts.challenge, only for its defender, while it is open, in time,
+// and its challenger still plays. Otherwise refused before anything is spent.
+function snowChallengeOpts(p,v,now){
+ const id=snowChId(v),r=id&&snowCh.get(id),c=r&&players.get(r.challenger);
+ if(!r||r.defender!==p.id||r.status!=="open"||now>=r.expires||!c||c.suspended)throw new HttpError(422,"Ce défi n'est plus ouvert.");
+ return {id:String(r.id),seed:r.seed};
+}
+// From /api/action, with the rules' hidden audit of any snowball fight (ok: validated). started: S.mini before it ended.
+function snowChEnded(p,a,ok,started,now){
+ if(!ok||!Number.isSafeInteger(a.score)||a.score<0)return;
+ const ch=typeof a.ch==="string";
+ if(started&&typeof started.id==="string"&&started.seed===a.seed&&started.t===a.start)
+  snowGames.set(p.id,{gameId:started.id,seed:a.seed,score:a.score,bot:isBotFight(a.flags),ch,t:now});
+ if(ch)snowChFinish(p,a,now);
+}
+function snowChFinish(p,a,now){
+ const r=snowCh.get(snowChId(a.ch));
+ if(!r||r.defender!==p.id||r.status!=="open")return;
+ const flags=Array.isArray(a.flags)?a.flags:[],sc=isBotFight(flags)?0:a.score;
+ const res=snowCh.finish(r.id,sc,now,flags);if(!res)return;
+ const pay=(id,moral,text)=>{
+  const pl=players.get(id);if(!pl)return;
+  try{update(pl,S=>{if(!pl.suspended)R.advance(S,now,SPEED,rand,fxOf(pl));if(moral)S.moral=R.clamp(S.moral+moral);R.logEntry(S,"snowch",text,{id:r.id,moral});});}
+  catch(e){console.error(`snow challenge ${r.id}: result NOT applied to player ${id}`,e);}
+  notify(id,{title:"PolitiGo",body:text,tag:`snowch-${r.id}`,url:"/"});
+  sseTo(id,"snowChallenge",{kind:"done",id:r.id});
+ };
+ if(res.tie){
+  pay(r.challenger,SNOWCH_TIE,`❄️ Défi de neige : égalité avec ${p.name}, ${sc} partout. Moral +${SNOWCH_TIE}.`);
+  pay(r.defender,SNOWCH_TIE,`❄️ Défi de neige : égalité avec ${nameOf(r.challenger)}, ${sc} partout. Moral +${SNOWCH_TIE}.`);
+  return;
+ }
+ const w=res.winner,l=w===r.challenger?r.defender:r.challenger,ws=Math.max(sc,r.score),ls=Math.min(sc,r.score);
+ pay(w,SNOWCH_WIN,`❄️ Défi de neige : tu bats ${nameOf(l)}, ${ws} à ${ls}. Moral +${SNOWCH_WIN}.`);
+ pay(l,0,`❄️ Défi de neige : ${nameOf(w)} l'emporte, ${ws} à ${ls}.`);
+}
+// A deleted or suspended player: nothing open touches them any more; the other side's screens are told.
+function snowChCancelOf(id,now){
+ for(const c of snowCh.cancelOf(id,now)){const r=snowCh.get(c);if(r)sseTo(r.challenger===id?r.defender:r.challenger,"snowChallenge",{kind:"cancelled",id:c});}
+ snowGames.delete(id);
+}
+// From chores (and at once when the console changes the theme): the end of the theme cancels everything open
+// (idempotent: nothing open, nothing done), the overdue expire, the launch rights past their window go.
+function snowChTick(now){
+ if(!R.isNoel(eventNow())){const n=snowCh.cancelAll(now).length;if(n)console.log(`Trêve over: ${n} snow challenge(s) cancelled`);}
+ snowCh.expire(now-SNOW_LIVE_MS);
+ for(const [id,g] of snowGames)if(now-g.t>SNOWCH_LAUNCH_MS)snowGames.delete(id);
+ snowCh.purge(now-30*864e5);
+}
+// POST /api/snow/challenge {to:name, gameId}.
+async function snowChallengeRoute(req,res){
+ const p=auth(req);
+ if(limited("snowch:"+p.id,10,60e3))throw new HttpError(429,"Doucement : réessaie dans un instant.");
+ const b=await readJson(req);
+ if(!players.has(p.id))throw new HttpError(401,"Connexion requise.");   // deleted while the body was arriving
+ if(!R.isNoel(eventNow()))throw new HttpError(422,"Les défis de neige ont lieu seulement pendant la Trêve des confiseurs.");
+ if(typeof b.to!=="string"||typeof b.gameId!=="string"||!b.gameId||b.gameId.length>40)throw new HttpError(400,"Défi : le pseudo du joueur (to) et la partie (gameId).");
+ const now=Date.now(),g=snowGames.get(p.id);
+ if(!g||g.gameId!==b.gameId)throw new HttpError(422,"Cette partie ne peut pas servir de défi : joue d'abord une partie de bataille.");
+ if(g.ch)throw new HttpError(422,"Une partie de défi ne se relance pas.");
+ if(g.bot)throw new HttpError(422,"Cette partie ne peut pas servir de défi.");
+ if(now-g.t>SNOWCH_LAUNCH_MS)throw new HttpError(422,"Trop tard : un défi se lance dans les 10 minutes qui suivent la partie.");
+ const row=q.playerByKey.get(nameKey(cleanName(b.to).slice(0,40))),o=row&&players.get(row.id);
+ if(!o||o.suspended)throw new HttpError(422,"Joueur introuvable.");
+ let id;
+ try{({id}=snowCh.open({challenger:p.id,defender:o.id,seed:g.seed,score:g.score,now}));}catch(e){throw new HttpError(422,e.message);}
+ logActivity(p,req,"snowChallenge");
+ notify(o.id,{title:"PolitiGo",body:`❄️ ${p.name} te défie aux boules de neige (${g.score} points). Tu as 24 h.`,tag:`snowch-${id}`,url:"/"});
+ sseTo(o.id,"snowChallenge",{kind:"new",id});
+ return send(res,200,{ok:true,challenge:{id,to:o.name,score:g.score,expires:snowCh.get(id).expires}});
+}
+// GET /api/snow/challenges: the player's own, received (open, in time, from a challenger still playing) and sent
+// (open, or closed within 24 h, with its result).
+function snowChallengesView(p,now){
+ const outcome=r=>r.winner===null?"tie":r.winner===p.id?"win":"loss";
+ return {
+  received:snowCh.forDefender(p.id,now).filter(r=>{const c=players.get(r.challenger);return c&&!c.suspended;})
+   .map(r=>({id:r.id,from:nameOf(r.challenger),score:r.score,expires:r.expires})),
+  sent:snowCh.forChallenger(p.id,now).map(r=>({id:r.id,to:nameOf(r.defender),status:r.status,expires:r.expires,
+   ...(r.status==="done"?{result:{mine:r.score,theirs:r.dScore,outcome:outcome(r)}}:{})})),
+ };
+}
 // The clock runs for everyone, connected or not: needs drain and deaths happen while the page is closed.
 loadEvents();
 setInterval(()=>{try{eventsTick(Date.now());}catch(e){console.error("events tick:",e);}},1000).unref();
@@ -1562,6 +1660,9 @@ async function route(req,res){
   if(b.type==="miniEnd"&&p.state.mini?.k==="debate")throw new HttpError(422,"Le Débat chrono se joue question par question.");
   const opts={now,speed:SPEED,random:rand,event:ev,boost:fxOf(p)},won={v:false};
   if(b.type==="draw")opts.mythic=mythicOpts(p,now,won);
+  // A challenge is the server's to give (snowchallenges): the body only names it.
+  if(b.type==="snowStart"&&b.challenge!==undefined&&b.challenge!==null)opts.challenge=snowChallengeOpts(p,b.challenge,now);
+  const started=b.type==="miniEnd"&&p.state.mini?.k==="snowball"?p.state.mini:null;
   let r;
   // A claimed staff that did not end up in the saved game (a failed write, a refused draw) goes back to the urn.
   // The state is brought up to date first (act does it again, a no-op), to read what was waiting before the action.
@@ -1574,12 +1675,18 @@ async function route(req,res){
   if(r.audit){
    const a=r.audit;recordMini(p,a,now);delete r.audit;   // for the admin, not for the player's script
    if(r.ok&&a.game==="snowball"){try{frontAdd(p,a);}catch(e){console.error(`player ${p.id}: Front de neige`,e);}}
+   if(a.game==="snowball"){try{snowChEnded(p,a,r.ok,started,now);}catch(e){console.error(`player ${p.id}: snow challenge`,e);}}
   }
   if(r.ok&&b.type==="draw")drawNews(p,r,won.v,now);
   // The rules hand the turn (its seed included) to the server only, out of the reply.
   if(r.ok&&b.type==="debate"&&r.turn&&p.state.mini?.k==="debate")soloTurns.set(p.id,{t:miniKey(p.state.mini),st:r.turn,q:null});
   if(deferred.size)flushDeferred();
   return send(res,r.ok?200:422,{...r,me:mePayload(p)});
+ }
+ if(path==="/api/snow/challenge"&&method==="POST")return snowChallengeRoute(req,res).finally(()=>{if(deferred.size)flushDeferred();});
+ if(path==="/api/snow/challenges"&&method==="GET"){
+  const p=auth(req);if(limited("snowchs:"+p.id,30,10e3))throw new HttpError(429,"Doucement : réessaie dans un instant.");
+  return send(res,200,{ok:true,...snowChallengesView(p,Date.now())});
  }
  if(path==="/api/debate"&&method==="POST")return debateRoute(req,res).finally(()=>{if(deferred.size)flushDeferred();});
  if(path==="/api/duels"&&method==="GET"){
@@ -2207,6 +2314,7 @@ function chores(now){
  q.purgeActivity.run(activityCut(now));q.purgeMini.run(activityCut(now));
  q.purgeDuels.run(now-30*864e5);q.purgeTombstones.run(now-7*864e5);q.purgeAcks.run(now-ALERT_DAYS*864e5);
  for(const dir of new Set([ADMIN_SOCKET&&dirname(ADMIN_SOCKET),dirname(DB_PATH)].filter(Boolean)))sweepBackups(dir,now);
+ try{snowChTick(now);}catch(e){console.error("chores, snow challenges:",e);}
 }
 // Backup copies older than 10 min that nothing took away: cut short by a full disk (its journal too), or left next to
 // the database by a stop in the middle of a transfer over the network link.
@@ -2232,6 +2340,7 @@ function removePlayer(p){
   try{if(q.duelClose.run("void",now,dayNow(now),d.id,d.status).changes)duelEvent(d,"void",(d.status==="c_play"?[d.challenger]:[d.challenger,d.defender]).filter(id=>id!==p.id));}
   catch(e){console.error(`deleting a player, duel ${d.id}:`,e);}
  }
+ try{snowChCancelOf(p.id,now);}catch(e){console.error("snow challenges, deleting a player:",e);}
  db.exec("BEGIN");
  try{q.freeMythicsOf.run(p.id);q.deleteSchedulesTo.run(p.id);q.deletePlayer.run(p.id);q.tombstone.run(nameKey(p.name),p.created,now);q.deleteFeedOf.run(p.name);setSetting("playerFloor",String(Math.max(p.id,Number(getSetting("playerFloor"))||0)));db.exec("COMMIT");}catch(e){db.exec("ROLLBACK");throw e;}
  players.delete(p.id);deferred.delete(p.id);soloTurns.delete(p.id);cleanCache.delete(p.id);   // a staff they held is back in the urn
@@ -2278,6 +2387,7 @@ function suspend(p,on){
   q.setSuspended.run(1,p.id);p.suspended=true;q.deleteSessionsOf.run(p.id);closeStreamsOf(p.id);deferred.delete(p.id);
   for(const d of q.openDuelsOf.all(p.id,p.id)){try{voidDuel(d,now);}catch(e){console.error(`suspend, duel ${d.id}:`,e);}}
   for(const r of bq.open.all())if(r.challenger===p.id||r.bearer===p.id){try{voidBaton(bLoad(r),now);}catch(e){console.error(`suspend, baton duel ${r.id}:`,e);}}
+  try{snowChCancelOf(p.id,now);}catch(e){console.error(`suspend, snow challenges of ${p.id}:`,e);}
   publishBoard(true);
  }else{
   // Back on the real hour: the suspension is skipped, not played.
@@ -2525,6 +2635,9 @@ async function adminCommand(b){
   return {};
  }
  if(cmd==="duels-list")return {items:q.openDuels.all().map(d=>({id:d.id,status:d.status,challenger:nameOf(d.challenger),defender:nameOf(d.defender),created:d.created,expires:d.expires??null,flags:flagsOf(d)}))};
+ // Read-only: the recent snowball challenges, the defender's score and the flags of their fight (counted 0 when a bot's).
+ if(cmd==="snow-challenges")return {items:snowCh.recent(limitOf(b.limit,50,200)).map(r=>({id:r.id,challenger:nameOf(r.challenger),defender:nameOf(r.defender),
+  score:r.score,dScore:r.dScore,status:r.status,created:r.created,expires:r.expires,closed:r.closed,winner:r.status==="done"&&r.winner!==null?nameOf(r.winner):null,dFlags:r.dFlags??[]}))};
  if(cmd==="duel-cancel"){
   const d=Number.isSafeInteger(b.id)&&q.duel.get(b.id);
   if(d){guard(d.challenger);guard(d.defender);}
@@ -2560,6 +2673,7 @@ async function adminCommand(b){
  if(cmd==="event-set"){
   if(!R.EVENT_MODES.includes(b.mode))throw new HttpError(400,`Mode : ${R.EVENT_MODES.join(", ")}.`);
   EVENT_MODE=b.mode;setSetting("event",b.mode);
+  try{snowChTick(now);}catch(e){console.error("event-set, snow challenges:",e);}   // the theme cut: open challenges go at once
   // Every open screen switches at once.
   for(const id of onlineIds()){const p=players.get(id);if(p)pushMe(p);}
   audit(via,cmd,"",`Événement : ${b.mode}`);console.log(`admin: seasonal event mode ${b.mode}`);
