@@ -55,7 +55,7 @@ testent directement, comme `admin/backups.mjs`.
 
 ---
 
-### Tâche 1 : Le mode de saison « noel » et ses costumes
+### Task 1: Le mode de saison « noel » et ses costumes
 
 **Fichiers :**
 - Modifier : `web/rules.mjs:183-240` (`EVENT_MODES`, `eventAt`, `HALLOWEEN`, `itemName`, `pongLine`) et `debateCount` (vers la ligne 712)
@@ -90,7 +90,7 @@ testent directement, comme `admin/backups.mjs`.
   façon qu'il tire celles d'Halloween (`debateNew`, `count`).
 - [ ] **Étape 4 :** relancer le test. Résultat attendu : SUCCÈS. Lancer aussi `node --test tests/*.client.test.mjs` : tout passe.
 
-### Tâche 2 : Le calendrier de l'Avent (règles)
+### Task 2: Le calendrier de l'Avent (règles)
 
 **Fichiers :**
 - Modifier : `web/rules.mjs` (`freshState`, `sanitize`, le `switch` de `actOn`, à côté de `case "treat"` vers la ligne 650)
@@ -116,7 +116,7 @@ testent directement, comme `admin/backups.mjs`.
 - [ ] **Étape 3 :** implémenter. Le jour civil est `dayKey(curIdx(S))%100`, et l'année `Math.floor(dayKey/10000)`. Les bulletins passent par l'aide existante (plafond 9999). Ajouter une ligne de journal `log(S,"advent",…)`, qui ne va pas dans le fil public.
 - [ ] **Étape 4 :** relancer le test. Résultat attendu : SUCCÈS.
 
-### Tâche 3 : Le moteur de la bataille, `web/snowball.mjs`
+### Task 3: Le moteur de la bataille, `web/snowball.mjs`
 
 **Fichiers :**
 - Créer : `web/snowball.mjs` (pur, sans DOM)
@@ -150,7 +150,7 @@ testent directement, comme `admin/backups.mjs`.
   Les atterrissages et les arrivées sont traités dans l'ordre du temps (une file triée).
 - [ ] **Étape 4 :** relancer le test. Résultat attendu : SUCCÈS.
 
-### Tâche 4 : La bataille dans les règles (départ et fin rejouée)
+### Task 4: La bataille dans les règles (départ et fin rejouée)
 
 **Fichiers :**
 - Modifier : `web/rules.mjs` (`MINI`, `act`, `case "manifStart"`, `case "miniEnd"`, vers les lignes 260 et 575-600)
@@ -177,7 +177,7 @@ testent directement, comme `admin/backups.mjs`.
 - [ ] **Étape 3 :** implémenter. La durée minimale et l'expiration viennent de `judge()`, en lui passant `sc:result.score` après le rejeu : on garde son contrôle de durée et d'identifiant, et ses plafonds deviennent inutiles. Le texte du journal est « Bataille de boules de neige : N points, bonus +B XP. ».
 - [ ] **Étape 4 :** relancer le test, puis `node --test tests/*.client.test.mjs`. Résultat attendu : SUCCÈS.
 
-### Tâche 5 : Le Front de neige et le toast de minuit (serveur)
+### Task 5: Le Front de neige et le toast de minuit (serveur)
 
 **Fichiers :**
 - Créer : `server/snowfront.mjs`
@@ -218,7 +218,7 @@ testent directement, comme `admin/backups.mjs`.
 - [ ] **Étape 3 :** implémenter. La tâche de minuit vérifie l'heure toutes les 10 s, avec `.unref()`.
 - [ ] **Étape 4 :** relancer le test. Résultat attendu : SUCCÈS.
 
-### Tâche 6 : Les défis de neige (serveur)
+### Task 6: Les défis de neige (serveur)
 
 **Fichiers :**
 - Créer : `server/snowchallenges.mjs`
@@ -252,7 +252,7 @@ testent directement, comme `admin/backups.mjs`.
 - [ ] **Étape 3 :** implémenter.
 - [ ] **Étape 4 :** relancer le test, plus `tests/adminops.test.mjs`. Résultat attendu : SUCCÈS.
 
-### Tâche 7 : Le costume de l'écran principal (client)
+### Task 7: Le costume de l'écran principal (client)
 
 **Fichiers :**
 - Modifier : `web/app.js` (`hw`/`season` ligne 54, le décor vers les lignes 404-470, le libellé ligne 569, la bordure ligne 732, la Buvette ligne 1112, les titres des Missions, du Courrier et des Objectifs lignes 1323-1348, le message de bienvenue ligne 2036) et `web/style.css`
@@ -278,7 +278,7 @@ testent directement, comme `admin/backups.mjs`.
 
   Le 24 au soir et le 31 se vérifient avec une horloge simulée dans le navigateur (`serverNow` décalé).
 
-### Tâche 8 : La bataille à l'écran (client)
+### Task 8: La bataille à l'écran (client)
 
 **Fichiers :**
 - Modifier : `web/minigames.mjs` (`createMini("snowball",…)`) et `web/app.js` (menu Jouer vers la ligne 1135, `startMini`, la fin de partie, la liste des défis)
@@ -306,7 +306,7 @@ testent directement, comme `admin/backups.mjs`.
   - un défi va de A à B, puis B gagne et prend son moral ;
   - aucune erreur dans la console.
 
-### Tâche 9 : Le toast de minuit (client)
+### Task 9: Le toast de minuit (client)
 
 **Fichiers :**
 - Modifier : `web/app.js` (la scène, le bandeau de l'écran principal)
@@ -320,7 +320,7 @@ testent directement, comme `admin/backups.mjs`.
 - [ ] **Étape 2 :** le bandeau doré « 🥂 Minuit : toute la République a trinqué. » avec le bouton « Revoir », qui joue deux boucles, soit 16 s.
 - [ ] **Étape 3 : vérification** sur la stack jetable, avec `POLITIGO_NEWYEAR_AT` fixé à une minute plus tard (tâche 5). Contrôler la notification, la scène pendant 5 minutes, le bouton ✕, puis le bandeau et « Revoir ».
 
-### Tâche 10 : La console admin, les textes et la documentation
+### Task 10: La console admin, les textes et la documentation
 
 **Fichiers :**
 - Modifier :
