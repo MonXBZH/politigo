@@ -1,7 +1,7 @@
 // PolitiGo browser client. The server owns the game: this page shows the state it sends, forwards the
 // player's actions, and plays the animations announced by the journal entries the server writes.
 import * as R from "./rules.mjs";
-import {createMini,manifLabel} from "./minigames.mjs";
+import {createMini,manifLabel,sleigh,faceSplat} from "./minigames.mjs";
 import {missedEntries,releasesUpTo} from "./changelog.mjs";
 import {HELP,helpOf,SHEET_HELP,signupProblem} from "./help.mjs";
 import {drawTest,verdict,randomCamp} from "./politest.mjs";
@@ -13,6 +13,7 @@ import {outfitLook,drawObject,dressColors} from "./looks.mjs";
 import {createLegend,volcanoRoom} from "./legend.mjs";
 import {createBatonDuel,screenOf,feedParts} from "./batonduel.mjs";
 import {noelMoment,noelYear,voeuxText,adventCells,adventGiftText} from "./noelui.mjs";
+import {endSummary,frontBar,challengeText,sentText,challengeLists,dareList} from "./snowui.mjs";
 const {people,personalItems,stresses,shop,fxNames,XP,xpCost,xpFloor,stage}=R;
 const $=s=>document.querySelector(s);
 const motionQuery=matchMedia("(prefers-reduced-motion: reduce)");
@@ -24,6 +25,8 @@ let anim=null,scene=null,pong=null,mini=null,miniClock=0,lvlFx=null;
 let board=[],feed=[],journalShown=-1,journalRendered=-1,boardTab="score",urnHint=false;
 // The Bâton de feu (me.baton): who holds it, whether this player may challenge, the duel under way. bd: its screen.
 let batonV=null,bd=null;
+// The snowball fight (Trêve des confiseurs): me.snowFront, the last fight's end screen, the challenges (GET /api/snow/challenges).
+let snowFront=null,snowLast=null,snowData=null,snowErr="",snowSeq=0,snowAsked=false;
 const curIdx=()=>R.curIdx(S),hodOf=R.hodOf,isNight=()=>R.isNight(S),isAsleep=()=>R.isAsleep(S);
 // What the élu wears from the wardrobe (wardrobe.mjs): drawn over his own look by sprite().
 const worn=()=>S?.wardrobe?.worn||{outfit:null,object:null},dress=p=>({...p,outfit:worn().outfit,object:worn().object});
@@ -63,6 +66,7 @@ function applyMe(m,{replay=false}={}){
  if(Number.isFinite(m.serverNow))skew=m.serverNow-Date.now();
  if(R.EVENT_MODES.includes(m.event)&&m.event!==EVENT_MODE){EVENT_MODE=m.event;seasonAt=0;momentAt=0;}
  if(Array.isArray(m.events))liveEvents=m.events;
+ snowFront=m.snowFront&&typeof m.snowFront==="object"?m.snowFront:null;   // only while the Trêve is on
  const first=!S||me!==m.name;
  // The action answer and the live stream race each other: an older copy of the state never replaces a newer one.
  if(!first&&m.state.lastReal<S.lastReal)return;
@@ -121,6 +125,7 @@ function playJournal(onlyMajor){
   else if(act.k==="duel"){if(d.res==="win")playAnim("win",2500);toast(act.text);duelJournalT=Date.now();}
   else if(act.k==="treat"){playAnim("eat",2500,{food:"candy"});toast(act.text);}
   else if(act.k==="advent"){playAnim("win",1500);toast(`🎁 ${act.text}`);}
+  else if(act.k==="snowch"){if(d.moral>0)playAnim("win",2000);toast(act.text);snowLoad();}
   // Reached on their own (a visit, a purchase…): said once. Missions, letters and draws answer the player's tap instead.
   else if(act.k==="goal"){playAnim("win",1500);toast(act.text);}
   else if(act.k==="flame")toast(`🔥 ${act.text}`);
@@ -147,10 +152,14 @@ let miniEnding=false,miniStartReal=0,pongEnding=false;
 // "Playing": a game on screen, or its score on its way to the server. Toasts, news and scenes wait meanwhile.
 const quiet=()=>!!(pong||mini)||miniEnding||pongEnding||!!bd?.playing();
 const drawCand=(p,state,size,cx,ground,t)=>bigSprite(p,state,size,cx,ground,t);
-async function startMini(type){
+// The snowball fight's foes: an élu of the other camp in his camp's Santa hat and scarf, or a passer-by; a snowball on
+// the face of the one just hit.
+const drawFoe=(p,{camp,hat,splat},size,cx,ground,t)=>bigSprite(p,"idle",size,cx,ground,t,false,undefined,"",c=>{if(camp)noelCostume(c,t,camp,"idle",hat);if(splat)faceSplat(c);});
+// extra: the snowball fight's {challenge:id}, a challenge received (the server checks it).
+async function startMini(type,extra={}){
  closeSheet();
  if(miniEnding){toast("Un instant : le résultat de la partie précédente part au serveur.",true);return;}
- const r=await send({type});if(!r?.ok||!S)return;
+ const r=await send({type,...extra});if(!r?.ok||!S)return;
  closeSheet();                                      // a sheet opened while the request was on its way
  miniStartReal=Date.now();
  // The Manif plays from the server's seed and its end carries the game's id; the debate is refereed question by
@@ -158,8 +167,9 @@ async function startMini(type){
  const key=type==="debate"?"debate":r.game?.k,id=r.game?.id;
  if(!R.MINI[key]){toast("Partie introuvable : réessaie dans un instant.",true);return;}
  mini=createMini(key,{p:key==="epervier"?{...look(),prop:"tonfa",object:null}:look(),camp:S.camp,ctx,scale:()=>scale,now:miniClock,season:season(),
-  drawCand,seed:r.game?.seed,ask:key==="debate"?debateAsk("solo"):null});
+  drawCand,seed:r.game?.seed,ask:key==="debate"?debateAsk("solo"):null,drawFoe,reduced:()=>reduced});
  mini.gameId=id;
+ if(key==="snowball"){mini.ch=extra.challenge!=null;mini.xp=Math.round(R.MINI.snowball.xp*(fx().xp.snowball??1));}
  cv.focus();
 }
 // The debate's referee (POST /api/debate): one request per question, answers by index. A request lost on the way
@@ -208,7 +218,8 @@ function duelDone(d,r){
  if(r.res==="win")playAnim("win",3000);
 }
 async function endMini(){
- const key=mini.key,score=mini.score(),duel=mini.duel,id=mini.gameId,result=mini.result,failed=mini.failed;mini=null;pongEnded=performance.now();
+ const key=mini.key,score=mini.score(),duel=mini.duel,id=mini.gameId,result=mini.result,failed=mini.failed;
+ const taps=key==="snowball"?mini.taps():null,ch=!!mini.ch,xp=mini.xp;mini=null;pongEnded=performance.now();
  // The debate was scored by its referee as it went: its verdict came with the last answer. A game given up (or cut
  // off) is closed by the server when its time is up, with what was played.
  if(key==="debate"){
@@ -230,8 +241,16 @@ async function endMini(){
   const early=miniStartReal+R.MINI_RULES.minSeconds*1000+200-Date.now();if(early>0)await new Promise(ok=>setTimeout(ok,early));
   // As for the Pong: the score must not be lost behind another request.
   for(const end=Date.now()+20000;busy&&Date.now()<end;)await new Promise(ok=>setTimeout(ok,100));
-  r=await send({type:"miniEnd",score,id});
+  // The snowball fight sends its taps only: the server replays them and keeps its own score.
+  r=await send(key==="snowball"?{type:"miniEnd",id,taps}:{type:"miniEnd",score,id});
  }finally{miniEnding=false;}
+ if(key==="snowball"){
+  if(!S)return;
+  snowLast={at:Date.now(),gameId:id,ch,xp,ok:!!r?.ok,result:r?.result,bonus:r?.bonus,error:r?r.error:"La partie n'a pas pu partir au serveur : réessaie dans un instant."};
+  if(r?.ok&&r.bonus>=10)playAnim("win",3000);
+  if(!scene)openSnow();
+  return;
+ }
  if(r?.ok){
   toast(`${R.MINI[key].label} : +${r.bonus} XP`);
   if(r.bonus>=10)playAnim("win",3000);
@@ -547,14 +566,7 @@ function noelTree(c,t,cx,base,k){
  for(const [dx,w,h,col,rib] of PRESENTS){rect(c,dx-w/2,-h,w,h,col);rect(c,dx-2,-h,4,h,rib);rect(c,dx-w/2,-h/2-2,w,4,rib);}
  c.restore();
 }
-// Two reindeer, the sleigh and its driver, (x, y) the first reindeer's top-left.
-function sleigh(c,x,y,k=1){
- for(const dx of [0,26]){rect(c,x+dx,y+6*k,18*k,8*k,"#8a5a32");rect(c,x+dx+14*k,y,6*k,8*k,"#8a5a32");rect(c,x+dx+15*k,y-4*k,2*k,4*k,"#d9c9a0");rect(c,x+dx+19*k,y+2*k,2*k,2*k,dx?"#8a5a32":"#ff3b3b");rect(c,x+dx+2*k,y+14*k,2*k,5*k,"#5a3a20");rect(c,x+dx+13*k,y+14*k,2*k,5*k,"#5a3a20");}
- c.strokeStyle="#d9c9a0";c.lineWidth=1;c.beginPath();c.moveTo(x-4,y+10*k);c.lineTo(x+18,y+8*k);c.stroke();
- rect(c,x-46*k,y+4*k,40*k,14*k,"#c8283a");rect(c,x-48*k,y+18*k,46*k,3*k,"#f4c84a");
- rect(c,x-34*k,y-8*k,14*k,14*k,"#d23a3a");rect(c,x-32*k,y-12*k,10*k,6*k,"#f4f1ea");rect(c,x-30*k,y-4*k,6*k,6*k,"#f4f1ea");
- rect(c,x-46*k,y-6*k,12*k,10*k,"#7a4a24");rect(c,x-44*k,y-8*k,4*k,4*k,"#2f7d4f");
-}
+// The sleigh (two reindeer and the driver) is minigames.mjs's: the snowball fight flies it too.
 // A flag on its pole (pole 150 high in the mockup's units): the French one, or the European one.
 function flag(c,x,y,eu,t,k){
  c.save();c.translate(x,y);c.scale(k,k);
@@ -1057,6 +1069,8 @@ function connectLive(){
  on("feedInit",v=>{if(Array.isArray(v)){feed=v;renderFeed();}});
  on("feed",v=>{if(!Array.isArray(v))return;for(const f of v)feed.unshift(f);feed.length=Math.min(feed.length,60);renderFeed();});
  on("duel",v=>{if(v&&typeof v==="object")duelEvent(v);});
+ on("snowChallenge",v=>{if(v&&typeof v==="object")snowEvent(v);});
+ on("snowFront",v=>snowFrontEvent(v));
  on("announce",v=>{if(typeof v?.text!=="string"||!v.text.trim())return;announceQ.push({text:v.text.slice(0,240)});if(announceQ.length>3)announceQ.shift();showAnnounce();});
  // The Bâton de feu found its bearer: a banner for everyone else (the bearer has the legend).
  on("mythic",v=>{
@@ -1236,6 +1250,7 @@ function renderSheet(kind,opener){
  }
  if(kind==="play"){
   const err=activityBlock(),dn=incoming().length;
+  if(noel()&&!snowData&&!snowAsked){snowAsked=true;snowLoad();}   // the count of challenges received, on the menu entry
   set("Jouer",`Activités : ${R.actsToday(S)}/${XP.actsPerDay} aujourd'hui · ${XP.actsPerVisit} par visite`);
   // The rematch only shows while it is on offer: right after a debate, for one hour of game time.
   const rm=rematchBlock()?[]:[itemButton("Quitte ou double !",`Revanche immédiate, 1 chance sur 2 : moral +${R.DOUBLE.moral} et énergie +${R.DOUBLE.energy}… ou un stress ×${R.DOUBLE.stressFactor} (moral −${R.STRESS_HIT*R.DOUBLE.stressFactor}).`,"50/50",false,rematch)];
@@ -1246,6 +1261,9 @@ function renderSheet(kind,opener){
    boosted(itemButton(`Manif : ${manifLabel(S.camp)}`,err||(S.camp==="left"
     ?"Tiens le cortège jusqu'à Nation en 30 s : esquive LBD et lacrymo, ramasse les tracts et les merguez. Doigt, souris ou flèches ; parapluie avec un deuxième doigt ou Espace."
     :"Joue l'épervier 35 s avec un CRS : interpelle les manifestants, esquive pavés et molotovs, ramasse les rapports d'incident. Gare aux journalistes et aux collègues infiltrés."),side(manif,"manif"),!!err,()=>startMini("manifStart")),f.xp.manif>1),
+   // The Trêve des confiseurs' game, only while the theme is on: it opens the battle sheet (play, challenges, Front).
+   ...(noel()?[boosted(itemButton("❄️ Bataille de boules de neige",err||"45 s contre les élus de l'autre camp : vise, pare leurs boules, épargne les passants. Puis défie un joueur sur le même tirage.",
+    `Saison${snowIn()?` · ${snowIn()} défi${snowIn()>1?"s":""}`:""}`,!!err,openSnow),true)]:[]),
    // Always open: even when he cannot duel now, the sheet shows the challenges, the results and why.
    boosted(itemButton("Duels",`Défie un rival au Débat chrono : mêmes questions, meilleur score. ${R.DUEL.perDay+f.duels} défis par jour.`,`${dn?`${dn} défi${dn>1?"s":""}`:"PvP"}${f.duelMult>1?` (×${frNum(f.duelMult)})`:""}`,false,openDuels),f.duels>0||f.duelMult>1)
   ));
@@ -1257,6 +1275,8 @@ function renderSheet(kind,opener){
  if(kind==="advent")renderAdvent(body,set);
  if(kind==="player")renderPlayer(body,set);
  if(kind==="duels")renderDuels(body,set);
+ if(kind==="snow")renderSnow(body,set);
+ if(kind==="snowdare")renderSnowDare(body,set);
  if(kind==="test"){
   set("Test politique","Cinq questions pour les indécis. Sans effet sur la partie : le dernier mot reste le tien.");
   const box=document.createElement("div");box.className="quiz";box.id="sheet-quiz";body.append(box);
@@ -1855,7 +1875,7 @@ async function duelsLoad(){
  if(seq!==duelSeq||!S||me!==who)return duelData;             // a newer load, or another player, won the race
  if(r.ok){duelData=r;duelErr="";pushSync(r.pushKey);if(incoming().length)pushAsk();}else duelErr=r.error;
  refresh();
- if(sheetKind==="duels"||(r.ok&&["play","more","player"].includes(sheetKind)))liveSheet(true);
+ if(sheetKind==="duels"||(r.ok&&["play","more","player","snowdare"].includes(sheetKind)))liveSheet(true);
  return duelData;
 }
 function openDuels(){openSheet("duels");duelsLoad();}
@@ -1930,6 +1950,124 @@ function renderDuels(body,set){
  body.append(blockTitle("Règles"),fine(`Victoire : +${won("xp")} XP, moral +${won("moral")}, énergie +${won("energy")}${f.duelMult>1?` (×${frNum(f.duelMult)} pendant l'événement)`:""} (XP payée pour ${D.paidWins} victoires par jour). `+
   `Défaite : −${-D.loss.xp} XP, moral −${-D.loss.moral}, énergie −${-D.loss.energy}, mais jamais de niveau perdu ni de jauge sous ${D.floor}. `+
   `Match nul : moral +${D.tie.moral}. Refuser ne coûte rien. Dès le niveau ${D.minLevel}, ${perDay} défis par jour, ${Math.round(D.window/R.H)} h pour répondre.`));
+}
+// ---------- the snowball fight (Trêve des confiseurs) ----------
+// The battle sheet: the last fight's end screen (the server's score, never the browser's), the Front de neige, the
+// challenges received (GET /api/snow/challenges, loaded when the sheet opens and at each live notice) and sent.
+const SNOW_DARE_MS=10*60e3;                                       // the server's window to dare with a game
+const snowIn=()=>snowData?snowData.received.filter(c=>c.expires>serverNow()).length:0;
+const snowRecent=()=>snowLast&&Date.now()-snowLast.at<SNOW_DARE_MS?snowLast:null;
+async function snowLoad(){
+ if(!S)return;
+ const seq=++snowSeq,who=me,r=await api("GET","/api/snow/challenges");
+ if(seq!==snowSeq||!S||me!==who)return;
+ if(r.ok){snowData=challengeLists(r);snowErr="";}else snowErr=r.error;
+ if(sheetKind==="snow"||sheetKind==="play")liveSheet(true);
+}
+function openSnow(){openSheet("snow");snowLoad();}
+// The Front de neige as a bar: the two camps' shares, the totals, the player's line.
+function frontBlock(fb){
+ const box=document.createElement("div");box.className="snow-front";
+ const head=document.createElement("div"),bar=document.createElement("div"),foot=document.createElement("div");
+ head.className="lbl";foot.className="lbl";bar.className="bar";
+ const a=document.createElement("span"),b=document.createElement("span");a.textContent="❄️ Front de neige";b.textContent=fb.note;head.append(a,b);
+ const l=document.createElement("i"),r=document.createElement("i");l.className="left";r.className="right";l.style.width=`${fb.lp}%`;r.style.width=`${fb.rp}%`;bar.append(l,r);
+ bar.setAttribute("role","img");bar.setAttribute("aria-label",`Front de neige : ${fb.leftText}, ${fb.rightText}`);
+ const c=document.createElement("span"),d=document.createElement("span");c.textContent=fb.leftText;d.textContent=fb.rightText;foot.append(c,d);
+ box.append(head,bar,foot);return box;
+}
+function renderSnow(body,set){
+ const err=activityBlock(),on=noel(),last=snowRecent(),now=serverNow();
+ set("❄️ Bataille de boules de neige","45 s, le même tirage pour tous les défis · score recompté par le serveur");
+ if(last){
+  const s=endSummary(last),end=document.createElement("div");end.className="snow-end";end.setAttribute("role","status");
+  const h=document.createElement("h3"),big=document.createElement("div"),xp=document.createElement("p");
+  h.textContent=s.title;big.className="snow-score";big.textContent=s.score;xp.className="snow-xp";xp.textContent=s.xp;
+  end.append(h,big);
+  if(s.stats){const p=document.createElement("p");p.textContent=s.stats;end.append(p);}
+  end.append(xp);
+  if(last.ch&&last.ok)end.append(fine("Partie de défi : le verdict arrive dans ton journal."));
+  body.append(end);
+ }else body.append(fine("Touche un adversaire pour lui lancer une boule (5 en main, une revient toutes les demi-secondes). Touche les boules qui arrivent pour les parer. Épargne les passants… et vise le traîneau !"));
+ const fb=frontBar(snowFront,S.camp,{score:last?.ok?last.result?.score:undefined});
+ if(fb)body.append(frontBlock(fb));
+ if(!on)body.append(Object.assign(fine("La bataille revient avec la Trêve des confiseurs, du 1er décembre au 1er janvier."),{className:"fine warn"}));
+ else if(err)body.append(Object.assign(fine(`Pas de bataille pour l'instant : ${err}`),{className:"fine warn"}));
+ const row=document.createElement("div");row.className="btn-row";
+ row.append(smallButton(last?"Rejouer":"Jouer (45 s)","go",()=>startMini("snowStart"),!on||!!err));
+ // Only a fight of his own, counted, and less than 10 minutes old can be sent as a challenge (the server checks it too).
+ if(last&&last.ok&&!last.ch&&last.gameId)row.append(smallButton("Défier un joueur","",()=>{openSheet("snowdare");if(!duelData)duelsLoad();},!on));
+ body.append(row);
+ body.append(blockTitle("Défis reçus"));
+ if(!snowData){
+  body.append(fine(snowErr||"Chargement des défis…"));
+  if(snowErr){const r=document.createElement("div");r.className="btn-row";r.append(smallButton("Réessayer","",()=>snowLoad()));body.append(r);}
+ }else{
+  const inc=snowData.received.filter(c=>c.expires>now);
+  if(!inc.length)body.append(fine("Aucun défi en attente. Après une partie, « Défier un joueur » envoie ton tirage à qui tu veux."));
+  // Two taps: a stray one must not spend an activity.
+  for(const c of inc)body.append(duelCard(challengeText(c,now),"Même tirage, même durée : fais mieux pour gagner du moral.",
+   !on||err?smallButton("Relever","go",()=>{},true):armedButton("Relever","Prêt ? Touche encore pour jouer","go",()=>startMini("snowStart",{challenge:c.id}))));
+  const sent=snowData.sent.map(x=>({x,text:sentText(x,now)})).filter(e=>e.text);
+  if(sent.length){
+   body.append(blockTitle("Tes défis"));
+   const ul=document.createElement("ul");ul.className="journal duel-log";
+   for(const {x,text} of sent.slice(0,10)){const li=document.createElement("li");li.className=x.result?.outcome==="win"?"win":x.result?.outcome==="loss"?"loss":"";li.textContent=text;ul.append(li);}
+   body.append(ul);
+  }
+ }
+ const M=R.MINI.snowball;
+ body.append(blockTitle("Règles"),fine(`Une partie : +${M.xp} XP, puis un bonus de ${String(M.bonusRate).replace(".",",")} XP par point (${M.bonusCap} au plus) dès ${M.minScore} points. `+
+  "Chaque partie compte pour ton camp dans le Front de neige. Un défi se lance dans les 10 minutes après la partie, 3 par jour : ton adversaire a 24 h pour faire mieux sur le même tirage (moral +10 au gagnant, +5 chacun en cas d'égalité)."));
+}
+// Whom to dare: the players of both camps (the duels' list holds them all), online first, or a name typed in.
+function renderSnowDare(body,set){
+ const last=snowRecent(),score=last?.result?.score;
+ set("Défier un joueur",Number.isFinite(score)?`Ton tirage et tes ${score} points : il a 24 h pour faire mieux.`:"Ton tirage : il a 24 h pour faire mieux.");
+ const back=()=>{const r=document.createElement("div");r.className="btn-row";r.append(smallButton("‹ La bataille","",()=>openSnow()));return r;};
+ if(!last||!last.ok||last.ch){body.append(fine("Joue d'abord une partie de bataille : un défi se lance dans les 10 minutes qui suivent."),back());return;}
+ // A form: Enter sends, and the sheet is not redrawn under a half-typed name (liveSheet).
+ const form=document.createElement("form"),lab=document.createElement("label"),inp=document.createElement("input"),dl=document.createElement("datalist");
+ form.className="inline-form snow-dare";lab.htmlFor="snow-dare-name";lab.textContent="Pseudo du joueur";
+ Object.assign(inp,{id:"snow-dare-name",type:"text",autocomplete:"off",maxLength:40,required:true});inp.setAttribute("list","snow-dare-list");dl.id="snow-dare-list";
+ const all=dareList(duelData?.opponents,me,500);
+ for(const o of all)dl.append(Object.assign(document.createElement("option"),{value:o.name}));
+ const go=Object.assign(document.createElement("button"),{type:"submit",className:"btn go",textContent:"Défier"});
+ form.append(lab,inp,dl,go);
+ form.addEventListener("submit",e=>{e.preventDefault();snowDare(inp.value);});
+ body.append(form);
+ if(!duelData)body.append(fine(duelErr||"Chargement des joueurs…"));
+ else{
+  const top=all.slice(0,12);
+  if(top.length){
+   body.append(blockTitle("Joueurs"));
+   body.append(list(...top.map(o=>{
+    const b=itemButton(o.name,`${o.candidate||"?"} · ${o.camp==="right"?"Droite":"Gauche"}${o.online?" · en ligne":""}`,"Défier",false,()=>snowDare(o.name));
+    nameWithDot(b.querySelector("b"),o.name,o.online);b.classList.add("opp",o.camp==="right"?"right":"left");return b;
+   })));
+  }else body.append(fine("Personne d'autre pour l'instant."));
+ }
+ body.append(back());
+}
+async function snowDare(name){
+ const to=String(name||"").trim(),last=snowRecent();
+ if(!to){toast("Écris le pseudo d'un joueur.",true);$("#snow-dare-name")?.focus();return;}
+ if(!last?.gameId)return;
+ const r=await send({to,gameId:last.gameId},"/api/snow/challenge");
+ if(!r?.ok||!S)return;                                // the server's reason is already toasted
+ const c=r.challenge||{};
+ toast(`❄️ Défi lancé à ${c.to||to} : ${Number.isFinite(c.score)?`${c.score} points à battre, `:""}24 h pour répondre.`,true);
+ if(sheetKind==="snowdare")openSnow();else snowLoad();
+}
+// Live: a challenge received, finished or cancelled (its result comes with the journal); the Front's counter.
+function snowEvent(v){
+ if(v.kind==="new")toast("❄️ Nouveau défi de neige ! Va dans Jouer → Bataille de boules de neige.");
+ snowLoad();
+}
+function snowFrontEvent(v){
+ if(!v||typeof v!=="object")return;
+ snowFront=v;
+ if(sheetKind==="snow")liveSheet(true);
 }
 // Live duel events. A result's journal entry (scores, XP) says more than the short notice: it is not overwritten.
 function duelEvent(v){
@@ -2169,7 +2307,7 @@ function showTips(){let seen=false;try{seen=!!localStorage.getItem("politigo.tip
 $("#tips-close").addEventListener("click",()=>{try{localStorage.setItem("politigo.tips.1.6","1");}catch{}$("#tips").hidden=true;});
 $("#form-login").addEventListener("submit",e=>submitAuth(e,"/api/login",{}));
 $("#form-register").addEventListener("submit",e=>submitAuth(e,"/api/register",{camp:regCamp}));
-function endSession(message){me=null;board=[];feed=[];renderFeed();showAuth(message);}
+function endSession(message){me=null;board=[];feed=[];snowLast=snowData=snowFront=null;snowErr="";snowAsked=false;renderFeed();showAuth(message);}
 // The device's push subscription goes first, while the session still allows it: another account signing in here
 // must never receive the previous player's duel notifications.
 async function logout(){
@@ -2196,7 +2334,7 @@ function noelHello(){
  noelHi=true;
  const key=`politigo.noel.${noelYear(serverNow())}`;
  try{if(localStorage.getItem(key))return;localStorage.setItem(key,"1");}catch{}
- toast("🎄 La Trêve des confiseurs commence ! Jusqu'au 1er janvier : calendrier de l'Avent et Buvette de fête, et bataille de boules de neige (Jouer → Boules de neige).");
+ toast("🎄 La Trêve des confiseurs commence ! Jusqu'au 1er janvier : calendrier de l'Avent et Buvette de fête, et bataille de boules de neige (Jouer → Bataille de boules de neige).");
 }
 // 31 December from 20 h: the élu's vœux, said once in the evening (the lectern and the flags stay until midnight).
 function voeuxHello(){

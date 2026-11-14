@@ -548,3 +548,16 @@ body[data-season=noel],body[data-camp][data-season=noel]{--accent-2:#f4c84a;--bg
 .advent-said{margin:0 0 6px;min-height:1.45em}
 .advent-said .gold{color:#f4c84a}
 @media(prefers-reduced-motion:reduce){.advent-box.today{animation:none}}
+/* Trêve des confiseurs: the snowball fight's sheet (end screen, Front de neige bar, the dare form) */
+.snow-end{overflow-wrap:anywhere;text-align:center;padding:14px;border-radius:14px;background:var(--glass);border:1px solid var(--line);margin-top:4px}
+.snow-end h3{margin:0;font:600 18px Fredoka,system-ui,sans-serif}
+.snow-end p{margin:6px 0 0;font-size:13px;color:var(--muted)}
+.snow-score{font:700 44px/1.1 Fredoka,system-ui,sans-serif;color:#9fe3ff;margin:4px 0}
+.snow-end p.snow-xp{color:#f4c84a;font-weight:700}
+.snow-front{margin-top:12px}
+.snow-front .lbl{display:flex;justify-content:space-between;gap:8px;font-size:11.5px;color:var(--muted);overflow-wrap:anywhere}
+.snow-front .bar{display:flex;height:12px;border-radius:99px;overflow:hidden;margin:4px 0;background:#ffffff1c}
+.snow-front .bar i{display:block;height:100%}
+.snow-front .bar i.left{background:#e0413a}.snow-front .bar i.right{background:#2f6fe0}
+.snow-dare{margin-top:6px;align-items:end}
+.snow-dare label{flex:1 0 100%;font-size:13px;color:var(--muted)}
