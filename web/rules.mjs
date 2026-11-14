@@ -5,6 +5,7 @@
 import * as ACT from "./activities.mjs";
 import {NO_FX} from "./events.mjs";
 import * as WR from "./wardrobe.mjs";
+import {schedule,play,validTaps} from "./snowball.mjs";
 
 // ===================================================================== DATA
 export const people={
@@ -308,8 +309,26 @@ export const PONG_RULES={xp:25,ms:20000,intro:0,maxScore:25,suspect:22,minSecond
 export const MINI={
  debate:{label:"Débat chrono",camp:null,xp:0,ms:15000,intro:1300,maxScore:30,perSecond:2.5,bonusRate:2.5,bonusCap:50,great:24,suspect:31},
  cortege:{label:"Le Cortège",camp:"left",xp:35,ms:30000,intro:0,maxScore:250,perSecond:8,bonusRate:0.25,bonusCap:35,great:140,suspect:220},
- epervier:{label:"L'Épervier",camp:"right",xp:35,ms:35000,intro:0,maxScore:60,perSecond:2,bonusRate:2,bonusCap:35,great:18,suspect:40}
+ epervier:{label:"L'Épervier",camp:"right",xp:35,ms:35000,intro:0,maxScore:60,perSecond:2,bonusRate:2,bonusCap:35,great:18,suspect:40},
+ // Trêve des confiseurs. The score is never taken from the browser: the server replays the taps (snowball.mjs), so the
+ // replay is the referee and judge() only checks the id and the time. Its caps (maxScore, perSecond, suspect) are set
+ // far above any real fight so that they never refuse a legitimate replayed score.
+ snowball:{label:"Bataille de boules de neige",camp:null,xp:35,ms:45000,intro:0,minScore:10,bonusRate:0.4,bonusCap:35,great:80,maxScore:1000,perSecond:1000,suspect:1e6}
 };
+// The bonus of a snowball fight: nothing under minScore points, then 0.4 XP a point, 35 at most (times the event's multiplier).
+export const snowBonus=(score,x=1)=>score<MINI.snowball.minScore?0:Math.round(x*Math.min(MINI.snowball.bonusCap,Math.floor(score*MINI.snowball.bonusRate)));
+// The signals the admin reads on a fight (a flagged game still pays; the server keeps it out of the camp counter).
+// taps: the browser's taps; result: the replay; reactions: ms between a foe showing up and the tap that hit him.
+export const SNOW_BOT={gapMs:80,gapTaps:20,precision:0.95,precisionThrows:40,reflexMs:180,reflexHits:4};
+export function snowFlags(taps,result,reactions){
+ const flags=[],ts=taps.map(p=>p.t).sort((a,b)=>a-b);
+ if(ts.length>SNOW_BOT.gapTaps&&(ts[ts.length-1]-ts[0])/(ts.length-1)<SNOW_BOT.gapMs)flags.push("taps_rapides");
+ if(result.thrown>SNOW_BOT.precisionThrows&&result.hits/result.thrown>SNOW_BOT.precision)flags.push("precision");
+ if(reactions.length>=SNOW_BOT.reflexHits&&reactions.reduce((a,b)=>a+b,0)/reactions.length<SNOW_BOT.reflexMs)flags.push("reflexe");
+ return flags;
+}
+// A challenge is only a shape here ({id, seed}); who may play which one is the server's business.
+const snowChallenge=c=>c&&typeof c==="object"&&!Array.isArray(c)&&typeof c.id==="string"&&/^[0-9A-Za-z_-]{1,40}$/.test(c.id)&&Number.isInteger(c.seed)&&c.seed>=0&&c.seed<2**32?{id:c.id,seed:c.seed}:null;
 // The debate's clock: a 1.3 s countdown, then 15 s of play; a wrong answer costs a second, and a pick shows for
 // 260 ms. Refereed by the server: an answer given less than minReact after its question was sent is ignored (and
 // flagged), a game never scores more than maxPoints; the flags tell the admin about too perfect a game. reflexMs: a
@@ -407,7 +426,13 @@ export function sanitize(s,now){
  o.jn=Math.max(o.jn,...o.journal.map(j=>j.n),0);
  // A game's seed and id (gameKeys) survive; nothing else does.
  if(s.pong&&Number.isFinite(s.pong.t))o.pong=gameKeys({t:s.pong.t},s.pong);
- if(s.mini&&typeof s.mini.k==="string"&&Object.hasOwn(MINI,s.mini.k)&&Number.isFinite(s.mini.t))o.mini=gameKeys({k:s.mini.k,t:s.mini.t},s.mini);
+ if(s.mini&&typeof s.mini.k==="string"&&Object.hasOwn(MINI,s.mini.k)&&Number.isFinite(s.mini.t)){
+  o.mini=gameKeys({k:s.mini.k,t:s.mini.t},s.mini);
+  if(s.mini.k==="snowball"){   // the Trêve it started in, and the challenge it answers
+   if(s.mini.noel===true)o.mini.noel=true;
+   if(typeof s.mini.ch==="string"&&/^[0-9A-Za-z_-]{1,40}$/.test(s.mini.ch))o.mini.ch=s.mini.ch;
+  }
+ }
  o.rematchT=num(s.rematchT,-1,o.vclock,-1);
  if(s.advent&&typeof s.advent==="object"&&Number.isInteger(s.advent.y)&&s.advent.y>=0&&s.advent.y<=9999){
   o.advent.y=s.advent.y;
@@ -644,10 +669,34 @@ function actOn(S,a,{now,speed=1,random=Math.random,event="",mythic=null,boost=NO
   log(S,"act",`${MINI[k].label} : +${xp} XP${visit?`, visite +${XP.visit} XP`:""}.`,{kind:"manif",game:k,visit});
   return done({visit,game:{k,id,seed}});
  }
+ case "snowStart":{
+  if(!isNoel(event))return fail("La bataille de boules de neige a lieu seulement pendant la Trêve des confiseurs.");
+  const ch=a.challenge==null?null:snowChallenge(a.challenge);
+  if(a.challenge!=null&&!ch)return fail("Défi invalide.");
+  const e=activityBlock(S);if(e)return fail(e);
+  const x=fx.xp.snowball??1,xp=Math.round(MINI.snowball.xp*x),visit=registerVisit(S);spendActivity(S,xp);
+  const seed=ch?ch.seed:newSeed(random),id=gameId(random);
+  S.mini={k:"snowball",t:now,seed,id,noel:true,...(ch?{ch:ch.id}:{}),...(x>1?{x}:{})};S.pong=null;S.rematchT=-1;
+  log(S,"act",`${MINI.snowball.label} : +${xp} XP${visit?`, visite +${XP.visit} XP`:""}.`,{kind:"manif",game:"snowball",visit});
+  return done({visit,game:{k:"snowball",id,seed}});
+ }
  case "miniEnd":{
   if(!S.mini)return fail("Aucune partie en cours.");
-  const k=S.mini.k,cfg=MINI[k],secs=(now-S.mini.t)/1000,sc=a.score,idOk=typeof S.mini.id==="string"&&a.id===S.mini.id,x=S.mini.x??1;
+  const m=S.mini,k=S.mini.k,cfg=MINI[k],secs=(now-S.mini.t)/1000,sc=a.score,idOk=typeof S.mini.id==="string"&&a.id===S.mini.id,x=S.mini.x??1;
   S.mini=null;   // consumed even when refused: no replay
+  if(k==="snowball"){
+   // The score is the server's: the taps are replayed on the fight the seed deals. Anything the browser says about the score is ignored.
+   const base={game:k,seed:m.seed,noel:m.noel===true,ch:m.ch,start:m.t},expiry=cfg.ms/1000+MINI_RULES.graceSeconds,taps=a.taps;
+   if(!Number.isInteger(m.seed)||!validTaps(taps))return refused({...base,score:null,secs:Math.round(secs*10)/10,flags:["touches_invalides"]});
+   const sched=schedule(m.seed,S.camp),{events,...result}=play(sched,taps);
+   const j=judge(k,cfg,{sc:result.score,secs,idOk,minSeconds:MINI_RULES.minSeconds,expiry});
+   const reactions=events.filter(e=>e.kind==="hit").map(e=>e.from-sched.pops[e.i].t);
+   const flags=[...j.flags,...snowFlags(taps,result,reactions)],audit={...base,...j.audit,flags};
+   if(j.refused)return refused(audit);
+   const sc=result.score,bonus=snowBonus(sc,x);addXp(S,bonus);ACT.progress(S,"minis");
+   log(S,"mini",`${cfg.label} : ${sc} point${sc>1?"s":""}, bonus +${bonus} XP.`,{game:k,score:sc,bonus,great:sc>=cfg.great&&!flags.length&&!greatAnnounced(S)});
+   return hidden(done({bonus,result}),"audit",audit);
+  }
   // The debate's score comes from its referee (debateFinish), never from the browser.
   if(k==="debate")return refused({game:k,score:Number.isInteger(sc)?sc:null,secs:Math.round(secs*10)/10,flags:["hors_arbitre"]});
   const j=judge(k,cfg,{sc,secs,idOk,minSeconds:MINI_RULES.minSeconds,expiry:cfg.ms/1000+MINI_RULES.graceSeconds});

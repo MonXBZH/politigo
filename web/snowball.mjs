@@ -74,14 +74,15 @@ export function validTaps(taps){
 const LAUNCH=0,LAND=1,ARRIVE=2,TAP=3;
 
 // Replays the taps against the schedule (the taps are sorted by time first; `sched` is never modified).
-// Returns {score,hits,thrown,parries,passHits,taken,best,events}; events: [{t,kind,pts,x,y}] for the browser to draw.
+// Returns {score,hits,thrown,parries,passHits,taken,best,events}; events: [{t,kind,pts,x,y}] for the browser to draw
+// (a "hit" or "pass" also says which pop it was, `i`, and the time of the tap that threw the ball, `from`).
 export function play(sched,taps){
  if(!validTaps(taps))throw new RangeError("snowball: invalid taps");
  const pops=sched.pops,sleighs=sched.sleighs||[];
  const hit=new Uint8Array(pops.length),sleighHit=new Uint8Array(sleighs.length);
  const R={score:0,hits:0,thrown:0,parries:0,passHits:0,taken:0,best:0,events:[]};
  let combo=0,ammo=SNOW.ammo,reloadFrom=-1,seq=0;
- const ev=(t,kind,pts,x,y)=>R.events.push({t,kind,pts,x,y});
+ const ev=(t,kind,pts,x,y,more)=>R.events.push(more?{t,kind,pts,x,y,...more}:{t,kind,pts,x,y});
 
  // a queue sorted by (t, priority, order of insertion)
  const Q=[];
@@ -92,7 +93,7 @@ export function play(sched,taps){
  for(const o of sorted)push({t:o.t,p:TAP,x:o.x,y:o.y});
 
  const flying=[];   // incoming balls in the air: pop indexes, in launch order
- const land=(t,x,y)=>{
+ const land=(t,x,y,from)=>{
   for(let j=0;j<sleighs.length;j++){
    const pos=sleighPos(sleighs[j],t);
    if(pos&&!sleighHit[j]&&x>pos.x-70&&x<pos.x+50&&y>pos.y-20&&y<pos.y+30){sleighHit[j]=1;R.score+=SNOW.sleigh;R.hits++;ev(t,"sleigh",SNOW.sleigh,x,y);return;}
@@ -103,9 +104,9 @@ export function play(sched,taps){
    const s=SPOTS[p.spot],half=32*s.k-8;
    if(x>=s.x-half&&x<=s.x+half&&y>=s.base-64*s.k*vis&&y<=s.base-COVER*s.k){
     hit[i]=1;
-    if(p.passant!=null){R.score=Math.max(0,R.score+SNOW.passant);combo=0;R.passHits++;ev(t,"pass",SNOW.passant,x,y);return;}
+    if(p.passant!=null){R.score=Math.max(0,R.score+SNOW.passant);combo=0;R.passHits++;ev(t,"pass",SNOW.passant,x,y,{i,from});return;}
     combo++;R.best=Math.max(R.best,combo);R.hits++;
-    const pts=Math.round((s.far?SNOW.far:SNOW.near)*mult(combo));R.score+=pts;ev(t,"hit",pts,x,y);return;
+    const pts=Math.round((s.far?SNOW.far:SNOW.near)*mult(combo));R.score+=pts;ev(t,"hit",pts,x,y,{i,from});return;
    }
   }
   combo=0;ev(t,"miss",0,x,y);
@@ -123,14 +124,14 @@ export function play(sched,taps){
   if(ammo<1){ev(t,"empty",0,x,y);return;}
   if(ammo===SNOW.ammo)reloadFrom=t;
   ammo--;R.thrown++;
-  push({t:t+SNOW.fly+SNOW.flyPerPx*Math.sqrt((x-ORIGIN.x)**2+(y-ORIGIN.y)**2),p:LAND,x,y});
+  push({t:t+SNOW.fly+SNOW.flyPerPx*Math.sqrt((x-ORIGIN.x)**2+(y-ORIGIN.y)**2),p:LAND,x,y,from:t});
  };
 
  while(Q.length){
   const e=Q.shift();
   if(e.t>SNOW.ms)break;
   if(e.p===TAP)tap(e.t,e.x,e.y);
-  else if(e.p===LAND)land(e.t,e.x,e.y);
+  else if(e.p===LAND)land(e.t,e.x,e.y,e.from);
   else if(e.p===LAUNCH){if(!hit[e.i]){flying.push(e.i);push({t:e.t+SNOW.incoming,p:ARRIVE,i:e.i});}}
   else{const j=flying.indexOf(e.i);if(j>=0){flying.splice(j,1);combo=0;R.taken++;const a=pops[e.i].aim;ev(e.t,"taken",0,a.x,a.y);}}
  }
