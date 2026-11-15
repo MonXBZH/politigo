@@ -38,12 +38,12 @@ test("eventAt auto: every year, and never on other days",()=>{
   assert.equal(R.eventAt(paris(y,11,1,23,59)),"halloween",`${y}-11-01`);
   assert.equal(R.eventAt(paris(y,11,2,0)),"",`${y}-11-02`);
  }
- for(const [mo,d] of [[1,1],[3,31],[10,1],[10,30],[11,2],[12,31],[5,31],[11,30]])
+ for(const [mo,d] of [[1,2],[3,31],[10,1],[10,30],[11,2],[5,31],[11,30]])
   assert.equal(R.eventAt(paris(2026,mo,d,12)),"",`${mo}/${d}`);
 });
 
 test("eventAt modes: off never, halloween always, unknown mode or bad clock never",()=>{
- assert.deepEqual(R.EVENT_MODES,["auto","off","halloween"]);
+ assert.deepEqual(R.EVENT_MODES,["auto","off","halloween","noel"]);
  assert.equal(R.eventAt(paris(2026,10,31,12),"off"),"");
  assert.equal(R.eventAt(paris(2026,11,1,12),"off"),"");
  for(const ms of [paris(2026,3,14,12),paris(2026,10,31,12),0,Date.now()])assert.equal(R.eventAt(ms,"halloween"),"halloween");

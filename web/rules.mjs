@@ -5,6 +5,7 @@
 import * as ACT from "./activities.mjs";
 import {NO_FX} from "./events.mjs";
 import * as WR from "./wardrobe.mjs";
+import {schedule,play,validTaps} from "./snowball.mjs";
 
 // ===================================================================== DATA
 export const people={
@@ -182,12 +183,12 @@ export const ANSWER_KINDS=["left","right","decoy"];
 // Halloween: 31 October and 1 November in the game's time zone, then gone by itself. The server's POLITIGO_EVENT
 // can force it ("halloween", to test) or switch it off early ("off"); "auto" follows the calendar. Everything is a
 // costume (names, drawings, lines) with the same prices and effects, except the daily treat below.
-export const EVENT_MODES=["auto","off","halloween"];
+export const EVENT_MODES=["auto","off","halloween","noel"];
 export function eventAt(ms,mode="auto"){
- if(mode==="halloween")return "halloween";
+ if(mode==="halloween"||mode==="noel")return mode;
  if(mode!=="auto"||!Number.isFinite(ms))return "";
  const p=parts(ms),md=Number(p.month)*100+Number(p.day);
- return md===1031||md===1101?"halloween":"";
+ return md===1031||md===1101?"halloween":md>=1201||md===101?"noel":"";
 }
 export const HALLOWEEN={
  // Same keys, prices and effects as the shop: only the names change, as unfair to both camps.
@@ -228,11 +229,55 @@ export const HALLOWEEN={
   right:["Bonbons mérités, avec un chocolat suisse en prime.","Bonbons défiscalisés : pas un centime pour l'État.","Un donateur t'offre des pralines : du pur mécénat."]
  }}
 };
+// Trêve des confiseurs: 1 December to 1 January in the game's time zone (or forced with POLITIGO_EVENT=noel). Same
+// rule as Halloween: only costumes (names, lines, drawings), the same keys, prices and effects.
+export const NOEL={
+ shop:{
+  bread:{left:"Pain d'épices de la coopé",right:"Brioche du boulanger du village"},
+  soup:{left:"Soupe à l'oignon du réveillon solidaire",right:"Velouté de châtaignes à la truffe"},
+  snack:{left:"Papillotes de la kermesse",right:"Marrons glacés du confiseur"},
+  coffee:{left:"Vin chaud du piquet de grève",right:"Chocolat chaud du chalet"},
+  meal:{left:"Dinde aux marrons de la cantine",right:"Chapon farci du traiteur"},
+  banquet:{left:"Réveillon de la Bourse du travail",right:"Foie gras et champagne du Fouquet's"},
+  soap:{left:"Bain moussant aux aiguilles de pin",right:"Spa du chalet de Courchevel"},
+  rest:{left:"Sieste au coin du poêle",right:"Sieste au coin de la cheminée"},
+  garden:{left:"Balade au marché de Noël",right:"Promenade sous les illuminations des Champs"}
+ },
+ // What each camp throws at the other in the Pong, on top of the usual lines.
+ pong:{
+  left:["Rends les cadeaux fiscaux !","Père Fouettard du CAC 40 !","Ta bûche est en sucre de canne exploité !","Du charbon pour les patrons !",
+   "Le Père Noël est une ordure, et toi aussi !","Et la prime de Noël ?","Pas de trêve pour les riches !","Ta dinde est délocalisée !",
+   "Tes cadeaux sont défiscalisés !","Lutin du patronat !","Un SMIC dans mon sabot !","Ton sapin est en niche fiscale !"],
+  right:["Père Noël des allocs !","Le Père Noël n'existe pas, la dette si !","Ton programme, c'est une lettre au Père Noël !","Du charbon pour les dépensiers !",
+   "Pas de cadeau, il faut rembourser !","Et la facture du réveillon ?","Ta liste au Père Noël coûte un milliard !","Lutin de la dépense publique !",
+   "Tes cadeaux, c'est la dette de demain !","Ton sapin est en dette publique !","Trêve des confiseurs, pas des déficits !","Moins de rennes, plus de rigueur !"]
+ },
+ // Solo debate only, as for Halloween. Nine of them, so that the deck's size tells it from Halloween's eight.
+ questions:[
+  ["Le Père Noël ?","Il travaille la nuit : majoration !","Un auto-entrepreneur modèle","Un lutin en CDD"],
+  ["La prime de Noël ?","La doubler","La défiscaliser","La payer en papillotes"],
+  ["Le sapin ?","Replanter une forêt","Une tradition à défendre","Un sapin en location"],
+  ["Les cadeaux ?","Pour tous les enfants","Selon le mérite","Livrés par drone"],
+  ["Le marché de Noël ?","Des artisans solidaires","Des commerçants du terroir","Un vin chaud sans alcool"],
+  ["Le réveillon ?","Un repas pour tous","Chacun reçoit chez soi","Réveillon à la cantine de l'Assemblée"],
+  ["Les travailleurs du 25 décembre ?","Double paie obligatoire","Liberté d'ouvrir","Un renne par salarié"],
+  ["Les bonnes résolutions ?","Réduire les inégalités","Réduire la dépense publique","Réduire les résolutions"],
+  ["La trêve des confiseurs ?","Une trêve sociale","Une trêve des impôts","Une trêve du dimanche"]
+ ],
+ sleep:{left:"Zzz… le Père Noël est une ordure…",right:"Zzz… pourvu que les rennes ne fassent pas grève…"},
+ // voeux: {annee} is the year to come, filled in at display time (noelui.mjs voeuxText).
+ voeux:{left:"« Mes chers camarades, pour {annee}, je vous souhaite la retraite à 60 ans, des lendemains qui chantent… et une bonne santé, remboursée à 100 %. »",
+  right:"« Françaises, Français, pour {annee}, je vous souhaite moins d'impôts, plus de croissance… et l'ordre, partout, même dans vos réveillons. »"},
+ labels:{missions:{left:"Tournée des marchés de Noël solidaires",right:"Tournée des marchés de Noël du terroir"},
+  mail:"Lettres au Père Noël",goals:"Bonnes résolutions",urn:{left:"La Tombola du réveillon",right:"La Loterie du gala de Noël"}}
+};
+export const isNoel=event=>event==="noel";
 // A shop item's name, in costume while an event lasts.
-export const itemName=(it,camp,event="")=>event==="halloween"&&HALLOWEEN.shop[it.key]?HALLOWEEN.shop[it.key][camp]:it[camp];
+const costume=event=>event==="halloween"?HALLOWEEN:event==="noel"?NOEL:null;
+export const itemName=(it,camp,event="")=>costume(event)?.shop[it.key]?.[camp]??it[camp];
 // A line for one camp: half of them from the event's while it lasts.
 export function pongLine(camp,event="",random=Math.random){
- const l=event==="halloween"&&random()<0.5?HALLOWEEN.pong[camp]:pongLines[camp];
+ const l=costume(event)&&random()<0.5?costume(event).pong[camp]:pongLines[camp];
  return l[Math.floor(random()*l.length)];
 }
 
@@ -265,8 +310,34 @@ export const PONG_RULES={xp:25,ms:20000,intro:0,maxScore:25,suspect:22,minSecond
 export const MINI={
  debate:{label:"Débat chrono",camp:null,xp:0,ms:15000,intro:1300,maxScore:30,perSecond:2.5,bonusRate:2.5,bonusCap:50,great:24,suspect:31},
  cortege:{label:"Le Cortège",camp:"left",xp:35,ms:30000,intro:0,maxScore:250,perSecond:8,bonusRate:0.25,bonusCap:35,great:140,suspect:220},
- epervier:{label:"L'Épervier",camp:"right",xp:35,ms:35000,intro:0,maxScore:60,perSecond:2,bonusRate:2,bonusCap:35,great:18,suspect:40}
+ epervier:{label:"L'Épervier",camp:"right",xp:35,ms:35000,intro:0,maxScore:60,perSecond:2,bonusRate:2,bonusCap:35,great:18,suspect:40},
+ // Trêve des confiseurs. The score is never taken from the browser: the server replays the taps (snowball.mjs), so the
+ // replay is the referee and judge() only checks the id and the time. Its caps (maxScore, perSecond) are set far above
+ // any real fight so that they never refuse a legitimate replayed score; over 160 (suspect) the fight is flagged
+ // "plafond": still paid, kept out of the Front and worth 0 in a challenge (a script that knows the seed tops 300).
+ snowball:{label:"Bataille de boules de neige",camp:null,xp:35,ms:45000,intro:0,minScore:10,bonusRate:0.4,bonusCap:35,great:80,maxScore:1000,perSecond:1000,suspect:161}
 };
+// The bonus of a snowball fight: nothing under minScore points, then 0.4 XP a point, 35 at most (times the event's multiplier).
+export const snowBonus=(score,x=1)=>score<MINI.snowball.minScore?0:Math.round(x*Math.min(MINI.snowball.bonusCap,Math.floor(score*MINI.snowball.bonusRate)));
+// The signals the admin reads on a fight (a flagged game still pays; the server keeps it out of the camp counter).
+// taps: the browser's taps; result: the replay (its events); reactions: ms between a foe showing up and the tap that
+// hit him; firstPop: when the first foe shows. The precision is on the foes only: among the balls that land once the
+// first foe is up, those that hit one (the sleigh and the parries are left out, and so are balls thrown into the void
+// before the first pop to dilute it). Flagged over 98 % on more than 40 landings (Ruling 21: at 95 % over 25, fast
+// honest players were flagged; the Front's caps, 120 a fight and 400 a day, are the real defence).
+export const SNOW_FUTURE_MS=1500;
+export const SNOW_BOT={gapMs:80,gapTaps:20,precision:0.98,precisionThrows:40,reflexMs:180,reflexHits:4};
+export function snowFlags(taps,result,reactions,{firstPop=0}={}){
+ const flags=[],ts=taps.map(p=>p.t).sort((a,b)=>a-b);
+ if(ts.length>SNOW_BOT.gapTaps&&(ts[ts.length-1]-ts[0])/(ts.length-1)<SNOW_BOT.gapMs)flags.push("taps_rapides");
+ const landed=(Array.isArray(result?.events)?result.events:[]).filter(e=>e.t>=firstPop&&(e.kind==="hit"||e.kind==="pass"||e.kind==="miss"));
+ const foeHits=landed.filter(e=>e.kind==="hit").length;
+ if(landed.length>SNOW_BOT.precisionThrows&&foeHits/landed.length>SNOW_BOT.precision)flags.push("precision");
+ if(reactions.length>=SNOW_BOT.reflexHits&&reactions.reduce((a,b)=>a+b,0)/reactions.length<SNOW_BOT.reflexMs)flags.push("reflexe");
+ return flags;
+}
+// A challenge is only a shape here ({id, seed}); who may play which one is the server's business.
+const snowChallenge=c=>c&&typeof c==="object"&&!Array.isArray(c)&&typeof c.id==="string"&&/^[0-9A-Za-z_-]{1,40}$/.test(c.id)&&Number.isInteger(c.seed)&&c.seed>=0&&c.seed<2**32?{id:c.id,seed:c.seed}:null;
 // The debate's clock: a 1.3 s countdown, then 15 s of play; a wrong answer costs a second, and a pick shows for
 // 260 ms. Refereed by the server: an answer given less than minReact after its question was sent is ignored (and
 // flagged), a game never scores more than maxPoints; the flags tell the admin about too perfect a game. reflexMs: a
@@ -331,7 +402,7 @@ export function freshState(camp,now){
  const S={v:2,camp,vclock:now,lastReal:now,hourIdx:Math.floor(now/H),born:now,
   fm:10,sat:80,moral:80,energy:80,hyg:80,xp:0,lvl:1,best:1,streak:0,bestStreak:0,neg:0,zero:0,form:"Excellente",mult:1.25,
   lastVisit:-99,visitDay:-1,visitsToday:0,actsToday:0,actsVisit:0,actWindow:-99,breadIdx:-1,coffeeDay:-1,coffees:0,petIdx:-1,
-  sleeping:false,equipped:{},deaths:0,idleDeaths:0,played:false,jn:0,journal:[],pong:null,mini:null,rematchT:-1,diedAt:-1,treatDay:-1};
+  sleeping:false,equipped:{},deaths:0,idleDeaths:0,played:false,jn:0,journal:[],pong:null,mini:null,rematchT:-1,diedAt:-1,treatDay:-1,advent:{y:0,opened:[]}};
  return Object.assign(S,ACT.freshActivities(S,now),{wardrobe:WR.freshWardrobe()});
 }
 export function newGame(camp,now){
@@ -364,8 +435,18 @@ export function sanitize(s,now){
  o.jn=Math.max(o.jn,...o.journal.map(j=>j.n),0);
  // A game's seed and id (gameKeys) survive; nothing else does.
  if(s.pong&&Number.isFinite(s.pong.t))o.pong=gameKeys({t:s.pong.t},s.pong);
- if(s.mini&&typeof s.mini.k==="string"&&Object.hasOwn(MINI,s.mini.k)&&Number.isFinite(s.mini.t))o.mini=gameKeys({k:s.mini.k,t:s.mini.t},s.mini);
+ if(s.mini&&typeof s.mini.k==="string"&&Object.hasOwn(MINI,s.mini.k)&&Number.isFinite(s.mini.t)){
+  o.mini=gameKeys({k:s.mini.k,t:s.mini.t},s.mini);
+  if(s.mini.k==="snowball"){   // the Trêve it started in, and the challenge it answers
+   if(s.mini.noel===true)o.mini.noel=true;
+   if(typeof s.mini.ch==="string"&&/^[0-9A-Za-z_-]{1,40}$/.test(s.mini.ch))o.mini.ch=s.mini.ch;
+  }
+ }
  o.rematchT=num(s.rematchT,-1,o.vclock,-1);
+ if(s.advent&&typeof s.advent==="object"&&Number.isInteger(s.advent.y)&&s.advent.y>=0&&s.advent.y<=9999){
+  o.advent.y=s.advent.y;
+  if(Array.isArray(s.advent.opened))o.advent.opened=[...new Set(s.advent.opened.filter(d=>Number.isInteger(d)&&d>=1&&d<=24))].sort((a,b)=>a-b);
+ }
  // States saved before diedAt existed take it from their journal.
  o.diedAt=num(s.diedAt??o.journal.find(j=>j.k==="death")?.t,-1,o.vclock,-1);
  // 1.6.0: missions, mail, goals, Flamme, wardrobe (absent from older states: fresh ones).
@@ -410,6 +491,18 @@ export function treatBlock(S,event=""){
  if(event!=="halloween")return "Plus de bonbons : Halloween est fini.";
  if(isAsleep(S))return "Chut, il dort : les bonbons attendront.";
  if(S.treatDay===dayKey(curIdx(S)))return "Déjà servi aujourd'hui : reviens demain.";
+ return "";
+}
+// The Advent calendar (Trêve des confiseurs): one box per civil day from 1 to 24 December, in the server's zone.
+// Gauges or bulletins, never FM. Alternates gauge +8 and 1 to 2 bulletins; the 24th pays the big box.
+const ADVENT_CYCLE=[["moral",8],["energy",8],["bulletins",1],["sat",8],["hyg",8],["bulletins",2]];
+export const ADVENT=Array.from({length:24},(_,i)=>i<23?{k:ADVENT_CYCLE[i%6][0],n:ADVENT_CYCLE[i%6][1]}:{k:"all",n:5,bulletins:3});
+// Why today's box cannot be opened ("" when it can).
+export function adventBlock(S,event=""){
+ if(!isNoel(event))return "Il n'y a pas de calendrier de l'Avent en ce moment.";
+ const k=dayKey(curIdx(S)),month=Math.floor(k/100)%100,day=k%100;
+ if(month!==12||day>24)return "Le calendrier est fini : rendez-vous à la Saint-Sylvestre.";
+ if(S.advent.y===Math.floor(k/10000)&&S.advent.opened.includes(day))return "La case du jour est déjà ouverte : reviens demain.";
  return "";
 }
 // What an item costs right now (a sale never makes a paid item free).
@@ -481,7 +574,7 @@ function stressHit(S,random,factor=1){
 function die(S,reason,camp=S.camp,random=Math.random){
  const day={goals:S.goals,mDay:S.missions.day,mN:S.missions.n,mPaid:S.missions.paid,mB:S.missions.b,mail:S.mail};
  // idleDeaths: deaths in a row of a life the player never touched. Not by the XP: the hour tick pays some on its own.
- const name=person(S).name,keep={journal:S.journal,jn:S.jn,deaths:S.deaths+1,idleDeaths:reason==="neglect"&&!S.played?(S.idleDeaths||0)+1:0,best:S.best,bestStreak:S.bestStreak,equipped:S.equipped,treatDay:S.treatDay,
+ const name=person(S).name,keep={journal:S.journal,jn:S.jn,deaths:S.deaths+1,idleDeaths:reason==="neglect"&&!S.played?(S.idleDeaths||0)+1:0,best:S.best,bestStreak:S.bestStreak,equipped:S.equipped,treatDay:S.treatDay,advent:S.advent,
   wardrobe:S.wardrobe,flame:{...S.flame,pts:Math.round(S.flame.pts*ACT.FLAME.death*100)/100}};
  const fresh=Object.assign(freshState(camp,S.vclock),keep,{lastReal:S.lastReal,diedAt:S.vclock});
  for(const k of Object.keys(S))delete S[k];
@@ -550,7 +643,7 @@ const refused=audit=>hidden(fail("Score refusé."),"audit",audit);
 // claim} for a draw (absent: the mythic roll is off). The lowest gauge of the day is tracked after every action.
 // A player who acts is back: their run of idle deaths is over too (the abandoned list forgets them at once).
 export function act(S,a,opts){const r=actOn(S,a,opts);if(r?.ok&&a?.type!=="restart"){S.played=true;S.idleDeaths=0;}ACT.trackMin(S);return r;}   // a resignation opens a life nobody has played yet
-function actOn(S,a,{now,speed=1,random=Math.random,event="",mythic=null,boost=NONE}){
+function actOn(S,a,{now,speed=1,random=Math.random,event="",mythic=null,boost=NONE,challenge=null}){
  advance(S,now,speed,random,boost);
  const fx=boost(now);
  const type=a&&typeof a.type==="string"?a.type:"";
@@ -585,10 +678,38 @@ function actOn(S,a,{now,speed=1,random=Math.random,event="",mythic=null,boost=NO
   log(S,"act",`${MINI[k].label} : +${xp} XP${visit?`, visite +${XP.visit} XP`:""}.`,{kind:"manif",game:k,visit});
   return done({visit,game:{k,id,seed}});
  }
+ case "snowStart":{
+  if(!isNoel(event))return fail("La bataille de boules de neige a lieu seulement pendant la Trêve des confiseurs.");
+  // The challenge comes from the server only (opts.challenge, once it checked it): one in the action body is ignored.
+  const ch=challenge==null?null:snowChallenge(challenge);
+  if(challenge!=null&&!ch)return fail("Défi invalide.");
+  const e=activityBlock(S);if(e)return fail(e);
+  const x=fx.xp.snowball??1,xp=Math.round(MINI.snowball.xp*x),visit=registerVisit(S);spendActivity(S,xp);
+  const seed=ch?ch.seed:newSeed(random),id=gameId(random);
+  S.mini={k:"snowball",t:now,seed,id,noel:true,...(ch?{ch:ch.id}:{}),...(x>1?{x}:{})};S.pong=null;S.rematchT=-1;
+  log(S,"act",`${MINI.snowball.label} : +${xp} XP${visit?`, visite +${XP.visit} XP`:""}.`,{kind:"snowball",game:"snowball",visit});
+  return done({visit,game:{k:"snowball",id,seed}});
+ }
  case "miniEnd":{
   if(!S.mini)return fail("Aucune partie en cours.");
-  const k=S.mini.k,cfg=MINI[k],secs=(now-S.mini.t)/1000,sc=a.score,idOk=typeof S.mini.id==="string"&&a.id===S.mini.id,x=S.mini.x??1;
+  const m=S.mini,k=S.mini.k,cfg=MINI[k],secs=(now-S.mini.t)/1000,sc=a.score,idOk=typeof S.mini.id==="string"&&a.id===S.mini.id,x=S.mini.x??1;
   S.mini=null;   // consumed even when refused: no replay
+  if(k==="snowball"){
+   // The score is the server's: the taps are replayed on the fight the seed deals. Anything the browser says about the score is ignored.
+   const base={game:k,seed:m.seed,noel:m.noel===true,ch:m.ch,start:m.t},expiry=cfg.ms/1000+MINI_RULES.graceSeconds,taps=a.taps;
+   if(!Number.isInteger(m.seed)||!validTaps(taps))return refused({...base,score:null,secs:Math.round(secs*10)/10,flags:["touches_invalides"]});
+   // A tap cannot be later than the time really played (plus the network margin): no finishing a 45 s fight in 3 s.
+   const lastTap=taps.reduce((mx,p)=>Math.max(mx,p.t),0);
+   if(lastTap>(secs+MINI_RULES.tolerance)*1000+SNOW_FUTURE_MS)return refused({...base,score:null,secs:Math.round(secs*10)/10,flags:["touches_futures"]});
+   const sched=schedule(m.seed,S.camp),{events,...result}=play(sched,taps);
+   const j=judge(k,cfg,{sc:result.score,secs,idOk,minSeconds:MINI_RULES.minSeconds,expiry});
+   const reactions=events.filter(e=>e.kind==="hit").map(e=>e.from-sched.pops[e.i].t);
+   const flags=[...j.flags,...snowFlags(taps,{...result,events},reactions,{firstPop:sched.pops[0]?.t??0})],audit={...base,...j.audit,flags};
+   if(j.refused)return refused(audit);
+   const sc=result.score,bonus=snowBonus(sc,x);addXp(S,bonus);ACT.progress(S,"minis");
+   log(S,"mini",`${cfg.label} : ${sc} point${sc>1?"s":""}, bonus +${bonus} XP.`,{game:k,score:sc,bonus,great:sc>=cfg.great&&!flags.length&&!greatAnnounced(S)});
+   return hidden(done({bonus,result}),"audit",audit);
+  }
   // The debate's score comes from its referee (debateFinish), never from the browser.
   if(k==="debate")return refused({game:k,score:Number.isInteger(sc)?sc:null,secs:Math.round(secs*10)/10,flags:["hors_arbitre"]});
   const j=judge(k,cfg,{sc,secs,idOk,minSeconds:MINI_RULES.minSeconds,expiry:cfg.ms/1000+MINI_RULES.graceSeconds});
@@ -655,6 +776,19 @@ function actOn(S,a,{now,speed=1,random=Math.random,event="",mythic=null,boost=NO
   log(S,"treat",`Des bonbons ou un amendement ? ${line} Moral +${HALLOWEEN.treat.moral}.`,{line});
   return done();
  }
+ case "advent":{
+  const e=adventBlock(S,event);if(e)return fail(e);
+  const k=dayKey(curIdx(S)),y=Math.floor(k/10000),day=k%100,gift=ADVENT[day-1];
+  if(S.advent.y!==y)S.advent={y,opened:[]};   // a new year starts with a shut calendar
+  S.advent.opened.push(day);S.advent.opened.sort((a,b)=>a-b);
+  // Bulletins are clamped here: activities.mjs's own helper is not exported.
+  const bulletin=n=>{S.wardrobe.bulletins=Math.min(9999,S.wardrobe.bulletins+n);};
+  if(gift.k==="all"){for(const g of ["sat","moral","energy","hyg"])S[g]=clamp(S[g]+gift.n);bulletin(gift.bulletins);}
+  else if(gift.k==="bulletins")bulletin(gift.n);
+  else S[gift.k]=clamp(S[gift.k]+gift.n);
+  log(S,"advent",`Calendrier de l'Avent, case ${day} : ${gift.k==="all"?`toutes les jauges +${gift.n}, ${gift.bulletins} bulletins`:gift.k==="bulletins"?`${gift.n} bulletin${gift.n>1?"s":""}`:`${fxNames[gift.k]} +${gift.n}`}.`,{day});
+  return done({day,gift});
+ }
  // ---------- 1.6.0: missions, voter mail, Tombola / Loterie, wardrobe (activities.mjs, wardrobe.mjs)
  case "missionStart":return ACT.missionStart(S,a.id,fx);
  case "missionReport":return ACT.missionReport(S,random);
@@ -709,10 +843,11 @@ export function replayDebate(seed,camp,picks,count=QUESTIONS.length){
 // question at a time without saying which answer is right, times each answer itself and counts the score.
 // Pure and deterministic (the clock is an argument); a turn is plain JSON, so it can be stored as it is.
 // count: the deck's size (QUESTIONS, plus the event's questions for a solo debate in costume).
-export const debateCount=event=>event==="halloween"?QUESTIONS.length+HALLOWEEN.questions.length:QUESTIONS.length;
-const debatePool=count=>count>QUESTIONS.length?[...QUESTIONS,...HALLOWEEN.questions]:QUESTIONS;
+export const debateCount=event=>costume(event)?QUESTIONS.length+costume(event).questions.length:QUESTIONS.length;
+// The two costumes' decks differ in size (8 and 9), so the count alone says which one is dealt.
+const debatePool=count=>count===QUESTIONS.length+NOEL.questions.length?[...QUESTIONS,...NOEL.questions]:count>QUESTIONS.length?[...QUESTIONS,...HALLOWEEN.questions]:QUESTIONS;
 export function debateNew(seed,camp,{count=QUESTIONS.length,now=null,id=null}={}){
- const max=QUESTIONS.length+HALLOWEEN.questions.length;
+ const max=QUESTIONS.length+Math.max(HALLOWEEN.questions.length,NOEL.questions.length);
  return {seed:Number(seed)>>>0,camp,count:Number.isInteger(count)&&count>0&&count<=max?count:QUESTIONS.length,id,created:now,
   idx:0,t0:null,lost:0,points:0,errors:0,shownAt:null,gaps:[],fast:0};
 }

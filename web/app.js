@@ -1,7 +1,7 @@
 // PolitiGo browser client. The server owns the game: this page shows the state it sends, forwards the
 // player's actions, and plays the animations announced by the journal entries the server writes.
 import * as R from "./rules.mjs";
-import {createMini,manifLabel} from "./minigames.mjs";
+import {createMini,manifLabel,sleigh,faceSplat} from "./minigames.mjs";
 import {missedEntries,releasesUpTo} from "./changelog.mjs";
 import {HELP,helpOf,SHEET_HELP,signupProblem} from "./help.mjs";
 import {drawTest,verdict,randomCamp} from "./politest.mjs";
@@ -12,6 +12,9 @@ import * as E from "./events.mjs";
 import {outfitLook,drawObject,dressColors} from "./looks.mjs";
 import {createLegend,volcanoRoom} from "./legend.mjs";
 import {createBatonDuel,screenOf,feedParts} from "./batonduel.mjs";
+import {noelMoment,noelYear,voeuxText,adventCells,adventGiftText,etProgress,
+ cheersPhase,cheersClock,cheersNamesLine,frontLine,newYearYear,newYearScreen,CHEERS_MS,CHEERS_REPLAY_MS,nyFrameDue} from "./noelui.mjs";
+import {endSummary,frontBar,challengeText,sentText,challengeLists,dareView,sendsOnDeath} from "./snowui.mjs";
 const {people,personalItems,stresses,shop,fxNames,XP,xpCost,xpFloor,stage}=R;
 const $=s=>document.querySelector(s);
 const motionQuery=matchMedia("(prefers-reduced-motion: reduce)");
@@ -23,6 +26,8 @@ let anim=null,scene=null,pong=null,mini=null,miniClock=0,lvlFx=null;
 let board=[],feed=[],journalShown=-1,journalRendered=-1,boardTab="score",urnHint=false;
 // The Bâton de feu (me.baton): who holds it, whether this player may challenge, the duel under way. bd: its screen.
 let batonV=null,bd=null;
+// The snowball fight (Trêve des confiseurs): me.snowFront, the last fight's end screen, the challenges (GET /api/snow/challenges).
+let snowFront=null,snowLast=null,snowData=null,snowErr="",snowSeq=0,snowAsked=false;
 const curIdx=()=>R.curIdx(S),hodOf=R.hodOf,isNight=()=>R.isNight(S),isAsleep=()=>R.isAsleep(S);
 // What the élu wears from the wardrobe (wardrobe.mjs): drawn over his own look by sprite().
 const worn=()=>S?.wardrobe?.worn||{outfit:null,object:null},dress=p=>({...p,outfit:worn().outfit,object:worn().object});
@@ -51,12 +56,20 @@ const serverNow=()=>Date.now()+skew;
 // The seasonal event (rules.mjs eventAt), asked every frame: worked out once a second, Intl is not free.
 let EVENT_MODE="auto",seasonAt=0,seasonVal="";
 function season(){const n=Date.now();if(n-seasonAt>1000){seasonAt=n;seasonVal=R.eventAt(serverNow(),EVENT_MODE);}return seasonVal;}
-const hw=()=>season()==="halloween";
+const hw=()=>season()==="halloween",noel=()=>R.isNoel(season());
+// The Trêve des confiseurs' moment (noelui.mjs): "", "day", "eve" (the sleigh) or "voeux", by the server's clock, once a second.
+let momentAt=0,momentVal="";
+function moment(){const n=Date.now();if(n-momentAt>1000){momentAt=n;momentVal=noelMoment(serverNow(),season());}return momentVal;}
+// What the screen calls the activities and the urn, in costume while the theme lasts (rules.mjs NOEL.labels).
+const urnName=c=>noel()?R.NOEL.labels.urn[c]:W.URN_NAME[c];
 function applyMe(m,{replay=false}={}){
  if(!m||!m.state)return;
  if(Number.isFinite(m.serverNow))skew=m.serverNow-Date.now();
- if(R.EVENT_MODES.includes(m.event)&&m.event!==EVENT_MODE){EVENT_MODE=m.event;seasonAt=0;}
+ if(R.EVENT_MODES.includes(m.event)&&m.event!==EVENT_MODE){EVENT_MODE=m.event;seasonAt=0;momentAt=0;}
  if(Array.isArray(m.events))liveEvents=m.events;
+ snowFront=m.snowFront&&typeof m.snowFront==="object"?m.snowFront:null;   // only while the Trêve is on
+ // The midnight toast: live for five minutes, then the banner's « Revoir » until 2 January (server noelView).
+ newYear=m.newYear&&typeof m.newYear==="object"&&Number.isFinite(m.newYear.until)?m.newYear:null;newYearBannerOn=m.newYearBanner===true;
  const first=!S||me!==m.name;
  // The action answer and the live stream race each other: an older copy of the state never replaces a newer one.
  if(!first&&m.state.lastReal<S.lastReal)return;
@@ -87,8 +100,9 @@ function playJournal(onlyMajor){
   else if(j.k==="stress")stress=j;
   else act=j;
  }
- // A duel cut short by a death still sends what was played, like a game given up.
- if(death){anim=null;if(mini?.duel){mini.abort(miniClock);endMini();}pong=mini=null;startScene("death",death.d?.camp||S.camp,death.d?.name||"");toast(death.text,true);return;}
+ // A duel cut short by a death still sends what was played, like a game given up (snowui.mjs sendsOnDeath); a
+ // snowball fight is dropped: the server's death cleared it already.
+ if(death){anim=null;if(sendsOnDeath(mini)){mini.abort(miniClock);endMini();}pong=mini=null;startScene("death",death.d?.camp||S.camp,death.d?.name||"");toast(death.text,true);return;}
  if(evoFirst){
   const from=evoFirst.k==="legend"?evoFirst.d.name:evoFirst.d.from,to=evoLast.k==="legend"?evoLast.d.name:evoLast.d.to;
   const legend=evoLast.k==="legend"&&from===to;
@@ -106,7 +120,7 @@ function playJournal(onlyMajor){
  if(act){
   const d=act.d||{};
   if(act.k==="buy"){const it=shop.find(i=>i.key===d.key);if(it){if(it.kind==="food")playAnim("eat",2500,{food:it.key});else playAnim(it.anim,3000);}toast(act.text);}
-  else if(act.k==="act"&&(d.kind==="debate"||d.kind==="manif"))toast(act.text);   // the mini-game takes the screen
+  else if(act.k==="act"&&(d.kind==="debate"||d.kind==="manif"||d.kind==="snowball"))toast(act.text);   // the mini-game takes the screen
   else if(act.k==="act"&&d.kind==="rematch"){playAnim("win",2500,{line:d.line});toast(act.text);}
   else if(act.k==="nap"){if(!d.on)playAnim("win",1200);toast(d.on?"Lumière éteinte : il se réveillera seul une fois reposé.":act.text);}
   else if(act.k==="wake"){playAnim("win",1500);toast("Il se réveille tout seul, reposé !");}
@@ -114,6 +128,8 @@ function playJournal(onlyMajor){
   else if(act.k==="sync")toast(act.text);              // back from a maintenance: said once, nothing to animate
   else if(act.k==="duel"){if(d.res==="win")playAnim("win",2500);toast(act.text);duelJournalT=Date.now();}
   else if(act.k==="treat"){playAnim("eat",2500,{food:"candy"});toast(act.text);}
+  else if(act.k==="advent"){playAnim("win",1500);toast(`🎁 ${act.text}`);}
+  else if(act.k==="snowch"){if(d.moral>0)playAnim("win",2000);toast(act.text);snowLoad();}
   // Reached on their own (a visit, a purchase…): said once. Missions, letters and draws answer the player's tap instead.
   else if(act.k==="goal"){playAnim("win",1500);toast(act.text);}
   else if(act.k==="flame")toast(`🔥 ${act.text}`);
@@ -140,10 +156,14 @@ let miniEnding=false,miniStartReal=0,pongEnding=false;
 // "Playing": a game on screen, or its score on its way to the server. Toasts, news and scenes wait meanwhile.
 const quiet=()=>!!(pong||mini)||miniEnding||pongEnding||!!bd?.playing();
 const drawCand=(p,state,size,cx,ground,t)=>bigSprite(p,state,size,cx,ground,t);
-async function startMini(type){
+// The snowball fight's foes: an élu of the other camp in his camp's Santa hat and scarf, or a passer-by; a snowball on
+// the face of the one just hit.
+const drawFoe=(p,{camp,hat,splat},size,cx,ground,t)=>bigSprite(p,"idle",size,cx,ground,t,false,undefined,"",c=>{if(camp)noelCostume(c,t,camp,"idle",hat);if(splat)faceSplat(c);});
+// extra: the snowball fight's {challenge:id}, a challenge received (the server checks it).
+async function startMini(type,extra={}){
  closeSheet();
  if(miniEnding){toast("Un instant : le résultat de la partie précédente part au serveur.",true);return;}
- const r=await send({type});if(!r?.ok||!S)return;
+ const r=await send({type,...extra});if(!r?.ok||!S)return;
  closeSheet();                                      // a sheet opened while the request was on its way
  miniStartReal=Date.now();
  // The Manif plays from the server's seed and its end carries the game's id; the debate is refereed question by
@@ -151,8 +171,9 @@ async function startMini(type){
  const key=type==="debate"?"debate":r.game?.k,id=r.game?.id;
  if(!R.MINI[key]){toast("Partie introuvable : réessaie dans un instant.",true);return;}
  mini=createMini(key,{p:key==="epervier"?{...look(),prop:"tonfa",object:null}:look(),camp:S.camp,ctx,scale:()=>scale,now:miniClock,season:season(),
-  drawCand,seed:r.game?.seed,ask:key==="debate"?debateAsk("solo"):null});
+  drawCand,seed:r.game?.seed,ask:key==="debate"?debateAsk("solo"):null,drawFoe,reduced:()=>reduced});
  mini.gameId=id;
+ if(key==="snowball"){mini.ch=extra.challenge!=null;mini.xp=Math.round(R.MINI.snowball.xp*(fx().xp.snowball??1));}
  cv.focus();
 }
 // The debate's referee (POST /api/debate): one request per question, answers by index. A request lost on the way
@@ -201,7 +222,8 @@ function duelDone(d,r){
  if(r.res==="win")playAnim("win",3000);
 }
 async function endMini(){
- const key=mini.key,score=mini.score(),duel=mini.duel,id=mini.gameId,result=mini.result,failed=mini.failed;mini=null;pongEnded=performance.now();
+ const key=mini.key,score=mini.score(),duel=mini.duel,id=mini.gameId,result=mini.result,failed=mini.failed;
+ const taps=key==="snowball"?mini.taps():null,ch=!!mini.ch,xp=mini.xp;mini=null;pongEnded=performance.now();
  // The debate was scored by its referee as it went: its verdict came with the last answer. A game given up (or cut
  // off) is closed by the server when its time is up, with what was played.
  if(key==="debate"){
@@ -223,8 +245,16 @@ async function endMini(){
   const early=miniStartReal+R.MINI_RULES.minSeconds*1000+200-Date.now();if(early>0)await new Promise(ok=>setTimeout(ok,early));
   // As for the Pong: the score must not be lost behind another request.
   for(const end=Date.now()+20000;busy&&Date.now()<end;)await new Promise(ok=>setTimeout(ok,100));
-  r=await send({type:"miniEnd",score,id});
+  // The snowball fight sends its taps only: the server replays them and keeps its own score.
+  r=await send(key==="snowball"?{type:"miniEnd",id,taps}:{type:"miniEnd",score,id});
  }finally{miniEnding=false;}
+ if(key==="snowball"){
+  if(!S)return;
+  snowLast={at:Date.now(),gameId:id,ch,xp,ok:!!r?.ok,result:r?.result,bonus:r?.bonus,front:r?.front,frontPts:r?.frontPts,error:r?r.error:"La partie n'a pas pu partir au serveur : réessaie dans un instant."};
+  if(r?.ok&&r.bonus>=10)playAnim("win",3000);
+  if(!scene)openSnow();
+  return;
+ }
  if(r?.ok){
   toast(`${R.MINI[key].label} : +${r.bonus} XP`);
   if(r.bonus>=10)playAnim("win",3000);
@@ -234,7 +264,7 @@ function rematch(){closeSheet();send({type:"rematch"});}
 function toggleLight(){closeSheet();send({type:"light"});}
 async function equip(i){await send({type:"equip",i});liveSheet();}
 async function pet(){
- if(!S||pong||scene)return;
+ if(!S||pong||scene||nyView.scene)return;
  if(isAsleep()){toast(isNight()?"Zzz… il dort. Reviens après 6 h.":"Zzz… il fait la sieste. Rallume la lumière dans Soins.");return;}
  playAnim("win",1200);
  const r=await send({type:"pet"});if(r?.ok&&r.petted)toast("Une petite tape sur l'épaule : moral +2");
@@ -376,18 +406,21 @@ function fitCanvas(){
 }
 addEventListener("resize",fitCanvas);
 const GAUGES=[{k:"sat",l:"SAT",c:"#f1bc72",a:200},{k:"moral",l:"MOR",c:"#ef91ae",a:290},{k:"energy",l:"ÉNE",c:"#85cbbb",a:20},{k:"hyg",l:"HYG",c:"#93b4ec",a:110}];
-function bigSprite(p,state,size,cx,ground,t,legend=false,food,costume=""){
- sprite(scratch.getContext("2d"),p,t,state,legend,food,costume);
+// over(c): drawn on the 64x64 sprite once it is done (the Trêve des confiseurs' hat and scarf).
+function bigSprite(p,state,size,cx,ground,t,legend=false,food,costume="",over=null){
+ const sc=scratch.getContext("2d");sprite(sc,p,t,state,legend,food,costume);over?.(sc);
  ctx.imageSmoothingEnabled=false;ctx.drawImage(scratch,cx-size/2,ground-size,size,size);
 }
 // Fits a centred label inside the round panel: shrink first, then split into two balanced lines.
-function fitLabel(text,y){
+// band: a dark strip behind the words (the Trêve des confiseurs' snowy ground), sized to one or two lines.
+function fitLabel(text,y,band=false){
  const room=yy=>2*Math.sqrt(233*233-(yy-233)**2)-40;
- for(let size=15;size>=11;size--){ctx.font=`600 ${size}px Inter, system-ui, sans-serif`;if(ctx.measureText(text).width<=room(y)){ctx.fillText(text,233,y);return;}}
+ const back=(top,h)=>{if(!band)return;const f=ctx.fillStyle;ctx.fillStyle="#0007";ctx.fillRect(63,top,340,h);ctx.fillStyle=f;};
+ for(let size=15;size>=11;size--){ctx.font=`600 ${size}px Inter, system-ui, sans-serif`;if(ctx.measureText(text).width<=room(y)){back(y-18,26);ctx.fillText(text,233,y);return;}}
  const words=text.split(" ");let best=null;
  for(let i=1;i<words.length;i++){const l1=words.slice(0,i).join(" "),l2=words.slice(i).join(" "),w=Math.max(ctx.measureText(l1).width,ctx.measureText(l2).width);if(!best||w<best.w)best={l1,l2,w};}
- if(!best){ctx.fillText(text,233,y);return;}
- ctx.fillText(best.l1,233,y-7);ctx.fillText(best.l2,233,y+8);
+ if(!best){back(y-18,26);ctx.fillText(text,233,y);return;}
+ back(y-25,41);ctx.fillText(best.l1,233,y-7);ctx.fillText(best.l2,233,y+8);
 }
 function room(night){
  const left=S.camp==="left",h=hodOf(curIdx()),spooky=hw();
@@ -502,7 +535,306 @@ function hwCandle(t){
  ctx.fillStyle="#ffcf5a";ctx.beginPath();ctx.ellipse(330,293,3,5+f*2,0,0,Math.PI*2);ctx.fill();
  ctx.fillStyle="#fff3c0";ctx.beginPath();ctx.ellipse(330,295,1.5,2.5,0,0,Math.PI*2);ctx.fill();
 }
-function gauges(now){
+// ---------- Trêve des confiseurs (1 December to 1 January, rules.mjs eventAt): decor only, like Halloween ----------
+// Ported from the validated mockup (maquette-noel-outdoor.js): the élu outside on a winter evening, under a big moon.
+// The sky (stars, moon, E.T., the sleigh) keeps the mockup's numbers; the ground layer (hills, chalet, lamppost,
+// garland, snowman, tree) is the mockup's too, raised by NOEL_DY to meet the game's élu (feet at 318, not 400).
+// The moments (noelui.mjs noelMoment) and E.T.'s passes (noelui.mjs etProgress) follow the server's clock.
+const NOEL_DY=-40;
+const ET_MOON=0.285;   // where E.T.'s arc crosses the moon's middle (the still picture for reduced motion)
+const MOON={x:124,y:112,r:60},CRATERS=[[-20,-14,11],[16,8,14],[-8,26,8],[26,-22,6],[-32,10,5],[4,-34,4],[30,30,5]];
+// The stars and the snowflakes, fixed: their places and their pace.
+const STARS=[...Array(70)].map((_,i)=>({x:(i*137+31)%466,y:8+(i*89)%250,s:i%9===0?2:1,p:(i*53)%400,i}));
+const SNOWFALL=[...Array(70)].map((_,i)=>({x:(i*97)%466,y:(i*61)%466,s:1+i%3,v:12+(i*13)%22}));
+// The gradients and paths that never change, made once (the context never changes).
+let noelCache=null;
+function noelPaint(c){
+ if(noelCache)return noelCache;
+ const lin=(y0,y1,a,b)=>{const g=c.createLinearGradient(0,y0,0,y1);g.addColorStop(0,a);g.addColorStop(1,b);return g;};
+ const {x:MX,y:MY,r:MR}=MOON;
+ const halo=c.createRadialGradient(MX,MY,MR-10,MX,MY,MR+50);halo.addColorStop(0,"#dfeaff66");halo.addColorStop(1,"#dfeaff00");
+ const disc=c.createRadialGradient(MX-14,MY-16,6,MX,MY,MR);disc.addColorStop(0,"#ffffff");disc.addColorStop(0.7,"#e6efff");disc.addColorStop(1,"#c9dbf7");
+ const glow=r=>{const g=c.createRadialGradient(26,256,2,26,256,r);g.addColorStop(0,"#ffe39a88");g.addColorStop(1,"#ffe39a00");return g;};
+ const hills=new Path2D();hills.moveTo(0,300);hills.quadraticCurveTo(120,262,240,296);hills.quadraticCurveTo(360,268,466,300);hills.lineTo(466,340);hills.lineTo(0,340);hills.closePath();
+ // the garland, from the lamppost to the tree: its wire and its bulbs
+ const at=(k,d)=>[32+328*k,262+26*4*k*(1-k)+d];
+ const wire=new Path2D();for(let i=0;i<=40;i++){const [x,y]=at(i/40,0);if(i)wire.lineTo(x,y);else wire.moveTo(x,y);}
+ return noelCache={sky:{day:lin(0,340,"#1c3a72","#5f84c0"),eve:lin(0,340,"#0a1438","#23407a"),night:lin(0,340,"#040818","#101c40")},
+  halo,disc,lamp:{day:glow(46),night:glow(70)},dark:lin(200,466,"#02061400","#020614aa"),hills,wire,
+  bulbs:Array.from({length:15},(_,i)=>at((i+1)/16,6))};
+}
+const GARLAND=["#2f6fe0","#f4f1ea","#e0413a"];
+// The tricolour garland, lit, from the lamppost to the tree.
+function garland(c,t,P){
+ c.strokeStyle="#2e5d3a";c.lineWidth=4;c.stroke(P.wire);c.lineWidth=1;
+ P.bulbs.forEach(([x,y],j)=>{const i=j+1,on=(Math.floor(t/500)+i)%3!==0,col=GARLAND[i%3];
+  c.fillStyle=on?col:"#555";c.beginPath();c.ellipse(x,y,5,7,0,0,Math.PI*2);c.fill();
+  if(on){c.fillStyle=col+"55";c.beginPath();c.arc(x,y,11,0,Math.PI*2);c.fill();}});
+}
+// The chalet on the hill: its lit windows, its wreath, the smoke of its chimney.
+function chalet(c,t,night){
+ const x=58,b=316;
+ rect(c,x,b-46,78,46,"#7a4a2a");for(let i=0;i<5;i++)rect(c,x,b-46+i*9,78,1,"#5e381f");
+ c.fillStyle="#f4f8ff";c.beginPath();c.moveTo(x-8,b-44);c.lineTo(x+39,b-76);c.lineTo(x+86,b-44);c.closePath();c.fill();
+ rect(c,x+58,b-80,10,20,"#5a3a2a");rect(c,x+56,b-82,14,4,"#f4f8ff");
+ for(let i=0;i<4;i++){const k=((t/2200)+i/4)%1;c.fillStyle=`rgba(230,236,248,${0.5*(1-k)})`;c.beginPath();c.arc(x+63+Math.sin(k*6+i)*6,b-86-k*40,4+k*6,0,Math.PI*2);c.fill();}
+ const lit=night?"#ffd36b":"#ffcf5a";
+ for(const wx of [x+10,x+50]){rect(c,wx,b-34,18,16,lit);rect(c,wx+8,b-34,2,16,"#7a4a2a");rect(c,wx,b-27,18,2,"#7a4a2a");}
+ rect(c,x+32,b-26,14,26,"#4a2a18");rect(c,x+36,b-14,2,2,"#f4c84a");
+ c.fillStyle="#2f7d4f";c.beginPath();c.arc(x+39,b-34,5,0,Math.PI*2);c.fill();rect(c,x+38,b-30,3,3,"#c8283a");
+}
+// The lamppost, its glow and its wreath (with five little lights).
+function lamppost(c,t,night,P){
+ const x=26,b=420;
+ rect(c,x-2,b-160,5,160,"#23283a");rect(c,x-8,b-6,17,6,"#23283a");rect(c,x-9,b-170,19,12,"#23283a");rect(c,x-6,b-168,13,8,"#ffe39a");
+ c.fillStyle=night?P.lamp.night:P.lamp.day;c.fillRect(x-80,b-240,160,160);
+ c.strokeStyle="#2f7d4f";c.lineWidth=5;c.beginPath();c.arc(x,b-120,11,0,Math.PI*2);c.stroke();c.lineWidth=1;
+ rect(c,x-4,b-112,8,5,"#c8283a");rect(c,x-6,b-108,3,6,"#c8283a");rect(c,x+3,b-108,3,6,"#c8283a");
+ for(let i=0;i<5;i++)rect(c,x-11+i*5,b-127+(i%2)*4,2,2,["#ffd23f","#ff5a5a","#7fb2ff"][(i+Math.floor(t/600))%3]);
+}
+// The snowman in the yard, in a red scarf and a top hat.
+function yardSnowman(c,x,b,night){
+ c.fillStyle=night?"#d8e2f2":"#ffffff";
+ c.beginPath();c.arc(x,b-16,18,0,Math.PI*2);c.fill();c.beginPath();c.arc(x,b-42,12,0,Math.PI*2);c.fill();
+ rect(c,x-5,b-46,3,3,"#202330");rect(c,x+3,b-46,3,3,"#202330");rect(c,x,b-42,7,2,"#f2902a");
+ rect(c,x-11,b-33,22,4,"#c8283a");rect(c,x+6,b-33,4,10,"#c8283a");
+ rect(c,x-10,b-55,20,4,"#202330");rect(c,x-7,b-67,14,12,"#202330");rect(c,x-7,b-59,14,2,"#c8283a");
+ c.strokeStyle="#6b4426";c.lineWidth=2;c.beginPath();c.moveTo(x-16,b-22);c.lineTo(x-30,b-34);c.moveTo(x+16,b-22);c.lineTo(x+30,b-32);c.stroke();c.lineWidth=1;
+}
+// E.T. (homage): a small dark silhouette, a boy's bike entering by the left edge of the round screen and leaving by
+// the right one, on a gentle arc across the sky through the moon, tilting along the curve; a little passenger wrapped
+// in a blanket in the front basket, like the film's poster. Smooth vector drawing, not pixels. Off-screen at p=0 and 1.
+function etBike(c,p){
+ const x=-60+p*646,y=190-Math.sin(p*Math.PI)*110,tilt=Math.atan2(-110*Math.PI*Math.cos(p*Math.PI),646),ink="#04060f",k=0.85,wave=Math.sin(p*90);
+ c.save();c.translate(x,y);c.rotate(tilt);c.scale(k,k);
+ c.strokeStyle=ink;c.fillStyle=ink;c.lineCap="round";c.lineJoin="round";
+ // wheels and a hint of spokes
+ c.lineWidth=2.2;for(const wx of [-12,12]){c.beginPath();c.arc(wx,0,8.5,0,Math.PI*2);c.stroke();}
+ c.lineWidth=0.6;for(const wx of [-12,12])for(let i=0;i<4;i++){const a=i*Math.PI/4+p*25;c.beginPath();c.moveTo(wx+Math.cos(a)*8,Math.sin(a)*8);c.lineTo(wx-Math.cos(a)*8,-Math.sin(a)*8);c.stroke();}
+ // frame and handlebar
+ c.lineWidth=1.8;c.beginPath();c.moveTo(-12,0);c.lineTo(-1,1);c.lineTo(-5,-8);c.lineTo(8,-8);c.lineTo(12,0);c.moveTo(-1,1);c.lineTo(8,-8);c.moveTo(8,-8);c.lineTo(9,-15);c.lineTo(13,-16);c.stroke();
+ // the boy: hooded, leaning forward, pedalling
+ c.lineWidth=2.4;const pk=Math.sin(p*60)*2;
+ c.beginPath();c.moveTo(-4,-10);c.lineTo(0,-4+pk);c.lineTo(-1,1+pk*0.5);c.moveTo(-4,-10);c.lineTo(3,-5-pk);c.lineTo(2,1-pk*0.5);c.stroke();
+ c.beginPath();c.moveTo(-7,-10);c.quadraticCurveTo(-6,-22,3,-24);c.lineTo(9,-19);c.lineTo(-1,-8);c.closePath();c.fill();
+ c.beginPath();c.ellipse(5.5,-26,4.2,4.6,0,0,Math.PI*2);c.fill();
+ c.lineWidth=1.6;c.beginPath();c.moveTo(6,-20);c.lineTo(12,-16);c.stroke();
+ // his cape, flying behind
+ c.beginPath();c.moveTo(-1,-23);c.bezierCurveTo(-9,-25+wave,-17,-21-wave*1.5,-24,-18+wave*2);c.lineTo(-21,-13+wave);c.bezierCurveTo(-15,-14,-9,-12,-5,-10);c.closePath();c.fill();
+ // the basket and the passenger wrapped in his blanket, his round head out, all in silhouette
+ c.fillRect(12.5,-20,10,6);
+ c.beginPath();c.moveTo(12.5,-19.5);c.bezierCurveTo(12,-26,14.5,-30,17.5,-30.5);c.bezierCurveTo(21,-30,23.5,-26,22.5,-19.5);c.closePath();c.fill();
+ c.beginPath();c.ellipse(18.6,-33,4.4,3.4,-0.2,0,Math.PI*2);c.fill();
+ c.fillStyle="#1d2747";c.beginPath();c.moveTo(14,-24);c.quadraticCurveTo(15,-29,17.8,-29.6);c.quadraticCurveTo(16.4,-26,16.6,-21);c.closePath();c.fill();   // a fold of the blanket catching the moonlight
+ c.restore();
+}
+// The scene behind the élu: the sky, the stars, the moon (and E.T.), the sleigh on Christmas Eve, the hills, the
+// chalet, the ground, the lamppost, the garland, the snowman, the tree; the flags on New Year's Eve.
+function drawNoelScene(c,t,S){
+ const P=noelPaint(c),night=R.isNight(S),m=moment(),h=hodOf(curIdx()),eve=!night&&(m==="eve"||m==="voeux"||h>=18||h<8);
+ c.fillStyle=night?P.sky.night:eve?P.sky.eve:P.sky.day;c.fillRect(0,0,466,466);
+ // twinkling stars (fainter by day)
+ const starA=night?1:eve?0.9:0.45;
+ for(const s of STARS){const a=starA*(0.35+0.65*Math.abs(Math.sin(t/(380+s.p)+s.i)));c.globalAlpha=a;rect(c,s.x,s.y,s.s,s.s,"#fffbe6");if(s.s>1&&a>0.8){rect(c,s.x-2,s.y+0.5,s.s+4,1,"#fffbe6");rect(c,s.x+0.5,s.y-2,1,s.s+4,"#fffbe6");}}
+ c.globalAlpha=1;
+ // the full moon, its halo and its craters
+ const {x:MX,y:MY,r:MR}=MOON;
+ c.fillStyle=P.halo;c.fillRect(MX-120,MY-120,240,240);
+ c.fillStyle=P.disc;c.beginPath();c.arc(MX,MY,MR,0,Math.PI*2);c.fill();
+ c.fillStyle="#b9cdeeaa";for(const [dx,dy,r] of CRATERS){c.beginPath();c.arc(MX+dx,MY+dy,r,0,Math.PI*2);c.fill();}
+ // E.T.: at most twice an hour, at the same moment for everyone (held still in front of the moon with reduced motion)
+ const et=etProgress(serverNow());if(et!==null)etBike(c,reduced?ET_MOON:et);
+ if(m==="eve"){const p=reduced?0.5:(t%9000)/9000;sleigh(c,520-p*620,70+Math.sin(p*8)*8,1);}
+ // the snowy hills, the chalet, the ground
+ c.save();c.translate(0,NOEL_DY);
+ c.fillStyle=night?"#8796b8":"#cfdcf0";c.fill(P.hills);
+ chalet(c,t,night);
+ c.fillStyle=night?"#aab8d4":"#eef4fc";c.fillRect(0,330,466,200);
+ c.restore();
+ // the trodden snow under the élu's feet
+ c.fillStyle=night?"#97a6c4":"#dde7f5";c.beginPath();c.ellipse(233,320,190,22,0,0,Math.PI*2);c.fill();
+ c.save();c.translate(0,NOEL_DY);
+ lamppost(c,t,night,P);
+ garland(c,t,P);
+ yardSnowman(c,96,410,night);
+ noelTree(c,t,382,400,1);
+ c.restore();
+ if(m==="voeux"&&!R.isAsleep(S)){flag(c,140,168,false,t,1);flag(c,288,168,true,t,1);}
+}
+// In front of the élu: the night's shade and its big Zzz, then the small snowflakes over everything.
+function drawNoelFront(c,t,S){
+ if(R.isNight(S)){
+  c.fillStyle=noelPaint(c).dark;c.fillRect(0,200,466,266);
+  c.save();c.fillStyle="#cfe0ff";c.textAlign="start";
+  for(let i=0;i<3;i++){c.font=`700 ${16+i*4}px Fredoka, system-ui, sans-serif`;c.fillText("z",293+i*16,178-i*22-((t/60)%14));}
+  c.restore();
+ }
+ for(const f of SNOWFALL){const y=(f.y+t*f.v/1400)%466,x=(f.x+Math.sin(t/900+f.y)*8)%466,s=f.s>2?2:1;rect(c,x,y,s,s,"#ffffffdd");}
+}
+// The tree, its blinking lights, the star and the presents, in the mockup's coordinates (base at 0), scaled k.
+const TREE_LIGHTS=[[-30,-82],[18,-90],[-12,-120],[26,-128],[-20,-160],[10,-168],[0,-140],[-38,-100],[36,-104],[-4,-190]];
+const PRESENTS=[[-50,30,24,"#c8283a","#f4c84a"],[-16,26,32,"#2f5fb4","#f4f1ea"],[14,34,22,"#f4c84a","#c8283a"],[44,22,18,"#2f7d4f","#f4f1ea"]];
+function noelTree(c,t,cx,base,k){
+ c.save();c.translate(cx,base);c.scale(k,k);
+ rect(c,-8,-26,16,26,"#6b4426");
+ for(const [w,y0,h] of [[110,-70,60],[86,-115,56],[60,-155,50]]){
+  c.fillStyle="#2f7d4f";c.beginPath();c.moveTo(0,y0-h);c.lineTo(w/2,y0);c.lineTo(-w/2,y0);c.closePath();c.fill();
+  c.fillStyle="#256941";c.beginPath();c.moveTo(0,y0-h);c.lineTo(w/2,y0);c.lineTo(w/6,y0);c.closePath();c.fill();
+ }
+ TREE_LIGHTS.forEach(([dx,dy],i)=>{const on=(Math.floor(t/400)+i)%4!==0;c.fillStyle=on?["#ffd23f","#ff5a5a","#7fb2ff","#ffffff"][i%4]:"#24452f";c.beginPath();c.arc(dx,dy,4,0,Math.PI*2);c.fill();});
+ c.fillStyle="#f4c84a";c.beginPath();for(let i=0;i<10;i++){const a=-Math.PI/2+i*Math.PI/5,r=i%2?6:14;c.lineTo(Math.cos(a)*r,-212+Math.sin(a)*r);}c.closePath();c.fill();
+ for(const [dx,w,h,col,rib] of PRESENTS){rect(c,dx-w/2,-h,w,h,col);rect(c,dx-2,-h,4,h,rib);rect(c,dx-w/2,-h/2-2,w,4,rib);}
+ c.restore();
+}
+// The sleigh (two reindeer and the driver) is minigames.mjs's: the snowball fight flies it too.
+// A flag on its pole (pole 150 high in the mockup's units): the French one, or the European one.
+function flag(c,x,y,eu,t,k){
+ c.save();c.translate(x,y);c.scale(k,k);
+ rect(c,0,0,3,150,"#b8b2a4");
+ const w=56,h=38,wv=reduced?0:Math.sin(t/300)*2;
+ if(eu){rect(c,3,4+wv,w,h,"#203f9a");for(let i=0;i<12;i++){const a=i/12*Math.PI*2;rect(c,3+w/2+Math.cos(a)*12-1,4+wv+h/2+Math.sin(a)*12-1,3,3,"#f4c84a");}}
+ else{rect(c,3,4+wv,w/3,h,"#2f5fb4");rect(c,3+w/3,4+wv,w/3,h,"#f4f1ea");rect(c,3+2*w/3,4+wv,w/3,h,"#e0413a");}
+ c.restore();
+}
+// The vœux's lectern, in front of the élu (a tricolour band, a microphone).
+function lectern(c){
+ rect(c,189,258,88,7,"#5a4430");rect(c,193,265,80,53,"#3a2a1c");
+ rect(c,207,280,18,8,"#2f5fb4");rect(c,225,280,17,8,"#f4f1ea");rect(c,242,280,17,8,"#e0413a");
+ rect(c,231,240,3,18,"#222222");rect(c,227,233,11,8,"#333333");
+}
+// The Santa hat (both camps) and the scarf (red on the left, tricolour on the right), drawn on the 64x64 sprite after
+// the body and over the wardrobe's outfit, which it never replaces. It follows the sprite's own bob (app.js sprite).
+function noelCostume(c,t,camp,state="idle",hat="#d23a3a"){
+ const phase=Math.floor(t/300)%4,bob=state==="sleep"?0:state==="win"?[0,-3,-5,-2][phase]:state==="run"?[0,-2,0,-2][phase]:[0,-1,0,0][phase];
+ const sway=reduced?0:Math.round(Math.sin(t/400));
+ c.save();c.translate(state==="stress"?(phase%2?1:-1):0,bob);
+ if(camp==="left"){rect(c,23,33,19,4,"#c8283a");rect(c,23,33,19,1,"#e6545f");rect(c,36,36,4,9,"#c8283a");rect(c,36,44,4,1,"#f1e9da");}
+ else{rect(c,23,33,7,4,"#2f5fb4");rect(c,30,33,6,4,"#f1e9da");rect(c,36,33,6,4,"#c8283a");rect(c,37,36,4,9,"#c8283a");rect(c,37,40,4,1,"#f1e9da");}
+ rect(c,21,10,23,4,"#f4f1ea");rect(c,21,13,23,1,"#d6d0c4");
+ rect(c,23,5,18,5,hat);rect(c,27,2,13,3,hat);rect(c,33,0,8,2,hat);rect(c,40+sway,1,4,4,hat);
+ rect(c,42+sway,0,5,5,"#f4f1ea");rect(c,43+sway,1,3,3,"#ffffff");
+ c.restore();
+}
+// ---------------------------------------------------------------- the midnight toast (New Year)
+// Ported from the validated mockup (maquette/noel.js cheers): Paris at night and the Eiffel tower sparkling, a table,
+// élus of both camps mixed (a hat of their camp's colour), the player's own in front; an 8 s loop (noelui.mjs
+// cheersPhase): 3, 2, 1, « Minuit ! » and the fireworks, « Tchin ! » as the glasses meet, then « Bonne année YYYY ! »,
+// the server's names (plain text on the canvas) and the Front de neige's result, under the confetti. Everything moving
+// is worked out from T alone. With reduced motion the words still follow the loop, the picture stands still.
+const CHEERS_CROWD=[["left",0],["right",8],["left",8],["right",3],["right",0],["left",4],["left",1],["right",1],["left",6]];
+const CAMP_HAT={left:"#d23a3a",right:"#2f5fb4"};
+function cheersFireworks(c,t){
+ for(let i=0;i<5;i++){
+  const per=1600+i*230,life=((t+i*517)%per)/per,cx=60+((i*137)%340),cy=60+((i*71)%130),col=["#ffd23f","#ff5a5a","#7fb2ff","#7dffb0","#ff9ae6"][i];
+  if(life<0.15){rect(c,cx-1,cy+(1-life/0.15)*120,3,6,"#fff");continue;}
+  const r=(life-0.15)*90;c.globalAlpha=Math.max(0,1-life);
+  for(let k=0;k<14;k++){const an=k/14*Math.PI*2;rect(c,cx+Math.cos(an)*r,cy+Math.sin(an)*r+life*life*20,3,3,col);}
+  c.globalAlpha=1;
+ }
+}
+function cheersFlute(c,x,y,tilt=0){   // a champagne flute, in the 64 grid of the sprite
+ c.save();c.translate(x,y);c.rotate(tilt);
+ rect(c,-1,4,2,6,"#e8eef8");rect(c,-3,10,6,1,"#e8eef8");rect(c,-3,-6,6,10,"#f6d76b");rect(c,-3,-7,6,2,"#fff8e0");rect(c,-3,-6,1,10,"#ffffff88");
+ c.restore();
+}
+// One élu raising his glass, drawn on the shared 64x64 scratch canvas, then scaled k times at (x, y) top-left.
+function toaster(c,p,side,t,x,y,k,{raise,mirror,lean}){
+ const sc=scratch.getContext("2d"),state=raise?"win":"idle";
+ sprite(sc,p,t,state);noelCostume(sc,t,side,state,CAMP_HAT[side]||CAMP_HAT.left);
+ const phase=Math.floor(t/300)%4,lift=raise?5+phase%2*2:0,bob=raise?[0,-3,-5,-2][phase]:[0,-1,0,0][phase];
+ cheersFlute(sc,45,(raise?38:49)-lift+bob,raise?lean:0);
+ c.save();c.imageSmoothingEnabled=false;
+ if(mirror){c.translate(x+64*k,y);c.scale(-1,1);c.drawImage(scratch,0,0,64*k,64*k);}else c.drawImage(scratch,x,y,64*k,64*k);
+ c.restore();
+}
+// Centred words with a dark outline; too wide for the round screen at y, smaller, then on two balanced lines.
+// Returns the baseline below them.
+function cheersWords(c,text,y,size,min,col,face="600 %px Inter, system-ui, sans-serif"){
+ const room=Math.min(400,2*Math.sqrt(Math.max(0,233*233-(y-233)**2))-48);
+ const put=(s,yy)=>{c.strokeText(s,233,yy,room);c.fillStyle=col;c.fillText(s,233,yy,room);};
+ for(let s=size;s>=min;s--){c.font=face.replace("%",s);if(c.measureText(text).width<=room){put(text,y);return y+s+5;}}
+ const words=text.split(" ");let best=null;
+ for(let i=1;i<words.length;i++){const l1=words.slice(0,i).join(" "),l2=words.slice(i).join(" "),w=Math.max(c.measureText(l1).width,c.measureText(l2).width);if(!best||w<best.w)best={l1,l2,w};}
+ if(!best){put(text,y);return y+min+5;}
+ put(best.l1,y);put(best.l2,y+min+3);return y+2*min+8;
+}
+// {names, others, front}: the server's me.newYear; camp and look: the player's élu; year: the year that begins.
+function drawCheers(c,T,{names,others,front,camp,look,year}){
+ const t=((T%CHEERS_MS)+CHEERS_MS)%CHEERS_MS,phase=cheersPhase(t),A=reduced?2600:T;   // A: the motion's clock
+ c.save();c.beginPath();c.arc(233,233,233,0,Math.PI*2);c.clip();
+ const sky=c.createLinearGradient(0,0,0,466);sky.addColorStop(0,"#070b1e");sky.addColorStop(1,"#1d2550");c.fillStyle=sky;c.fillRect(0,0,466,466);
+ for(const [x,w,h] of [[0,70,90],[60,60,120],[118,80,80],[300,70,110],[360,110,86]])rect(c,x,262-h,w,h,"#121a3c");
+ c.fillStyle="#26306a";c.beginPath();c.moveTo(233,60);c.lineTo(266,262);c.lineTo(200,262);c.closePath();c.fill();rect(c,215,180,36,5,"#26306a");rect(c,207,226,52,5,"#26306a");
+ const lit=t>1500;
+ if(lit)for(let i=0;i<26;i++)if((Math.floor(A/120)+i*7)%5===0)rect(c,233+((i*37)%50-25)*(((i*53)%200)/200),62+(i*53)%200,2,2,"#fff6c0");
+ if(lit){cheersFireworks(c,A);cheersFireworks(c,A+900);}
+ rect(c,0,346,466,120,"#141a36");
+ rect(c,20,292,426,14,"#f4f1ea");rect(c,20,306,426,40,"#e3ddd0");
+ const clink=phase==="tchin",lean=clink?0.35:0,st=reduced?0:T;
+ CHEERS_CROWD.slice(0,5).forEach(([side,i],n)=>{const x=50+n*76,k=1.45,m=n<2,p=people[side][i];if(p)toaster(c,p,side,st+n*170,x+(clink?(m?8:n>2?-8:0):0),298-60*k,k,{raise:lit,mirror:!m&&n!==2,lean});});
+ CHEERS_CROWD.slice(5).forEach(([side,i],n)=>{const x=30+n*104+(n>1?60:0),k=1.9,m=n<2,p=people[side][i];if(p)toaster(c,p,side,st+n*230,x+(clink?(m?10:-10):0),404-60*k,k,{raise:lit,mirror:!m,lean});});
+ toaster(c,look,camp,st,233-64*1.1,418-64*2.2,2.2,{raise:lit,mirror:false,lean});
+ c.textAlign="center";c.strokeStyle="#070b1e";c.lineJoin="round";c.lineWidth=5;
+ const big=(txt,y,size,col)=>{c.font=`700 ${size}px Fredoka, system-ui, sans-serif`;c.strokeText(txt,233,y);c.fillStyle=col;c.fillText(txt,233,y);};
+ if(phase.startsWith("count"))big(String(3-Math.floor(t/500)),120,72,"#ffffff");
+ else if(phase==="minuit")big("Minuit !",110,46,"#f4c84a");
+ else if(clink){big("Tchin !",110,46,"#ffffff");for(let i=0;i<10;i++)rect(c,113+((i*53)%240),180+((i*29)%80)-(reduced?0:(t-2200)/20),3,3,"#fff6c0");}
+ else{
+  big(year?`Bonne année ${year} !`:"Bonne année !",100,34,"#f4c84a");
+  c.lineWidth=3;
+  const y=cheersWords(c,cheersNamesLine(names,others),128,13,11,"#ffffff");
+  const f=frontLine(front);if(f)cheersWords(c,f,y+4,12,10,"#cfe3ff");
+ }
+ c.textAlign="start";c.lineWidth=1;c.lineJoin="miter";
+ if(t>3400)for(let i=0;i<24;i++)rect(c,(i*61+A/9)%466,(i*37+A/6)%466,3,4,["#fbd47b","#ed819a","#8db4ff","#7dffb0"][i%4]);
+ c.restore();
+}
+// The page's side: me.newYear and me.newYearBanner (applyMe), the ✕ (closed for this page's life only), « Revoir »
+// (two loops on the page's clock), a DOM button and a DOM banner built with textContent (no HTML, strict CSP).
+let newYear=null,newYearBannerOn=false,nyClosed=false,nyReplayT0=0,nyReplayEnd=0,nyView={scene:null,banner:false};
+const nyClose=document.createElement("button"),nyBanner=document.createElement("div"),nyReplay=document.createElement("button");
+{
+ nyClose.type="button";nyClose.className="icon-btn ny-close";nyClose.textContent="✕";nyClose.hidden=true;
+ nyClose.setAttribute("aria-label","Fermer la scène du nouvel an");
+ const words=document.createElement("span");words.textContent="🥂 Minuit : toute la République a trinqué.";
+ nyReplay.type="button";nyReplay.className="btn small go";nyReplay.textContent="Revoir";
+ nyReplay.setAttribute("aria-label","Revoir le toast de minuit");
+ nyBanner.className="ny-banner";nyBanner.hidden=true;nyBanner.setAttribute("role","region");nyBanner.setAttribute("aria-label","Nouvel an");
+ nyBanner.append(words,nyReplay);
+ $(".device").append(nyClose);$(".device-wrap").prepend(nyBanner);
+}
+// Worked out every frame (cheap): what to show, and the two DOM pieces kept in step. Never over a game or a scene.
+function nySync(now){
+ const v=newYearScreen({ny:noel()?newYear:null,banner:newYearBannerOn,closed:nyClosed,replayEnd:nyReplayEnd,now,serverMs:serverNow()});
+ if(v.scene&&(pong||mini||scene||bd.isOpen()))v.scene=null;
+ if(nyBanner.hidden!==!v.banner)nyBanner.hidden=!v.banner;
+ if(nyClose.hidden!==!v.scene){
+  const held=document.activeElement===nyClose;nyClose.hidden=!v.scene;
+  if(held&&!v.scene)(v.banner?nyReplay:cv).focus({preventScroll:true});   // the scene over under the focus: not lost
+ }
+ nyView=v;return v;
+}
+function nyDraw(now){
+ const ny=newYear||{};
+ const T=nyView.scene==="live"?cheersClock(serverNow(),ny.until):now-nyReplayT0;
+ drawCheers(ctx,T,{names:ny.names,others:ny.others,front:ny.front,camp:S.camp,look:look(),year:newYearYear(ny.until-1)});
+}
+nyClose.addEventListener("click",()=>{
+ if(nyView.scene==="live")nyClosed=true;
+ nyReplayEnd=0;const v=nySync(performance.now());
+ (v.banner?nyReplay:cv).focus();
+});
+nyReplay.addEventListener("click",()=>{
+ nyReplayT0=performance.now();nyReplayEnd=nyReplayT0+CHEERS_REPLAY_MS;
+ if(nySync(nyReplayT0).scene)nyClose.focus();
+});
+// The Pong's tiny tree, in front of the words (instead of Halloween's pumpkin).
+function miniTree(c,x,y){
+ c.fillStyle="#2f7d4f";c.beginPath();c.moveTo(x,y-8);c.lineTo(x+6,y+4);c.lineTo(x-6,y+4);c.closePath();c.fill();
+ rect(c,x-1,y+4,2,3,"#6b4426");rect(c,x-1,y-10,2,2,"#f4c84a");rect(c,x-2,y-2,1,1,"#ff5a5a");rect(c,x+2,y+1,1,1,"#ffd23f");
+}
+// Outdoors (the Trêve des confiseurs), the words get a dark outline: the moon and the snow are light.
+function gauges(now,outline=false){
  ctx.lineCap="round";
  for(const g of GAUGES){
   const a0=g.a*Math.PI/180,a1=(g.a+50)*Math.PI/180,v=S[g.k];
@@ -512,9 +844,11 @@ function gauges(now){
    ctx.strokeStyle=low?"#ff6b7a":g.c;ctx.beginPath();ctx.arc(233,233,214,a0,a0+(a1-a0)*v/100);ctx.stroke();ctx.globalAlpha=1;
   }
   const m=(g.a+25)*Math.PI/180;ctx.fillStyle="#ffffffc0";ctx.font="700 12px ui-monospace, monospace";ctx.textAlign="center";
-  ctx.fillText(g.l,233+Math.cos(m)*192,233+Math.sin(m)*192+4);
+  const gx=233+Math.cos(m)*192,gy=233+Math.sin(m)*192+4;
+  if(outline){ctx.strokeStyle="#0b1430b0";ctx.lineWidth=3;ctx.lineJoin="round";ctx.strokeText(g.l,gx,gy);}
+  ctx.fillText(g.l,gx,gy);
  }
- ctx.lineCap="butt";
+ ctx.lineCap="butt";ctx.lineJoin="miter";
 }
 // The speech bubble stays inside the inner edge of the rim gauges (radius 209): its corners are checked, not guessed.
 function bubble(text,tag){
@@ -535,21 +869,30 @@ function render(now){
  if(scene&&drawScene(now))return;
  if(pong){drawPong(now);return;}
  if(mini){mini.draw(miniClock);return;}
- const night=isAsleep(),t=reduced?0:now,spooky=hw();
+ if(nyView.scene){nyDraw(now);return;}   // New Year's midnight: the whole Republic toasts
+ const night=isAsleep(),t=reduced?0:now,spooky=hw(),xmas=noel(),m=xmas?moment():"";
  if(anim&&now>anim.until)anim=null;
- const state=anim?(anim.name==="bath"?"idle":anim.name):night?"sleep":"idle";
+ // New Year's Eve: the élu stands at the lectern, arms up, for the vœux.
+ const state=anim?(anim.name==="bath"?"idle":anim.name):night?"sleep":m==="voeux"?"win":"idle";
  const costume=spooky&&state==="sleep"?(S.camp==="left"?"hunter":"vampire"):"";
+ const outdoor=xmas&&worn().object!=="baton";
  // The Bâton de feu held: the hemicycle gives way to the erupting volcano (legend.mjs), Halloween's decor included.
  if(worn().object==="baton")volcanoRoom(ctx,t);
+ else if(outdoor)drawNoelScene(ctx,t,S);   // the Trêve des confiseurs: outside, under the moon
  else{room(isNight());if(spooky){hwRoom(t,now);hwProps(costume);}}
  if(S.sleeping&&!isNight()){ctx.fillStyle="rgba(6,8,22,.62)";ctx.fillRect(0,0,466,466);if(spooky)hwCandle(t);}   // light off during a nap
- gauges(now);
- const p=look();
- ctx.textAlign="center";ctx.fillStyle="#fff6ea";ctx.font="600 25px Fredoka, system-ui, sans-serif";ctx.fillText(p.name,233,92);
- ctx.font="600 13px ui-monospace, monospace";ctx.fillStyle="#ffffffc0";ctx.fillText(`NIVEAU ${S.lvl}${S.lvl===100?" · LÉGENDE":""}`,233,112);
+ gauges(now,outdoor);
+ const p=look(),lvlText=`NIVEAU ${S.lvl}${S.lvl===100?" · LÉGENDE":""}`;
+ ctx.textAlign="center";ctx.font="600 25px Fredoka, system-ui, sans-serif";
+ if(outdoor){ctx.strokeStyle="#0b1430b0";ctx.lineJoin="round";ctx.lineWidth=4;ctx.strokeText(p.name,233,92);ctx.font="600 13px ui-monospace, monospace";ctx.lineWidth=3;ctx.strokeText(lvlText,233,112);ctx.lineJoin="miter";ctx.lineWidth=1;ctx.font="600 25px Fredoka, system-ui, sans-serif";}
+ ctx.fillStyle="#fff6ea";ctx.fillText(p.name,233,92);
+ ctx.font="600 13px ui-monospace, monospace";ctx.fillStyle="#ffffffc0";ctx.fillText(lvlText,233,112);
  const part=S.lvl>=100?1:Math.min(1,(S.xp-xpFloor(S.lvl))/xpCost(S.lvl));
+ if(outdoor){ctx.fillStyle="#0b143080";ctx.fillRect(172,118,122,6);}
  ctx.fillStyle="#ffffff26";ctx.fillRect(173,119,120,4);ctx.fillStyle="#ffd59a";ctx.fillRect(173,119,Math.round(120*part),4);
- bigSprite(p,state,192,233,318,t,S.lvl===100,anim&&anim.food,costume);
+ bigSprite(p,state,192,233,318,t,S.lvl===100,anim&&anim.food,costume,xmas?c=>noelCostume(c,t,S.camp,state):null);
+ if(m==="voeux"&&!night)lectern(ctx);
+ if(outdoor)drawNoelFront(ctx,t,S);
  if(lvlFx){                                        // the small level-up burst
   const e=(now-lvlFx.t0)/1000;
   if(e>1.6)lvlFx=null;
@@ -565,8 +908,9 @@ function render(now){
  if(anim&&anim.stress)bubble(`« ${anim.stress.line} »`,(anim.factor>1?`STRESS ×${anim.factor} · `:"")+anim.stress.trigger.toUpperCase());
  else if(anim&&anim.line)bubble(anim.line);
  else{
-  ctx.fillStyle=S.zero?"#ff9aa5":"#ffd59a";
-  fitLabel(night?(spooky?R.HALLOWEEN.sleep[S.camp]:S.sleeping&&!isNight()?"Zzz… sieste en cours":"Zzz… il dort"):S.zero?`Jauge à zéro depuis ${S.zero} h : danger !`:S.form==="Excellente"?(S.streak>=6?`En pleine forme · série de ${S.streak} h`:"En pleine forme"):`Forme ${S.form.toLowerCase()}`,356);
+  ctx.fillStyle=S.zero?"#ff9aa5":outdoor?(R.isNight(S)?"#bcd0f5":"#ffffff"):"#ffd59a";
+  const xmasLine=xmas&&!S.zero?{eve:"Réveillon de Noël · le traîneau passe !",voeux:"En direct de l'hémicycle : les vœux"}[m]:"";
+  fitLabel(night?(spooky?R.HALLOWEEN.sleep[S.camp]:xmas?R.NOEL.sleep[S.camp]:S.sleeping&&!isNight()?"Zzz… sieste en cours":"Zzz… il dort"):xmasLine||(S.zero?`Jauge à zéro depuis ${S.zero} h : danger !`:S.form==="Excellente"?(S.streak>=6?`En pleine forme · série de ${S.streak} h`:"En pleine forme"):`Forme ${S.form.toLowerCase()}`),356,outdoor);
  }
 }
 
@@ -722,17 +1066,18 @@ function stepPong(now){
  if(pong.by>PONG.lost){pong.missed++;pong.flashT=now;pongServe();}
 }
 function drawPong(now){
- const left=S.camp==="left",spooky=hw();
+ const left=S.camp==="left",spooky=hw(),xmas=noel();
  sceneBackdrop(left);
  ctx.textAlign="center";ctx.fillStyle="#fff6ea";ctx.font="700 18px Fredoka, system-ui, sans-serif";ctx.fillText(spooky?"PONG DES REVENANTS":"PONG DES ARGUMENTS",233,72);
  ctx.fillStyle=left?"#7fa8f8":"#ef7c91";ctx.fillRect(198,104,70,26);ctx.fillStyle="#202330";ctx.fillRect(228,96,10,8);
  ctx.fillStyle="#202330";ctx.font="700 10px ui-monospace, monospace";ctx.fillText("ADVERSAIRE",233,121);
  bigSprite(look(),now-pong.hitT<400?"debate":"idle",96,pong.px,358,now);
  if(!pong.endT){
-  // While Halloween lasts: an orange border and a tiny pumpkin before the words.
-  ctx.font="700 13px Inter, system-ui, sans-serif";const pad=spooky?16:0,w=Math.max(70,ctx.measureText(pong.text).width+18+pad);
+  // While Halloween lasts: an orange border and a tiny pumpkin before the words; at Christmas, a candy-cane border and a tree.
+  ctx.font="700 13px Inter, system-ui, sans-serif";const pad=spooky||xmas?16:0,w=Math.max(70,ctx.measureText(pong.text).width+18+pad);
   ctx.fillStyle=pong.mine?"#fff3cf":"#f8efdf";ctx.beginPath();ctx.roundRect(pong.bx-w/2,pong.by-14,w,28,12);ctx.fill();
-  ctx.strokeStyle=spooky?"#ff9f43":pong.mine?"#ffd59a":(left?"#7fa8f8":"#ef7c91");ctx.lineWidth=3;ctx.stroke();
+  ctx.strokeStyle=spooky?"#ff9f43":xmas?"#3fa35b":pong.mine?"#ffd59a":(left?"#7fa8f8":"#ef7c91");ctx.lineWidth=3;ctx.stroke();
+  if(xmas){ctx.setLineDash([6,6]);ctx.strokeStyle="#e0413a";ctx.stroke();ctx.setLineDash([]);miniTree(ctx,pong.bx-w/2+13,pong.by+1);}
   if(spooky)pumpkin(pong.bx-w/2+13,pong.by+1,6,-1);
   ctx.fillStyle="#2a2230";ctx.fillText(pong.text,pong.bx+pad/2,pong.by+5);
  }
@@ -946,6 +1291,8 @@ function connectLive(){
  on("feedInit",v=>{if(Array.isArray(v)){feed=v;renderFeed();}});
  on("feed",v=>{if(!Array.isArray(v))return;for(const f of v)feed.unshift(f);feed.length=Math.min(feed.length,60);renderFeed();});
  on("duel",v=>{if(v&&typeof v==="object")duelEvent(v);});
+ on("snowChallenge",v=>{if(v&&typeof v==="object")snowEvent(v);});
+ on("snowFront",v=>snowFrontEvent(v));
  on("announce",v=>{if(typeof v?.text!=="string"||!v.text.trim())return;announceQ.push({text:v.text.slice(0,240)});if(announceQ.length>3)announceQ.shift();showAnnounce();});
  // The Bâton de feu found its bearer: a banner for everyone else (the bearer has the legend).
  on("mythic",v=>{
@@ -1060,7 +1407,7 @@ function armedButton(label,armedLabel,cls,onConfirm){
 // 1.6.0: the missions (a report ready), the letter, the goals' progress, the wardrobe and the urn.
 const sheetSig=()=>[S.fm,curIdx(),R.actsToday(S),R.actsThisVisit(S),S.energy<20,S.coffees,S.breadIdx,S.lvl,S.best,S.equipped[person().name]||0,isAsleep(),S.camp,!rematchBlock(),season(),S.treatDay,
  S.missions?.cur?.id,A.missionReady(S),A.missionsToday(S),S.energy<A.MISSION_RULES.minEnergy,S.mail?.letter?.id,A.lettersWaiting(S),A.lettersToday(S),S.mail?.b,S.goals?.list?.map(x=>`${x.n}${x.done?"d":""}`).join(),
- running().map(e=>e.id).join(),S.wardrobe?.own?.length,worn().outfit,worn().object,S.wardrobe?.bulletins,S.wardrobe?.confetti,W.freeDrawToday(S),A.flameOf(S),urnHint,batonSig()].join("|");
+ running().map(e=>e.id).join(),S.wardrobe?.own?.length,worn().outfit,worn().object,S.wardrobe?.bulletins,S.wardrobe?.confetti,W.freeDrawToday(S),A.flameOf(S),urnHint,batonSig(),S.advent?.y,S.advent?.opened?.join("-")].join("|");
 let shownSig="";
 function setBackgroundInert(on){for(const el of document.querySelectorAll(".topbar,.app,footer"))el.inert=on;lockScroll(on);}
 // The page behind an open sheet does not move: a swipe that reaches the end of a list (the chat) no longer scrolls the
@@ -1109,6 +1456,8 @@ function renderSheet(kind,opener){
  if(kind==="food"){
   set("La Buvette",`${S.fm} FM (frais de mandat) en caisse · 2 FM gagnés par heure de vie`);
   // Halloween's daily gift, the only thing the event changes in the game (rules.mjs treatBlock).
+  // The Trêve des confiseurs' Advent calendar, at the top (noelui.mjs adventCells); Halloween's gift is not offered then.
+  if(noel()){const v=adventCells(S,season(),S.vclock);body.append(list(boosted(itemButton("🎁 Calendrier de l'Avent",v.canOpen?"La case du jour t'attend : un petit cadeau, une fois par jour.":v.note,"Ouvrir",false,()=>{adventSaid=null;openSheet("advent");}),v.canOpen)));}
   if(hw()){const e=R.treatBlock(S,season());body.append(list(itemButton("Des bonbons ou un amendement ?",e||`Cadeau d'Halloween : moral +${R.HALLOWEEN.treat.moral}, une fois par jour.`,"gratuit",!!e,()=>{closeSheet();send({type:"treat"});})));}
   body.append(shopList("food"));
  }
@@ -1123,6 +1472,7 @@ function renderSheet(kind,opener){
  }
  if(kind==="play"){
   const err=activityBlock(),dn=incoming().length;
+  if(noel()&&!snowData&&!snowAsked){snowAsked=true;snowLoad();}   // the count of challenges received, on the menu entry
   set("Jouer",`Activités : ${R.actsToday(S)}/${XP.actsPerDay} aujourd'hui · ${XP.actsPerVisit} par visite`);
   // The rematch only shows while it is on offer: right after a debate, for one hour of game time.
   const rm=rematchBlock()?[]:[itemButton("Quitte ou double !",`Revanche immédiate, 1 chance sur 2 : moral +${R.DOUBLE.moral} et énergie +${R.DOUBLE.energy}… ou un stress ×${R.DOUBLE.stressFactor} (moral −${R.STRESS_HIT*R.DOUBLE.stressFactor}).`,"50/50",false,rematch)];
@@ -1133,6 +1483,10 @@ function renderSheet(kind,opener){
    boosted(itemButton(`Manif : ${manifLabel(S.camp)}`,err||(S.camp==="left"
     ?"Tiens le cortège jusqu'à Nation en 30 s : esquive LBD et lacrymo, ramasse les tracts et les merguez. Doigt, souris ou flèches ; parapluie avec un deuxième doigt ou Espace."
     :"Joue l'épervier 35 s avec un CRS : interpelle les manifestants, esquive pavés et molotovs, ramasse les rapports d'incident. Gare aux journalistes et aux collègues infiltrés."),side(manif,"manif"),!!err,()=>startMini("manifStart")),f.xp.manif>1),
+   // The Trêve des confiseurs' game, only while the theme is on. Always open, like the Duels: the battle sheet shows the
+   // challenges and lets him dare (free) even without an activity left; there, « Jouer » and « Relever » say why not.
+   ...(noel()?[boosted(itemButton("❄️ Bataille de boules de neige","45 s contre les élus de l'autre camp : vise, pare leurs boules, épargne les passants. Puis défie un joueur sur le même tirage.",
+    `Saison${snowIn()?` · ${snowIn()} défi${snowIn()>1?"s":""}`:""}`,false,openSnow),true)]:[]),
    // Always open: even when he cannot duel now, the sheet shows the challenges, the results and why.
    boosted(itemButton("Duels",`Défie un rival au Débat chrono : mêmes questions, meilleur score. ${R.DUEL.perDay+f.duels} défis par jour.`,`${dn?`${dn} défi${dn>1?"s":""}`:"PvP"}${f.duelMult>1?` (×${frNum(f.duelMult)})`:""}`,false,openDuels),f.duels>0||f.duelMult>1)
   ));
@@ -1141,8 +1495,11 @@ function renderSheet(kind,opener){
  }
  if(kind==="wardrobe")renderWardrobe(body,set);
  if(kind==="urn")renderUrn(body,set);
+ if(kind==="advent")renderAdvent(body,set);
  if(kind==="player")renderPlayer(body,set);
  if(kind==="duels")renderDuels(body,set);
+ if(kind==="snow")renderSnow(body,set);
+ if(kind==="snowdare")renderSnowDare(body,set);
  if(kind==="test"){
   set("Test politique","Cinq questions pour les indécis. Sans effet sur la partie : le dernier mot reste le tien.");
   const box=document.createElement("div");box.className="quiz";box.id="sheet-quiz";body.append(box);
@@ -1192,7 +1549,7 @@ function renderSheet(kind,opener){
   const wearing=[wo.outfit,wo.object].filter(id=>id&&W.ITEMS[id]).map(id=>W.ITEMS[id].name).join(" et ");
   body.append(blockTitle("Garde-robe"),list(
    itemButton("Garde-robe",`${got} sur ${vis.length} tenues et objets${wearing?` · porte ${wearing}`:""}. Purement cosmétique.`,"Ouvrir",false,()=>openSheet("wardrobe")),
-   itemButton(W.URN_NAME[S.camp],W.freeDrawToday(S)?"Ton tirage gratuit du jour t'attend.":`Tirage gratuit déjà pris aujourd'hui · ${plural(w.bulletins,"bulletin")} en poche.`,`🎟️ ${w.bulletins}`,false,()=>openSheet("urn"))));
+   itemButton(urnName(S.camp),W.freeDrawToday(S)?"Ton tirage gratuit du jour t'attend.":`Tirage gratuit déjà pris aujourd'hui · ${plural(w.bulletins,"bulletin")} en poche.`,`🎟️ ${w.bulletins}`,false,()=>openSheet("urn"))));
   body.append(blockTitle("Objets personnels"),list(...personalItems[p.name].map((it,i)=>{
    const on=(S.equipped[p.name]||0)===i,held=on&&!wo.object;
    return itemButton(it.name,held?"Dans sa main":on?"Équipé, mais rangé : un objet de la garde-robe est dans sa main. Toucher pour le reprendre.":"Toucher pour équiper",on?"équipé":"",false,()=>equip(i),held);
@@ -1320,7 +1677,7 @@ function missionReward(m){
 }
 function renderActivities(body){
  const c=S.camp,f=fx(),cur=S.missions.cur,ready=A.missionReady(S),n=A.missionsToday(S),max=A.missionLimit(f);
- body.append(blockTitle("Missions"),fine(`Quelques heures sur le terrain, pendant que tu fais autre chose : des jauges, de l'XP à chaque rapport et des bulletins pour ${W.URN_NAME[c]}, une fois par mission et par jour. Plus elle dure, plus elle rapporte. Une à la fois.`),
+ body.append(blockTitle(noel()?R.NOEL.labels.missions[c]:"Missions"),fine(`Quelques heures sur le terrain, pendant que tu fais autre chose : des jauges, de l'XP à chaque rapport et des bulletins pour ${urnName(c)}, une fois par mission et par jour. Plus elle dure, plus elle rapporte. Une à la fois.`),
   fine(`Missions ${n}/${max===Infinity?"∞":max} · Bulletins du jour ${A.bulletinsToday(S)}/${A.MISSION_RULES.bulletinsPerDay*f.bulletins}`));
  if(cur){
   const m=A.missionOf(cur.id);
@@ -1334,7 +1691,7 @@ function renderActivities(body){
   const e=A.missionBlock(S,m.id,f),desc=`${R.fxText(m.fx)}${m.risk?` ; ou, une fois sur deux : ${R.fxText(m.risk.fx)}`:""}${m.night&&!e?" · le soir seulement, de 20 h à minuit":""} · ${missionReward(m)}`;
   return boosted(itemButton(m[c],e&&e!==shared?`${e} ${desc}`:desc,`${A.missionTime(m.ms/f.div)}${f.div>1?` (÷${f.div})`:""}`,!!e,()=>missionStart(m)),f.div>1);
  })));
- body.append(blockTitle("Courrier"));
+ body.append(blockTitle(noel()?R.NOEL.labels.mail:"Courrier"));
  const l=S.mail.letter&&A.letterOf(S.mail.letter.id);
  if(l){
   const d=document.createElement("div"),b=document.createElement("b"),q=document.createElement("q");d.className="dossier letter";
@@ -1345,7 +1702,7 @@ function renderActivities(body){
  }else body.append(fine(R.clockOf(vnow()).hour<A.MAIL.quietTo?`Le facteur passe à partir de ${A.MAIL.quietTo} h.`:`Pas de lettre pour l'instant : les électeurs écrivent environ toutes les ${A.MAIL.slotMin} minutes${f.mailGap?`, et une lettre en plus toutes les ${f.mailGap} minutes pendant l'événement`:""} (heure du jeu).`));
  const lt=A.lettersToday(S),bl=A.mailBulletinsLeft(S,f);
  body.append(fine(`${plural(lt,"lettre")} répondue${lt>1?"s":""} aujourd'hui · 1 bulletin toutes les ${A.MAIL.bulletinEvery} lettres, ${bl?`encore ${plural(bl,"bulletin")} à gagner aujourd'hui`:"plus de bulletin du courrier aujourd'hui (les jauges, toujours)"}.`));
- body.append(blockTitle("Objectifs du jour"));
+ body.append(blockTitle(noel()?R.NOEL.labels.goals:"Objectifs du jour"));
  const goals=A.goalView(S);
  if(!goals.length)body.append(fine("Les objectifs du jour arrivent à la prochaine heure de jeu."));
  else{
@@ -1358,7 +1715,7 @@ function renderActivities(body){
   }
   body.append(ul);
  }
- body.append(fine(`🎟️ ${plural(S.wardrobe.bulletins,"bulletin")} en poche : à jouer dans Dossier → ${W.URN_NAME[c]}. Les missions rapportent aussi de l'XP ; le courrier et les objectifs, seulement des jauges et des bulletins.`));
+ body.append(fine(`🎟️ ${plural(S.wardrobe.bulletins,"bulletin")} en poche : à jouer dans Dossier → ${urnName(c)}. Les missions rapportent aussi de l'XP ; le courrier et les objectifs, seulement des jauges et des bulletins.`));
 }
 
 // ---------- the wardrobe (wardrobe.mjs, looks.mjs) ----------
@@ -1430,7 +1787,42 @@ function renderWardrobe(body,set){
  }
  body.append(fine(wardTab==="object"?"Un objet de la garde-robe remplace l'objet personnel dans sa main ; équiper un objet personnel (Dossier) le range.":"Une tenue s'enfile par-dessus son costume ; touche-la de nouveau pour l'enlever."),
   fine("Les doublons d'un tirage deviennent des confettis : 5 pour un commun, jusqu'à 100 pour un ultra rare."));
- const go=document.createElement("div");go.className="btn-row";go.append(smallButton(`Aller à ${W.URN_NAME[S.camp]}`,"go",()=>openSheet("urn")));body.append(go);
+ const go=document.createElement("div");go.className="btn-row";go.append(smallButton(`Aller à ${urnName(S.camp)}`,"go",()=>openSheet("urn")));body.append(go);
+}
+
+// ---------- the Advent calendar (Trêve des confiseurs: rules.mjs "advent", noelui.mjs adventCells) ----------
+// adventSaid: what the line under the grid says until the sheet is reopened, {day} after opening a box, {msg} otherwise.
+let adventSaid=null;
+async function adventOpen(){
+ const r=await send({type:"advent"});        // a refusal is toasted by send()
+ if(!r)return;
+ adventSaid=r.ok&&Number.isInteger(r.day)?{day:r.day}:{msg:r.error||"La case ne s'ouvre pas pour l'instant."};
+ if(sheetKind==="advent"&&!$("#sheet").hidden)liveSheet(true);
+}
+function adventTap(c,v){
+ if(c.state==="today"&&v.canOpen){adventOpen();return;}
+ const g=adventGiftText(c.day);
+ adventSaid={msg:c.state==="open"?`Case ${c.day}, déjà ouverte : ${g.text} (${g.pay})`
+  :c.state==="missed"?`Case ${c.day} : oubliée. Pas de rattrapage, reviens chaque jour !`
+  :`Case ${c.day} : patience, elle s'ouvre le ${c.day} décembre.`};
+ liveSheet(true);
+}
+function renderAdvent(body,set){
+ const v=adventCells(S,season(),S.vclock);
+ set("🎁 Calendrier de l'Avent","Une case par jour, du 1er au 24 décembre : des jauges ou des bulletins, jamais de FM.");
+ const grid=document.createElement("div");grid.className="advent-grid";grid.setAttribute("role","group");grid.setAttribute("aria-label","Les 24 cases du calendrier");
+ for(const c of v.cells){
+  const b=document.createElement("button");b.type="button";b.className=`advent-box ${c.state}${c.gold?" d24":""}`;
+  b.textContent=c.text;b.setAttribute("aria-label",c.label);if(c.state==="today")b.setAttribute("aria-current","date");
+  b.addEventListener("click",()=>adventTap(c,v));grid.append(b);
+ }
+ const said=document.createElement("p");said.className="advent-said";
+ if(adventSaid?.day){
+  const g=adventGiftText(adventSaid.day),b1=document.createElement("b"),b2=document.createElement("b");
+  b1.textContent=`Case ${adventSaid.day}`;b2.className="gold";b2.textContent=g.pay;said.append("🎁 ",b1,` : ${g.text} `,b2);
+ }else said.textContent=adventSaid?.msg||(v.canOpen?"Touche la case qui brille.":"");
+ const back=document.createElement("div");back.className="btn-row";back.append(smallButton("‹ La Buvette","",()=>openSheet("food")));
+ body.append(grid,said,fine(v.note),back);
 }
 
 // ---------- La Tombola de la Fête / La Loterie du Gala ----------
@@ -1481,7 +1873,7 @@ function revealCard(){
 }
 function renderUrn(body,set){
  const w=S.wardrobe,free=W.freeDrawToday(S);
- set(W.URN_NAME[S.camp],"Un tirage gratuit par jour, des bulletins à gagner avec les missions, le courrier et les objectifs du jour. Jamais d'argent réel.");
+ set(urnName(S.camp),"Un tirage gratuit par jour, des bulletins à gagner avec les missions, le courrier et les objectifs du jour. Jamais d'argent réel.");
  const pills=document.createElement("div");pills.className="meta";
  pills.append(pill(`🎟️ ${plural(w.bulletins,"bulletin")}`),pill(`🎊 ${w.confetti} confetti${w.confetti>1?"s":""}`),pill(free?"🎁 tirage gratuit prêt":"🎁 gratuit demain",free?"good":""));
  const stage=document.createElement("div"),cv=document.createElement("canvas");stage.className="urn";cv.setAttribute("role","img");cv.setAttribute("aria-label",drawing?"L'urne s'agite…":"L'urne");stage.append(cv);
@@ -1707,6 +2099,7 @@ async function duelsLoad(){
  if(r.ok){duelData=r;duelErr="";pushSync(r.pushKey);if(incoming().length)pushAsk();}else duelErr=r.error;
  refresh();
  if(sheetKind==="duels"||(r.ok&&["play","more","player"].includes(sheetKind)))liveSheet(true);
+ snowDarePlayers();                                  // the dare sheet holds a form: filled in place, never redrawn
  return duelData;
 }
 function openDuels(){openSheet("duels");duelsLoad();}
@@ -1781,6 +2174,129 @@ function renderDuels(body,set){
  body.append(blockTitle("Règles"),fine(`Victoire : +${won("xp")} XP, moral +${won("moral")}, énergie +${won("energy")}${f.duelMult>1?` (×${frNum(f.duelMult)} pendant l'événement)`:""} (XP payée pour ${D.paidWins} victoires par jour). `+
   `Défaite : −${-D.loss.xp} XP, moral −${-D.loss.moral}, énergie −${-D.loss.energy}, mais jamais de niveau perdu ni de jauge sous ${D.floor}. `+
   `Match nul : moral +${D.tie.moral}. Refuser ne coûte rien. Dès le niveau ${D.minLevel}, ${perDay} défis par jour, ${Math.round(D.window/R.H)} h pour répondre.`));
+}
+// ---------- the snowball fight (Trêve des confiseurs) ----------
+// The battle sheet: the last fight's end screen (the server's score, never the browser's), the Front de neige, the
+// challenges received (GET /api/snow/challenges, loaded when the sheet opens and at each live notice) and sent.
+const SNOW_DARE_MS=10*60e3;                                       // the server's window to dare with a game
+const snowIn=()=>snowData?snowData.received.filter(c=>c.expires>serverNow()).length:0;
+const snowRecent=()=>snowLast&&Date.now()-snowLast.at<SNOW_DARE_MS?snowLast:null;
+async function snowLoad(){
+ if(!S)return;
+ const seq=++snowSeq,who=me,r=await api("GET","/api/snow/challenges");
+ if(seq!==snowSeq||!S||me!==who)return;
+ if(r.ok){snowData=challengeLists(r);snowErr="";}else snowErr=r.error;
+ if(sheetKind==="snow"||sheetKind==="play")liveSheet(true);
+}
+function openSnow(){openSheet("snow");snowLoad();}
+// The Front de neige as a bar: the two camps' shares, the totals, the player's line.
+function frontBlock(fb){
+ const box=document.createElement("div");box.className="snow-front";
+ const head=document.createElement("div"),bar=document.createElement("div"),foot=document.createElement("div");
+ head.className="lbl";foot.className="lbl";bar.className="bar";
+ const a=document.createElement("span"),b=document.createElement("span");a.textContent="❄️ Front de neige";b.textContent=fb.note;head.append(a,b);
+ const l=document.createElement("i"),r=document.createElement("i");l.className="left";r.className="right";l.style.width=`${fb.lp}%`;r.style.width=`${fb.rp}%`;bar.append(l,r);
+ bar.setAttribute("role","img");bar.setAttribute("aria-label",`Front de neige : ${fb.leftText}, ${fb.rightText}`);
+ const c=document.createElement("span"),d=document.createElement("span");c.textContent=fb.leftText;d.textContent=fb.rightText;foot.append(c,d);
+ box.append(head,bar,foot);return box;
+}
+function renderSnow(body,set){
+ const err=activityBlock(),on=noel(),last=snowRecent(),now=serverNow();
+ set("❄️ Bataille de boules de neige","45 s, le même tirage pour tous les défis · score recompté par le serveur");
+ if(last){
+  const s=endSummary(last),end=document.createElement("div");end.className="snow-end";end.setAttribute("role","status");
+  const h=document.createElement("h3"),big=document.createElement("div"),xp=document.createElement("p");
+  h.textContent=s.title;big.className="snow-score";big.textContent=s.score;xp.className="snow-xp";xp.textContent=s.xp;
+  end.append(h,big);
+  if(s.stats){const p=document.createElement("p");p.textContent=s.stats;end.append(p);}
+  end.append(xp);
+  if(last.ch&&last.ok)end.append(fine("Partie de défi : le verdict arrive dans ton journal."));
+  body.append(end);
+ }else body.append(fine("Touche un adversaire pour lui lancer une boule (5 en main, une revient toutes les demi-secondes). Touche les boules qui arrivent pour les parer. Épargne les passants… et vise le traîneau !"));
+ const fb=frontBar(snowFront,S.camp,last?.ok?{score:last.result?.score,counted:last.front,pts:last.frontPts}:{});
+ if(fb)body.append(frontBlock(fb));
+ if(!on)body.append(Object.assign(fine("La bataille revient avec la Trêve des confiseurs, du 1er décembre au 1er janvier."),{className:"fine warn"}));
+ else if(err)body.append(Object.assign(fine(`Pas de bataille pour l'instant : ${err}`),{className:"fine warn"}));
+ const row=document.createElement("div");row.className="btn-row";
+ row.append(smallButton(last?"Rejouer":"Jouer (45 s)","go",()=>startMini("snowStart"),!on||!!err));
+ // Only a fight of his own, counted, and less than 10 minutes old can be sent as a challenge (the server checks it too).
+ if(last&&last.ok&&!last.ch&&last.gameId)row.append(smallButton("Défier un joueur","",()=>{openSheet("snowdare");if(!duelData)duelsLoad();},!on));
+ body.append(row);
+ body.append(blockTitle("Défis reçus"));
+ if(!snowData){
+  body.append(fine(snowErr||"Chargement des défis…"));
+  if(snowErr){const r=document.createElement("div");r.className="btn-row";r.append(smallButton("Réessayer","",()=>snowLoad()));body.append(r);}
+ }else{
+  const inc=snowData.received.filter(c=>c.expires>now);
+  if(!inc.length)body.append(fine("Aucun défi en attente. Après une partie, « Défier un joueur » envoie ton tirage à qui tu veux."));
+  // Two taps: a stray one must not spend an activity.
+  for(const c of inc)body.append(duelCard(challengeText(c,now),"Même tirage, même durée : fais mieux pour gagner du moral.",
+   !on||err?smallButton("Relever","go",()=>{},true):armedButton("Relever","Prêt ? Touche encore pour jouer","go",()=>startMini("snowStart",{challenge:c.id}))));
+  const sent=snowData.sent.map(x=>({x,text:sentText(x,now)})).filter(e=>e.text);
+  if(sent.length){
+   body.append(blockTitle("Tes défis"));
+   const ul=document.createElement("ul");ul.className="journal duel-log";
+   for(const {x,text} of sent.slice(0,10)){const li=document.createElement("li");li.className=x.result?.outcome==="win"?"win":x.result?.outcome==="loss"?"loss":"";li.textContent=text;ul.append(li);}
+   body.append(ul);
+  }
+ }
+ const M=R.MINI.snowball;
+ body.append(blockTitle("Règles"),fine(`Une partie : +${M.xp} XP, puis un bonus de ${String(M.bonusRate).replace(".",",")} XP par point (${M.bonusCap} au plus) dès ${M.minScore} points. `+
+  "Chaque partie compte pour ton camp dans le Front de neige. Un défi se lance dans les 10 minutes après la partie, 3 par jour : ton adversaire a 24 h pour faire mieux sur le même tirage (moral +10 au gagnant, +5 chacun en cas d'égalité)."));
+}
+// Whom to dare: the players of both camps (the duels' list holds them all), online first, or a name typed in.
+function renderSnowDare(body,set){
+ const last=snowRecent(),score=last?.result?.score;
+ set("Défier un joueur",Number.isFinite(score)?`Ton tirage et tes ${score} points : il a 24 h pour faire mieux.`:"Ton tirage : il a 24 h pour faire mieux.");
+ const back=()=>{const r=document.createElement("div");r.className="btn-row";r.append(smallButton("‹ La bataille","",()=>openSnow()));return r;};
+ if(!last||!last.ok||last.ch){body.append(fine("Joue d'abord une partie de bataille : un défi se lance dans les 10 minutes qui suivent."),back());return;}
+ // A form: Enter sends. liveSheet never redraws a sheet holding a form (a half-typed name survives), so the players'
+ // list and the datalist are filled in place by snowDarePlayers, now and each time GET /api/duels answers.
+ const form=document.createElement("form"),lab=document.createElement("label"),inp=document.createElement("input"),dl=document.createElement("datalist");
+ form.className="inline-form snow-dare";lab.htmlFor="snow-dare-name";lab.textContent="Pseudo du joueur";
+ Object.assign(inp,{id:"snow-dare-name",type:"text",autocomplete:"off",maxLength:40,required:true});inp.setAttribute("list","snow-dare-list");dl.id="snow-dare-list";
+ const go=Object.assign(document.createElement("button"),{type:"submit",className:"btn go",textContent:"Défier"});
+ form.append(lab,inp,dl,go);
+ form.addEventListener("submit",e=>{e.preventDefault();snowDare(inp.value);});
+ const box=document.createElement("div");box.id="snow-dare-players";box.setAttribute("aria-live","polite");
+ body.append(form,box,back());
+ snowDarePlayers();
+}
+// The players to dare (snowui.mjs dareView): loading, the error with « Réessayer », nobody, or the buttons; the datalist too.
+function snowDarePlayers(){
+ const box=$("#snow-dare-players"),dl=$("#snow-dare-list");if(sheetKind!=="snowdare"||!box||!dl)return;
+ const v=dareView(duelData,duelErr,me);
+ dl.replaceChildren(...v.names.map(n=>Object.assign(document.createElement("option"),{value:n})));
+ box.replaceChildren();
+ if(v.state!=="list"){
+  box.append(v.state==="error"?Object.assign(fine(v.text),{className:"fine warn"}):fine(v.text));
+  if(v.state==="error"){const r=document.createElement("div");r.className="btn-row";r.append(smallButton("Réessayer","",()=>{duelErr="";snowDarePlayers();duelsLoad();}));box.append(r);}
+  return;
+ }
+ box.append(blockTitle("Joueurs"),list(...v.top.map(o=>{
+  const b=itemButton(o.name,`${o.candidate||"?"} · ${o.camp==="right"?"Droite":"Gauche"}${o.online?" · en ligne":""}`,"Défier",false,()=>snowDare(o.name));
+  nameWithDot(b.querySelector("b"),o.name,o.online);b.classList.add("opp",o.camp==="right"?"right":"left");return b;
+ })));
+}
+async function snowDare(name){
+ const to=String(name||"").trim(),last=snowRecent();
+ if(!to){toast("Écris le pseudo d'un joueur.",true);$("#snow-dare-name")?.focus();return;}
+ if(!last?.gameId)return;
+ const r=await send({to,gameId:last.gameId},"/api/snow/challenge");
+ if(!r?.ok||!S)return;                                // the server's reason is already toasted
+ const c=r.challenge||{};
+ toast(`❄️ Défi lancé à ${c.to||to} : ${Number.isFinite(c.score)?`${c.score} points à battre, `:""}24 h pour répondre.`,true);
+ if(sheetKind==="snowdare")openSnow();else snowLoad();
+}
+// Live: a challenge received, finished or cancelled (its result comes with the journal); the Front's counter.
+function snowEvent(v){
+ if(v.kind==="new")toast("❄️ Nouveau défi de neige ! Va dans Jouer → Bataille de boules de neige.");
+ snowLoad();
+}
+function snowFrontEvent(v){
+ if(!v||typeof v!=="object")return;
+ snowFront=v;
+ if(sheetKind==="snow")liveSheet(true);
 }
 // Live duel events. A result's journal entry (scores, XP) says more than the short notice: it is not overwritten.
 function duelEvent(v){
@@ -2020,7 +2536,7 @@ function showTips(){let seen=false;try{seen=!!localStorage.getItem("politigo.tip
 $("#tips-close").addEventListener("click",()=>{try{localStorage.setItem("politigo.tips.1.6","1");}catch{}$("#tips").hidden=true;});
 $("#form-login").addEventListener("submit",e=>submitAuth(e,"/api/login",{}));
 $("#form-register").addEventListener("submit",e=>submitAuth(e,"/api/register",{camp:regCamp}));
-function endSession(message){me=null;board=[];feed=[];renderFeed();showAuth(message);}
+function endSession(message){me=null;board=[];feed=[];snowLast=snowData=snowFront=null;snowErr="";snowAsked=false;renderFeed();showAuth(message);}
 // The device's push subscription goes first, while the session still allows it: another account signing in here
 // must never receive the previous player's duel notifications.
 async function logout(){
@@ -2038,6 +2554,23 @@ function halloweenHello(){
  const key=`politigo.halloween.${new Date(serverNow()).getFullYear()}`;
  try{if(localStorage.getItem(key))return;localStorage.setItem(key,"1");}catch{}
  toast("🎃 Joyeux Halloween ! La République est hantée jusqu'au 1er novembre : bonbons à la Buvette, costumes la nuit…");
+}
+
+// ---------- Trêve des confiseurs ----------
+// Its first sight, once a year on this device (the year of the theme's December: 1 January does not ask again).
+let noelHi=false,voeuxHi=false;
+function noelHello(){
+ noelHi=true;
+ const key=`politigo.noel.${noelYear(serverNow())}`;
+ try{if(localStorage.getItem(key))return;localStorage.setItem(key,"1");}catch{}
+ toast("🎄 La Trêve des confiseurs commence ! Jusqu'au 1er janvier : calendrier de l'Avent et Buvette de fête, et bataille de boules de neige (Jouer → Bataille de boules de neige).");
+}
+// 31 December from 20 h: the élu's vœux, said once in the evening (the lectern and the flags stay until midnight).
+function voeuxHello(){
+ voeuxHi=true;
+ const key=`politigo.voeux.${noelYear(serverNow())}`;
+ try{if(localStorage.getItem(key))return;localStorage.setItem(key,"1");}catch{}
+ toast(`🎙️ Les vœux de ${look().name} : ${voeuxText(S.camp,serverNow())}`);
 }
 
 // The running mission's countdown, updated in place: the sheet is not redrawn every game minute.
@@ -2059,8 +2592,9 @@ function tickFrame(now){
   // The mini-games run on their own clock, which a scene stops and a hidden tab pauses (one frame is 100 ms at most).
   if(mini&&!scene){const d=Math.min(100,fdt);miniClock+=d;mini.step(miniClock,Math.min(0.05,d/1000));if(mini.over(miniClock))endMini();}
   // Full frame rate only while something moves fast; the idle screen is fine at ~8 fps and saves battery.
+  const ny=nySync(now).scene;
   if(bd.isOpen())bd.frame(now);
-  else if(pong||mini||scene||anim||lvlFx||now-lastDraw>=120){lastDraw=now;render(now);}
+  else if(pong||mini||scene||anim||lvlFx||nyFrameDue(ny,reduced,now,lastDraw)||now-lastDraw>=120){lastDraw=now;render(now);}
   if(now-lastHud>500){lastHud=now;refresh();liveSheet();missionClock();eventBar();}
   portraitsTick(now);
   // After a game, in order: what the journal kept back (once the game's own result has been read), the news,
@@ -2072,7 +2606,11 @@ function tickFrame(now){
    if(announceQ.length)showAnnounce();
    if(pushAskWanted)pushAsk();
   }
-  if(hw()&&!hwHello&&!scene&&!quiet()&&!toastQ.length&&sheetKind!=="news"&&Date.now()-toastAt>4000)halloweenHello();
+  if(!scene&&!quiet()&&!toastQ.length&&sheetKind!=="news"&&Date.now()-toastAt>4000){
+   if(hw()&&!hwHello)halloweenHello();
+   else if(noel()&&!noelHi)noelHello();
+   else if(!voeuxHi&&moment()==="voeux"&&!isAsleep())voeuxHello();
+  }
  }
 }
 

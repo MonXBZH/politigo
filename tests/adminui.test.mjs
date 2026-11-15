@@ -267,6 +267,23 @@ test("the Modo événements profile: the events, signed with their name, and not
  assert.equal((await m2.call("prod","events-list")).status,200);assert.equal((await m2.call("prod","event-save",ev)).status,403);assert.equal((await m2.call("prod","event-preview",ev)).status,403);
 });
 
+test("the console offers Noël and lists snow challenges for a moderator with the Duels panel",async()=>{
+ const js=await fetch(`http://127.0.0.1:${ADMIN}/admin.js`).then(r=>r.text());
+ assert.match(js,/noel:"Noël"/);assert.match(js,/value:"noel"|\["noel",/);assert.match(js,/Défis de neige/);
+ const b=browser();assert.equal((await b.login()).status,200);
+ const set=await b.call("prod","event-set",{mode:"noel"});assert.equal(set.status,200,JSON.stringify(set.json));
+ assert.equal((await b.call("prod","event-set",{mode:"auto"})).status,200);
+ assert.equal((await b.call("prod","snow-challenges")).status,200);
+ await player(API1,"Modo Neige");
+ const id=(await b.call("prod","list")).json.players.find(p=>p.name==="Modo Neige").id;
+ const ok=await b.req("/api/mods/save",{server:"prod",player:id,panels:["duels"],actions:[],servers:[]});assert.equal(ok.status,200,JSON.stringify(ok.json));
+ const m=browser();assert.equal((await m.req("/api/login",{name:"Modo Neige",password:ok.json.password})).status,200);
+ const r=await m.call("prod","snow-challenges");assert.equal(r.status,200,JSON.stringify(r.json));assert.ok(Array.isArray(r.json.items));
+ const no=await b.req("/api/mods/save",{id:ok.json.mod.id,panels:["chat"],actions:[]});assert.equal(no.status,200);
+ const n=browser();assert.equal((await n.req("/api/login",{name:"Modo Neige",password:ok.json.password})).status,200);
+ assert.equal((await n.call("prod","snow-challenges")).status,403);
+});
+
 test("deleting a player: a right of its own, in no profile; moderators' accounts and protected ones are out of reach",async()=>{
  const b=browser();await b.login();
  const cat=(await b.req("/api/mods")).json;

@@ -16,6 +16,8 @@ import {createChat} from "./chat.mjs";
 import {linkConfig,instanceId,startLink} from "./adminlink.mjs";
 import * as W from "./wardrobe.mjs";
 import * as D from "./duel.mjs";
+import * as SF from "./snowfront.mjs";
+import {createChallenges} from "./snowchallenges.mjs";
 
 const env=process.env;
 process.umask(0o077);
@@ -56,7 +58,7 @@ const PRESENCE_MS=Math.max(0,Number(env.PRESENCE_MS??8000));
 // Every game change used to resend the whole board to every stream: now at most one board per BOARD_MS.
 const BOARD_MS=Math.max(0,Number(env.BOARD_MS??1000));
 const MAX_PLAYERS=Math.max(1,Number(env.MAX_PLAYERS)||50);   // a leaked invite code cannot flood the database
-const SESSION_DAYS=90,BODY_LIMIT=4096,FEED_KEEP=200,SESSIONS_PER_PLAYER=10,SSE_PER_PLAYER=3,SSE_TOTAL=300,SSE_PER_IP=12;
+const SESSION_DAYS=90,BODY_LIMIT=4096,ACTION_BODY_LIMIT=16384,FEED_KEEP=200,SESSIONS_PER_PLAYER=10,SSE_PER_PLAYER=3,SSE_TOTAL=300,SSE_PER_IP=12;
 // Sign-ups per address and hour: a group of friends behind one box, not a farm of accounts. Only wrong invite codes
 // count against guessing; a typo in the form (name taken, short password) costs nothing.
 const REG_PER_HOUR=4,REG_BAD_INVITE_PER_HOUR=5;
@@ -86,6 +88,17 @@ let EVENT_MODE=R.EVENT_MODES.includes(env.POLITIGO_EVENT)?env.POLITIGO_EVENT:"au
 if(env.POLITIGO_EVENT&&EVENT_MODE!==env.POLITIGO_EVENT)console.error(`POLITIGO_EVENT must be one of ${R.EVENT_MODES.join(", ")}: using auto.`);
 if(EVENT_MODE!=="auto")console.warn(`Seasonal event forced: ${EVENT_MODE}.`);
 const eventNow=()=>R.eventAt(Date.now(),EVENT_MODE);
+// The Trêve's New Year midnight (1 Jan 00:00, server time) moved to another instant, in ms: a test setting, so a
+// released image refuses to start with it (it would close the Front de neige and send the toast at any time).
+let NEWYEAR_AT=null;
+if(env.POLITIGO_NEWYEAR_AT!==undefined&&env.POLITIGO_NEWYEAR_AT!==""){
+ // The raw variable: anything but unset, empty or "dev" (even a value VERSION would show as "dev") is refused.
+ const rawVersion=env.POLITIGO_VERSION??"";
+ if(rawVersion!==""&&rawVersion!=="dev"){console.error("POLITIGO_NEWYEAR_AT is a test setting: refused unless POLITIGO_VERSION is unset or \"dev\". Remove it.");process.exit(1);}
+ const n=Number(env.POLITIGO_NEWYEAR_AT);
+ if(!Number.isSafeInteger(n)||n<=0){console.error("POLITIGO_NEWYEAR_AT must be an instant in ms since 1970.");process.exit(1);}
+ NEWYEAR_AT=n;console.warn(`New Year test setting active: midnight at ${new Date(n).toISOString()}.`);
+}
 // The timed events still to come or running (the table holds them all): read by every action and every clock tick.
 let EVENTS=[];
 const fxOf=p=>t=>E.effectsOf(EVENTS,p.state.camp,t);
@@ -202,6 +215,8 @@ for(const col of ["deaths","warned"]){
 // Settings changed from the admin interface win over the environment and the files, from then on.
 const getSetting=k=>db.prepare("SELECT value FROM settings WHERE key=?").get(k)?.value??null;
 const setSetting=(k,v)=>db.prepare("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(k,v);
+// The Front de neige's tables (snowfront.mjs). A player is paid for the camp he fought for; a deleted one is skipped.
+const front=SF.createSnowFront(db,{exists:id=>players.has(id)});
 let INVITE_SOURCE=env.POLITIGO_INVITE?"env":"file";
 {const v=getSetting("invite");if(v&&v.length>=16){INVITE=v;INVITE_SOURCE="admin";INVITE_GENERATED=false;}}
 let REG_OPEN=getSetting("registrations")!=="closed";
@@ -468,8 +483,9 @@ const nameKey=n=>n.normalize("NFKD").replace(/\p{M}/gu,"").toLocaleLowerCase("fr
 // Lookalikes count as the letter they mimic (0 and Ø for o; 1, i, I and ł for l; 3 for e, 4 for a, ŋ, đ, œ), spaces and
 // signs not at all; both words anywhere in the name ("Annonces officielles", "Officiel annonce") are refused too.
 const lookalike=s=>s.replace(/œ/g,"oe").replace(/[0ø]/g,"o").replace(/[1ił]/g,"l").replace(/3/g,"e").replace(/4/g,"a").replace(/ŋ/g,"n").replace(/đ/g,"d").replace(/[^a-z]/g,"");
-const RESERVED_WORDS=["annonce","officiel"].map(lookalike);
-const reservedName=n=>{const k=lookalike(nameKey(n));return RESERVED_WORDS.every(w=>k.includes(w));};
+// The game's own name signs its news in the feed (the Front de neige, the Bâton): no player may take it either.
+const RESERVED_WORDS=["annonce","officiel"].map(lookalike),RESERVED_GAME=lookalike("politigo");
+const reservedName=n=>{const k=lookalike(nameKey(n));return RESERVED_WORDS.every(w=>k.includes(w))||k.includes(RESERVED_GAME);};
 // Keys written by an older version are brought up to date (a clash keeps the older key).
 for(const p of players.values()){try{q.setKey.run(nameKey(p.name),p.id);}catch(e){console.error(`player ${p.id}: name key not updated (${e.message})`);}}
 
@@ -507,11 +523,12 @@ function checkOrigin(req){
   if(!o||!(o.host===host||(!host.includes(":")&&o.hostname===host)))throw new HttpError(403,"Origine refusée.");
  }
 }
-async function readJson(req){
+// limit: 4 KiB for every route; POST /api/action alone asks for ACTION_BODY_LIMIT (a snowball fight sends up to 400 taps).
+async function readJson(req,limit=BODY_LIMIT){
  if(!/^application\/json\s*(;|$)/i.test(String(req.headers["content-type"]||"")))throw new HttpError(415,"JSON attendu.");
  checkOrigin(req);
  let size=0;const chunks=[];
- for await(const c of req){size+=c.length;if(size>BODY_LIMIT)throw new HttpError(413,"Requête trop grosse.");chunks.push(c);}
+ for await(const c of req){size+=c.length;if(size>limit)throw new HttpError(413,"Requête trop grosse.");chunks.push(c);}
  try{const v=JSON.parse(Buffer.concat(chunks).toString("utf8")||"{}");if(!v||typeof v!=="object"||Array.isArray(v))throw 0;return v;}
  catch{throw new HttpError(400,"JSON invalide.");}
 }
@@ -604,7 +621,222 @@ function flushBoard(){
 }
 // The debate's seed deals its answers: it never leaves the server (the other games' seeds only shape what is drawn).
 const publicState=S=>S.mini?.k==="debate"&&"seed" in S.mini?{...S,mini:Object.fromEntries(Object.entries(S.mini).filter(([k])=>k!=="seed"))}:S;
-function mePayload(p){return {name:p.name,state:publicState(p.state),speed:SPEED,tz:R.timeZone(),serverNow:Date.now(),event:EVENT_MODE,events:publicEvents(Date.now()),version:VERSION,release:RELEASE,seenVersion:p.seen??null,chat:chatRooms(),urnHint:urnHintOf(p),baton:batonWon?batonView(p):null};}
+function mePayload(p){return {name:p.name,state:publicState(p.state),speed:SPEED,tz:R.timeZone(),serverNow:Date.now(),event:EVENT_MODE,events:publicEvents(Date.now()),version:VERSION,release:RELEASE,seenVersion:p.seen??null,chat:chatRooms(),urnHint:urnHintOf(p),baton:batonWon?batonView(p):null,...noelView(p,Date.now())};}
+
+// ===================================================================== TRÊVE: THE FRONT DE NEIGE AND THE NEW YEAR TOAST
+// Every snowball fight the server replayed adds its score to its player's camp (snowfront.mjs), unless flagged as a
+// bot (or over 160 points, "plafond"), begun outside the Trêve, or begun at/after New Year's midnight: the start
+// decides, so a fight begun at 23:59 and ended after midnight counts. 120 points a fight at most, 400 a player a
+// server day (the day of the fight's start; snowfront.mjs keeps it with the add). The closing waits for those fights
+// (their longest life is the judge's expiry).
+const SNOW_LIVE_MS=(R.MINI.snowball.ms/1000+R.MINI_RULES.graceSeconds)*1000+1000;
+const SNOW_BOT_FLAGS=new Set(["taps_rapides","precision","reflexe","plafond"]);
+const FRONT_EVERY=10e3,FRONT_PRIZE=3,TOAST_TEXT="🥂 Bonne année ! Toute la République trinque, gauche et droite réunies. Viens lever ton verre !";
+const nyYear=now=>SF.frontYear(now,NEWYEAR_AT),nyClosing=y=>SF.closingAt(y,NEWYEAR_AT);
+function frontView(now){const y=nyYear(now),t=front.totals(y);return {left:t.left,right:t.right,closed:now>=nyClosing(y)};}
+// In /api/me, only while the theme is on (the console's "off" cuts the whole season): the counter; the toast, live
+// during its five minutes (newYear.live), then until 2 Jan 00:00 for the banner's « Revoir » (live:false, newYearBanner).
+function noelView(p,now){
+ const o={};
+ try{
+  if(!R.isNoel(eventNow()))return o;
+  o.snowFront=frontView(now);
+  const w=SF.newYearWindow(now,NEWYEAR_AT);
+  if(w.on||w.banner)o.newYear={...newYearView(p,now),live:w.on};
+  if(w.banner)o.newYearBanner=true;
+ }catch(e){console.error(`player ${p.id}: Trêve view`,e);}
+ return o;
+}
+// Up to 4 names drawn among those online (not the player): a draw stable for each viewer through the toast (a hash of
+// the year, the viewer and the name's owner), so the scene does not reshuffle at every push. Then a count of the other
+// players seen in the last 24 h. The Front's result once anybody fought.
+function newYearView(p,now){
+ const y=nyYear(now),on=onlineIds();
+ const names=[...on].filter(id=>id!==p.id).map(id=>players.get(id)).filter(o=>o&&!o.suspended)
+  .map(o=>({o,k:sha256(`${y}:${p.id}:${o.id}`)})).sort((a,b)=>a.k<b.k?-1:a.k>b.k?1:0).slice(0,4).map(x=>x.o);
+ const listed=new Set(names.map(o=>o.id));let others=0;
+ for(const o of players.values())if(o.id!==p.id&&!o.suspended&&!listed.has(o.id)&&(on.has(o.id)||(o.lastSeen??0)>=now-24*R.H))others++;
+ const t=front.result(y)??front.totals(y);
+ return {names:names.map(o=>o.name),others,front:t.left+t.right>0?{winner:SF.winnerOf(t),left:t.left,right:t.right}:null,until:SF.toastEnd(y,NEWYEAR_AT)};
+}
+// From /api/action, with the rules' hidden audit of an accepted fight. Returns the points added to the Front (capped:
+// maybe fewer than the score, 0 past the day's allowance), or false when the fight does not count. The miniEnd reply
+// says both (front, frontPts): the browser tells the player how many of his points counted, only when they did.
+function frontAdd(p,a){
+ if(a.noel!==true||!Number.isFinite(a.start)||!Number.isSafeInteger(a.score)||a.score<0)return false;
+ if(Array.isArray(a.flags)&&a.flags.some(f=>SNOW_BOT_FLAGS.has(f)))return false;
+ const y=nyYear(a.start);if(a.start>=nyClosing(y))return false;
+ const pts=front.put(y,p.state.camp,p.id,a.score,R.dayKey(Math.floor(a.start/R.H)));if(pts===null)return false;
+ frontChanged();return pts;
+}
+// The open screens hear the counter through the "snowFront" event ({left,right,closed}), at most once per FRONT_EVERY.
+let frontSent=0,frontTimer=null;
+function frontChanged(){
+ if(frontTimer)return;
+ frontTimer=setTimeout(()=>{frontTimer=null;frontSent=Date.now();
+  try{if(R.isNoel(eventNow()))broadcast("snowFront",frontView(frontSent));}catch(e){console.error("snowFront broadcast:",e);}},Math.max(0,frontSent+FRONT_EVERY-Date.now()));
+ frontTimer.unref?.();
+}
+// Every 10 s. First a Front an earlier year left open (a server down through January): closed at once. Then, from
+// 1 Jan 00:00, once a year the toast (to every subscribed device, only during its five minutes, so a server down at
+// midnight does not wish a late "come and raise your glass", and only while the theme is on), and once a year the closing.
+function newYearTick(now=Date.now()){
+ const y=nyYear(now),at=nyClosing(y),stale=front.lastOpen();
+ if(stale!==null&&stale<y&&now>=nyClosing(stale))closeFront(stale,now);
+ if(now<at)return;
+ if(R.isNoel(eventNow())&&getSetting("newyear_sent")!==String(y)){
+  setSetting("newyear_sent",String(y));   // first: a crash right after loses the toast rather than sending it twice
+  if(now<SF.toastEnd(y,NEWYEAR_AT)){
+   let n=0;
+   for(const {id} of q.subbedIds.all()){const o=players.get(id);if(o&&!o.suspended){notify(id,{title:"PolitiGo",body:TOAST_TEXT,tag:"newyear",url:"/"});n++;}}
+   console.log(`New Year toast pushed to ${n} player(s)`);
+  }
+ }
+ if(getSetting("snowfront_closed")!==String(y)&&!fightsBefore(at,now))closeFront(y,now);
+}
+const fightsBefore=(at,now)=>[...players.values()].some(p=>{const m=p.state.mini;return m?.k==="snowball"&&m.noel===true&&m.t<at&&now-m.t<=SNOW_LIVE_MS;});
+// The result, the bulletins and the "closed" setting in ONE transaction: a crash or an error pays everybody or nobody,
+// and the next tick retries; the live states are put back on an error. The feed line and the admin log come after.
+function closeFront(y,now){
+ const keep=new Map();let res,paid=0;
+ batonBusy=true;db.exec("BEGIN");
+ try{
+  res=front.close(y,now);
+  for(const id of res.paid){
+   const p=players.get(id);if(!p||p.suspended)continue;
+   keep.set(id,p.state);
+   update(p,S=>{const w=S.wardrobe;if(!w)return false;const b=Number.isFinite(w.bulletins)?w.bulletins:0;w.bulletins=Math.min(9999,b+FRONT_PRIZE);
+    R.logEntry(S,"snowfront",res.winner==="tie"?`❄️ Le Front de neige est tombé : égalité, les deux camps l'emportent. +${FRONT_PRIZE} bulletins.`
+     :`❄️ Le Front de neige est tombé : ton camp l'emporte. +${FRONT_PRIZE} bulletins.`,{bulletins:FRONT_PRIZE});});
+   paid++;
+  }
+  setSetting("snowfront_closed",String(y));
+  db.exec("COMMIT");
+ }catch(e){
+  try{db.exec("ROLLBACK");}catch{}
+  for(const [id,s] of keep){const p=players.get(id);if(p)p.state=s;}
+  console.error(`Front de neige ${y} NOT closed (retried in 10 s):`,e);return;
+ }finally{batonBusy=false;}
+ const {winner,left,right}=res;
+ console.log(`Front de neige ${y} closed: left ${left}, right ${right}, ${paid} player(s) paid`);
+ if(R.isNoel(eventNow()))try{broadcast("snowFront",frontView(now));}catch(e){console.error("snowFront broadcast:",e);}
+ if(!left&&!right&&!res.paid.length)return;   // nobody fought: nothing to tell
+ const text=winner==="tie"?`❄️ Le Front de neige est tombé : égalité parfaite, ${left} partout.`
+  :`❄️ Le Front de neige est tombé : la ${winner==="left"?"Gauche":"Droite"} l'emporte (${Math.max(left,right)} contre ${Math.min(left,right)}).`;
+ feedLine("PolitiGo","snowfront",text);
+ audit("server","noel-front",String(y),`Gauche ${left} · Droite ${right} · ${winner==="tie"?"égalité":winner==="left"?"la Gauche gagne":"la Droite gagne"} · +${FRONT_PRIZE} bulletins à ${paid} joueur${paid>1?"s":""}`);
+}
+setInterval(()=>{try{newYearTick();}catch(e){console.error("New Year tick:",e);}},10e3).unref();
+
+// ===================================================================== TRÊVE: THE SNOWBALL CHALLENGES (snowchallenges.mjs)
+// A validated, unflagged, ordinary fight can be re-dealt to another player within SNOWCH_LAUNCH_MS: its seed and score
+// are those the server kept when the fight ended (in memory: a restart only loses the right to launch from it), never
+// the body's. The defender plays it through snowStart {challenge:id}; the best score takes +10 moral, a tie +5 each.
+// A fight flagged as a bot counts 0 for the challenge. Never XP, never FM. Open ones expire after 24 h (plus a fight's
+// longest life, so a fight begun in time still finishes), and are all cancelled once the theme is over. A challenge
+// is played once: the defender's first start puts it in play (its game's id kept); a game refused, or never ended
+// within its longest life, closes it at 0 for the defender. Both players need the duels' level to launch one.
+const SNOWCH_LAUNCH_MS=knob(env.POLITIGO_SNOW_CHALLENGE_MS,10*60e3);
+if(SNOWCH_LAUNCH_MS!==10*60e3)console.warn(`Snow challenge test setting active: launched within ${SNOWCH_LAUNCH_MS} ms of the fight (normal: 10 min).`);
+const snowCh=createChallenges(db),SNOWCH_WIN=10,SNOWCH_TIE=5;
+const snowGames=new Map();   // playerId -> {gameId,seed,score,bot,ch,t}: their last validated fight
+const isBotFight=flags=>Array.isArray(flags)&&flags.some(f=>SNOW_BOT_FLAGS.has(f));
+// A challenge id from a body: a positive whole number, or its decimal string.
+const snowChId=v=>Number.isSafeInteger(v)&&v>0?v:typeof v==="string"&&/^[1-9][0-9]{0,14}$/.test(v)?Number(v):null;
+const sseTo=(id,ev,data)=>{for(const c of clients)if(c.playerId===id)sse(c.res,ev,data);};
+// /api/action snowStart {challenge:id}: the rules' opts.challenge, only for its defender, while it is open, in time,
+// and its challenger still plays. Otherwise refused before anything is spent. Once its game started, never again.
+function snowChallengeOpts(p,v,now){
+ const id=snowChId(v),r=id&&snowCh.get(id),c=r&&players.get(r.challenger);
+ if(r&&r.defender===p.id&&r.status==="playing")throw new HttpError(422,"Ce défi est déjà en cours.");
+ if(!r||r.defender!==p.id||r.status!=="open"||now>=r.expires||!c||c.suspended)throw new HttpError(422,"Ce défi n'est plus ouvert.");
+ return {id:String(r.id),seed:r.seed};
+}
+// From /api/action, with the rules' hidden audit of any snowball fight (ok: validated). started: S.mini before it ended.
+// A challenge's game refused closes the challenge at 0 for the defender.
+function snowChEnded(p,a,ok,started,now){
+ const ch=typeof a.ch==="string",flags=Array.isArray(a.flags)?a.flags:[];
+ if(!ok||!Number.isSafeInteger(a.score)||a.score<0){if(ch)snowChFinish(p,a.ch,started,0,flags,now);return;}
+ if(started&&typeof started.id==="string"&&started.seed===a.seed&&started.t===a.start)
+  snowGames.set(p.id,{gameId:started.id,seed:a.seed,score:a.score,bot:isBotFight(flags),ch,t:now});
+ if(ch)snowChFinish(p,a.ch,started,isBotFight(flags)?0:a.score,flags,now);
+}
+// Only the game that put the challenge in play ends it.
+function snowChFinish(p,chId,started,sc,flags,now){
+ const r=snowCh.get(snowChId(chId));
+ if(!r||r.defender!==p.id||r.status!=="playing"||r.dGame!==started?.id)return;
+ snowChClose(r,sc,flags,now);
+}
+// The result, paid to both sides (from a game ended, or from the tick: a game never ended counts 0).
+function snowChClose(r,sc,flags,now){
+ const res=snowCh.finish(r.id,sc,now,flags);if(!res)return;
+ const pay=(id,moral,text)=>{
+  const pl=players.get(id);if(!pl)return;
+  try{update(pl,S=>{if(!pl.suspended)R.advance(S,now,SPEED,rand,fxOf(pl));if(moral)S.moral=R.clamp(S.moral+moral);R.logEntry(S,"snowch",text,{id:r.id,moral});});}
+  catch(e){console.error(`snow challenge ${r.id}: result NOT applied to player ${id}`,e);}
+  notify(id,{title:"PolitiGo",body:text,tag:`snowch-${r.id}`,url:"/"});
+  sseTo(id,"snowChallenge",{kind:"done",id:r.id});
+ };
+ if(res.tie){
+  pay(r.challenger,SNOWCH_TIE,`❄️ Défi de neige : égalité avec ${nameOf(r.defender)}, ${sc} partout. Moral +${SNOWCH_TIE}.`);
+  pay(r.defender,SNOWCH_TIE,`❄️ Défi de neige : égalité avec ${nameOf(r.challenger)}, ${sc} partout. Moral +${SNOWCH_TIE}.`);
+  return;
+ }
+ const w=res.winner,l=w===r.challenger?r.defender:r.challenger,ws=Math.max(sc,r.score),ls=Math.min(sc,r.score);
+ pay(w,SNOWCH_WIN,`❄️ Défi de neige : tu bats ${nameOf(l)}, ${ws} à ${ls}. Moral +${SNOWCH_WIN}.`);
+ pay(l,0,`❄️ Défi de neige : ${nameOf(w)} l'emporte, ${ws} à ${ls}.`);
+}
+// A deleted or suspended player: nothing open touches them any more; the other side's screens are told.
+function snowChCancelOf(id,now){
+ for(const c of snowCh.cancelOf(id,now)){const r=snowCh.get(c);if(r)sseTo(r.challenger===id?r.defender:r.challenger,"snowChallenge",{kind:"cancelled",id:c});}
+ snowGames.delete(id);
+}
+// From chores (and at once when the console changes the theme): the end of the theme cancels everything open
+// (idempotent: nothing open, nothing done), the overdue expire, the ones whose game is over without an end close at
+// 0 for the defender, the launch rights past their window go.
+function snowChTick(now){
+ if(!R.isNoel(eventNow())){const n=snowCh.cancelAll(now).length;if(n)console.log(`Trêve over: ${n} snow challenge(s) cancelled`);}
+ snowCh.expire(now-SNOW_LIVE_MS);
+ for(const id of snowCh.playingDue(now-SNOW_LIVE_MS)){const r=snowCh.get(id);if(r)try{snowChClose(r,0,[],now);}catch(e){console.error(`snow challenge ${id}: not closed`,e);}}
+ for(const [id,g] of snowGames)if(now-g.t>SNOWCH_LAUNCH_MS)snowGames.delete(id);
+ snowCh.purge(now-30*864e5);
+}
+// POST /api/snow/challenge {to:name, gameId}.
+async function snowChallengeRoute(req,res){
+ const p=auth(req);
+ if(limited("snowch:"+p.id,10,60e3))throw new HttpError(429,"Doucement : réessaie dans un instant.");
+ const b=await readJson(req);
+ if(!players.has(p.id))throw new HttpError(401,"Connexion requise.");   // deleted while the body was arriving
+ if(!R.isNoel(eventNow()))throw new HttpError(422,"Les défis de neige ont lieu seulement pendant la Trêve des confiseurs.");
+ if(typeof b.to!=="string"||typeof b.gameId!=="string"||!b.gameId||b.gameId.length>40)throw new HttpError(400,"Défi : le pseudo du joueur (to) et la partie (gameId).");
+ const lowLevel=`Les défis s'ouvrent au niveau ${DUEL_MIN_LEVEL}.`;
+ if(p.state.lvl<DUEL_MIN_LEVEL)throw new HttpError(422,lowLevel);
+ const now=Date.now(),g=snowGames.get(p.id);
+ if(!g||g.gameId!==b.gameId)throw new HttpError(422,"Cette partie ne peut pas servir de défi : joue d'abord une partie de bataille.");
+ if(g.ch)throw new HttpError(422,"Une partie de défi ne se relance pas.");
+ if(g.bot)throw new HttpError(422,"Cette partie ne peut pas servir de défi.");
+ if(now-g.t>SNOWCH_LAUNCH_MS)throw new HttpError(422,"Trop tard : un défi se lance dans les 10 minutes qui suivent la partie.");
+ const row=q.playerByKey.get(nameKey(cleanName(b.to).slice(0,40))),o=row&&players.get(row.id);
+ if(!o||o.suspended)throw new HttpError(422,"Joueur introuvable.");
+ if(o.id!==p.id&&o.state.lvl<DUEL_MIN_LEVEL)throw new HttpError(422,lowLevel);
+ let id;
+ try{({id}=snowCh.open({challenger:p.id,defender:o.id,seed:g.seed,score:g.score,now}));}catch(e){throw new HttpError(422,e.message);}
+ logActivity(p,req,"snowChallenge");
+ notify(o.id,{title:"PolitiGo",body:`❄️ ${p.name} te défie aux boules de neige (${g.score} points). Tu as 24 h.`,tag:`snowch-${id}`,url:"/"});
+ sseTo(o.id,"snowChallenge",{kind:"new",id});
+ return send(res,200,{ok:true,challenge:{id,to:o.name,score:g.score,expires:snowCh.get(id).expires}});
+}
+// GET /api/snow/challenges: the player's own, received (open, in time, from a challenger still playing) and sent
+// (open, or closed within 24 h, with its result).
+function snowChallengesView(p,now){
+ const outcome=r=>r.winner===null?"tie":r.winner===p.id?"win":"loss";
+ return {
+  received:snowCh.forDefender(p.id,now).filter(r=>{const c=players.get(r.challenger);return c&&!c.suspended;})
+   .map(r=>({id:r.id,from:nameOf(r.challenger),score:r.score,expires:r.expires})),
+  sent:snowCh.forChallenger(p.id,now).map(r=>({id:r.id,to:nameOf(r.defender),status:r.status,expires:r.expires,
+   ...(r.status==="done"?{result:{mine:r.score,theirs:r.dScore,outcome:outcome(r)}}:{})})),
+ };
+}
 // The clock runs for everyone, connected or not: needs drain and deaths happen while the page is closed.
 loadEvents();
 setInterval(()=>{try{eventsTick(Date.now());}catch(e){console.error("events tick:",e);}},1000).unref();
@@ -1442,7 +1674,7 @@ async function route(req,res){
  }
  if(path==="/api/action"&&method==="POST"){
   const p=auth(req);if(limited("act:"+p.id,40,10e3))throw new HttpError(429,"Doucement : trop d'actions d'un coup.");
-  const b=await readJson(req);
+  const b=await readJson(req,ACTION_BODY_LIMIT);
   if(!players.has(p.id))throw new HttpError(401,"Connexion requise.");   // deleted while the body was arriving
   const row=logActivity(p,req,typeof b.type==="string"?b.type:"?");
   const now=Date.now(),ev=eventNow();let lag=null;
@@ -1450,6 +1682,9 @@ async function route(req,res){
   if(b.type==="miniEnd"&&p.state.mini?.k==="debate")throw new HttpError(422,"Le Débat chrono se joue question par question.");
   const opts={now,speed:SPEED,random:rand,event:ev,boost:fxOf(p)},won={v:false};
   if(b.type==="draw")opts.mythic=mythicOpts(p,now,won);
+  // A challenge is the server's to give (snowchallenges): the body only names it.
+  if(b.type==="snowStart"&&b.challenge!==undefined&&b.challenge!==null)opts.challenge=snowChallengeOpts(p,b.challenge,now);
+  const started=b.type==="miniEnd"&&p.state.mini?.k==="snowball"?p.state.mini:null;
   let r;
   // A claimed staff that did not end up in the saved game (a failed write, a refused draw) goes back to the urn.
   // The state is brought up to date first (act does it again, a no-op), to read what was waiting before the action.
@@ -1459,12 +1694,23 @@ async function route(req,res){
   // A letter waiting behind another: from the moment it came to the head, i.e. the previous answer when later.
   if(lag!==null&&b.type==="mailAnswer"){try{const prev=q.lastAnswer.get(p.id,row??-1)?.t;if(Number.isFinite(prev))lag=Math.min(lag,now-prev);}catch{}}
   if(lag!==null)setLag(row,lag);
-  if(r.audit){recordMini(p,r.audit,now);delete r.audit;}   // for the admin, not for the player's script
+  if(r.audit){
+   const a=r.audit;recordMini(p,a,now);delete r.audit;   // for the admin, not for the player's script
+   if(r.ok&&a.game==="snowball"){r.front=false;r.frontPts=0;try{const pts=frontAdd(p,a);if(pts!==false){r.front=true;r.frontPts=pts;}}catch(e){console.error(`player ${p.id}: Front de neige`,e);}}
+   if(a.game==="snowball"){try{snowChEnded(p,a,r.ok,started,now);}catch(e){console.error(`player ${p.id}: snow challenge`,e);}}
+  }
+  // The challenge's game started: in play from now on, never offered again.
+  if(r.ok&&opts.challenge&&r.game?.id){try{snowCh.play(Number(opts.challenge.id),r.game.id,now);}catch(e){console.error(`player ${p.id}: snow challenge in play`,e);}}
   if(r.ok&&b.type==="draw")drawNews(p,r,won.v,now);
   // The rules hand the turn (its seed included) to the server only, out of the reply.
   if(r.ok&&b.type==="debate"&&r.turn&&p.state.mini?.k==="debate")soloTurns.set(p.id,{t:miniKey(p.state.mini),st:r.turn,q:null});
   if(deferred.size)flushDeferred();
   return send(res,r.ok?200:422,{...r,me:mePayload(p)});
+ }
+ if(path==="/api/snow/challenge"&&method==="POST")return snowChallengeRoute(req,res).finally(()=>{if(deferred.size)flushDeferred();});
+ if(path==="/api/snow/challenges"&&method==="GET"){
+  const p=auth(req);if(limited("snowchs:"+p.id,30,10e3))throw new HttpError(429,"Doucement : réessaie dans un instant.");
+  return send(res,200,{ok:true,...snowChallengesView(p,Date.now())});
  }
  if(path==="/api/debate"&&method==="POST")return debateRoute(req,res).finally(()=>{if(deferred.size)flushDeferred();});
  if(path==="/api/duels"&&method==="GET"){
@@ -1883,7 +2129,9 @@ const GAMES={
  duel:{full:Infinity,max:R.DEBATE.maxPoints,minSecs:null},   // a duel turn: the Débat chrono against a rival
  pong:{full:Math.ceil(P_.bonusCap/P_.bonusPerReturn),max:P_.maxScore,minSecs:sc=>Math.max(P_.minSeconds,(sc-1)/P_.returnsPerSecond)},
  ...Object.fromEntries(["cortege","epervier"].map(k=>{const m=R.MINI[k];
-  return [k,{full:Math.ceil(m.bonusCap/m.bonusRate),max:m.maxScore,minSecs:sc=>Math.max(R.MINI_RULES.minSeconds,(sc-1)/m.perSecond+(m.intro||0)/1000)}];}))
+  return [k,{full:Math.ceil(m.bonusCap/m.bonusRate),max:m.maxScore,minSecs:sc=>Math.max(R.MINI_RULES.minSeconds,(sc-1)/m.perSecond+(m.intro||0)/1000)}];})),
+ // The snowball fight is scored by the server's replay (no pace to check); its histogram tops at 160, the "plafond" line.
+ snowball:{full:Math.ceil(R.MINI.snowball.bonusCap/R.MINI.snowball.bonusRate),max:R.MINI.snowball.suspect-1,minSecs:null},
 };
 const HIST_BINS=10,NOT_IMPLAUSIBLE=new Set(["zero_erreur"]);
 function gameStats(rows){
@@ -2092,6 +2340,7 @@ function chores(now){
  q.purgeActivity.run(activityCut(now));q.purgeMini.run(activityCut(now));
  q.purgeDuels.run(now-30*864e5);q.purgeTombstones.run(now-7*864e5);q.purgeAcks.run(now-ALERT_DAYS*864e5);
  for(const dir of new Set([ADMIN_SOCKET&&dirname(ADMIN_SOCKET),dirname(DB_PATH)].filter(Boolean)))sweepBackups(dir,now);
+ try{snowChTick(now);}catch(e){console.error("chores, snow challenges:",e);}
 }
 // Backup copies older than 10 min that nothing took away: cut short by a full disk (its journal too), or left next to
 // the database by a stop in the middle of a transfer over the network link.
@@ -2117,6 +2366,7 @@ function removePlayer(p){
   try{if(q.duelClose.run("void",now,dayNow(now),d.id,d.status).changes)duelEvent(d,"void",(d.status==="c_play"?[d.challenger]:[d.challenger,d.defender]).filter(id=>id!==p.id));}
   catch(e){console.error(`deleting a player, duel ${d.id}:`,e);}
  }
+ try{snowChCancelOf(p.id,now);}catch(e){console.error("snow challenges, deleting a player:",e);}
  db.exec("BEGIN");
  try{q.freeMythicsOf.run(p.id);q.deleteSchedulesTo.run(p.id);q.deletePlayer.run(p.id);q.tombstone.run(nameKey(p.name),p.created,now);q.deleteFeedOf.run(p.name);setSetting("playerFloor",String(Math.max(p.id,Number(getSetting("playerFloor"))||0)));db.exec("COMMIT");}catch(e){db.exec("ROLLBACK");throw e;}
  players.delete(p.id);deferred.delete(p.id);soloTurns.delete(p.id);cleanCache.delete(p.id);   // a staff they held is back in the urn
@@ -2163,6 +2413,7 @@ function suspend(p,on){
   q.setSuspended.run(1,p.id);p.suspended=true;q.deleteSessionsOf.run(p.id);closeStreamsOf(p.id);deferred.delete(p.id);
   for(const d of q.openDuelsOf.all(p.id,p.id)){try{voidDuel(d,now);}catch(e){console.error(`suspend, duel ${d.id}:`,e);}}
   for(const r of bq.open.all())if(r.challenger===p.id||r.bearer===p.id){try{voidBaton(bLoad(r),now);}catch(e){console.error(`suspend, baton duel ${r.id}:`,e);}}
+  try{snowChCancelOf(p.id,now);}catch(e){console.error(`suspend, snow challenges of ${p.id}:`,e);}
   publishBoard(true);
  }else{
   // Back on the real hour: the suspension is skipped, not played.
@@ -2410,6 +2661,9 @@ async function adminCommand(b){
   return {};
  }
  if(cmd==="duels-list")return {items:q.openDuels.all().map(d=>({id:d.id,status:d.status,challenger:nameOf(d.challenger),defender:nameOf(d.defender),created:d.created,expires:d.expires??null,flags:flagsOf(d)}))};
+ // Read-only: the recent snowball challenges, the defender's score and the flags of their fight (counted 0 when a bot's).
+ if(cmd==="snow-challenges")return {items:snowCh.recent(limitOf(b.limit,50,200)).map(r=>({id:r.id,challenger:nameOf(r.challenger),defender:nameOf(r.defender),
+  score:r.score,dScore:r.dScore,status:r.status,created:r.created,expires:r.expires,closed:r.closed,winner:r.status==="done"&&r.winner!==null?nameOf(r.winner):null,dFlags:r.dFlags??[]}))};
  if(cmd==="duel-cancel"){
   const d=Number.isSafeInteger(b.id)&&q.duel.get(b.id);
   if(d){guard(d.challenger);guard(d.defender);}
@@ -2445,6 +2699,7 @@ async function adminCommand(b){
  if(cmd==="event-set"){
   if(!R.EVENT_MODES.includes(b.mode))throw new HttpError(400,`Mode : ${R.EVENT_MODES.join(", ")}.`);
   EVENT_MODE=b.mode;setSetting("event",b.mode);
+  try{snowChTick(now);}catch(e){console.error("event-set, snow challenges:",e);}   // the theme cut: open challenges go at once
   // Every open screen switches at once.
   for(const id of onlineIds()){const p=players.get(id);if(p)pushMe(p);}
   audit(via,cmd,"",`Événement : ${b.mode}`);console.log(`admin: seasonal event mode ${b.mode}`);
