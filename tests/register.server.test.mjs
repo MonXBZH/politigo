@@ -27,6 +27,13 @@ test("typos in the form do not count: three mistakes, then a valid sign-up goes 
  assert.equal((await reg(ip,{name:"Typo Deux"})).status,201);
 });
 
+test("the name the game signs its own news with, « PolitiGo », is reserved, lookalikes included",async()=>{
+ for(const name of ["PolitiGo","politigo","P0litiGo","Politi Go","PolitiG0 officiel","Le vrai PolitiGo"]){
+  const r=await reg("10.85.9.1",{name});assert.equal(r.status,400,name);assert.equal(r.error,"Ce pseudo est réservé à l'organisation.",name);
+ }
+ assert.equal((await reg("10.85.9.2",{name:"Politicien Go"})).status,201,"a near name is fine");
+});
+
 test("four friends behind the same box all sign up within the hour",async()=>{
  const ip="10.85.0.2";
  for(const name of ["Ami Un","Ami Deux","Ami Trois","Ami Quatre"])assert.equal((await reg(ip,{name})).status,201,name);

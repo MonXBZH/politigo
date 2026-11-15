@@ -76,8 +76,20 @@ const LAUNCH=0,LAND=1,ARRIVE=2,TAP=3;
 // Replays the taps against the schedule (the taps are sorted by time first; `sched` is never modified).
 // Returns {score,hits,thrown,parries,passHits,taken,best,events}; events: [{t,kind,pts,x,y}] for the browser to draw
 // (a "hit" or "pass" also says which pop it was, `i`, and the time of the tap that threw the ball, `from`).
-export function play(sched,taps){
- if(!validTaps(taps))throw new RangeError("snowball: invalid taps");
+// Each tap is read once, into plain numbers, and that copy is what is checked and replayed (a getter cannot pass the
+// check with one value and play another).
+const copyTaps=taps=>{
+ try{
+  if(!Array.isArray(taps))return null;
+  const n=taps.length;if(!(n<=SNOW.maxTaps))return null;
+  const out=[];
+  for(let i=0;i<n;i++){const o=taps[i];if(o===null||typeof o!=="object"||Array.isArray(o))return null;out.push({t:o.t,x:o.x,y:o.y});}
+  return out;
+ }catch{return null;}
+};
+export function play(sched,input){
+ const taps=copyTaps(input);
+ if(!taps||!validTaps(taps))throw new RangeError("snowball: invalid taps");
  const pops=sched.pops,sleighs=sched.sleighs||[];
  const hit=new Uint8Array(pops.length),sleighHit=new Uint8Array(sleighs.length);
  const R={score:0,hits:0,thrown:0,parries:0,passHits:0,taken:0,best:0,events:[]};
@@ -89,7 +101,7 @@ export function play(sched,taps){
  const before=(a,b)=>a.t<b.t||(a.t===b.t&&(a.p<b.p||(a.p===b.p&&a.n<b.n)));
  const push=e=>{e.n=seq++;let lo=0,hi=Q.length;while(lo<hi){const m=(lo+hi)>>1;if(before(Q[m],e))lo=m+1;else hi=m;}Q.splice(lo,0,e);};
  for(let i=0;i<pops.length;i++)if(pops[i].throws)push({t:pops[i].throwAt,p:LAUNCH,i});
- const sorted=taps.map(o=>({t:o.t,x:o.x,y:o.y})).sort((a,b)=>a.t-b.t||a.x-b.x||a.y-b.y);
+ const sorted=taps.sort((a,b)=>a.t-b.t||a.x-b.x||a.y-b.y);
  for(const o of sorted)push({t:o.t,p:TAP,x:o.x,y:o.y});
 
  const flying=[];   // incoming balls in the air: pop indexes, in launch order

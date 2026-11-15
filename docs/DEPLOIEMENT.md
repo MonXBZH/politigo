@@ -546,10 +546,14 @@ Le panneau **Events** de l'administration crée et gère des événements à dur
   Front de neige (camp contre camp) ; jamais d'argent réel ni de FM. Le Front de neige se clôt à minuit le 1er janvier,
   heure du serveur, puis le toast du Nouvel An réunit les joueurs. `POLITIGO_EVENT=noel` force la Trêve n'importe quel
   jour (serveur de test uniquement), `off` l'arrête ; la console le change aussi (mode « Noël forcé »). La carte
-  « Défis de neige » de la page Duels (commande `snow-challenges`, panneau Duels) est en lecture seule.
+  « Défis de neige » de la page Duels (commande `snow-challenges`, panneau Duels) est en lecture seule. Une partie apporte
+  au Front 120 points au plus, et un joueur 400 par jour (heure du serveur) ; une partie signalée (`plafond` au-delà de
+  160 points, `precision`, `reflexe`, `taps_rapides`) ne compte pas dans le Front et vaut 0 dans un défi, mais paie son
+  XP. Les défis de neige demandent aux deux joueurs le niveau des duels (`POLITIGO_DUEL_MIN_LEVEL`).
 - **Réglages de test de la Trêve** (jamais en production) : `POLITIGO_NEWYEAR_AT` (instant en ms depuis 1970) déplace
   minuit du Nouvel An ; le serveur refuse de démarrer avec elle si `POLITIGO_VERSION` n'est pas vide ou `dev`.
-  `POLITIGO_SNOW_CHALLENGE_MS` raccourcit le délai laissé au défié (10 minutes par défaut) ; elle ne peut que le réduire.
+  `POLITIGO_SNOW_CHALLENGE_MS` raccourcit le délai laissé au lanceur pour lancer un défi après sa partie (10 minutes par
+  défaut ; le défié a toujours 24 h) ; elle ne peut que le réduire.
 - **Réglages de test** (jamais en production) : `POLITIGO_DUEL_MIN_LEVEL` et `POLITIGO_DUEL_MIN_AGE_H` abaissent le niveau
   et l'ancienneté du compte exigés pour les duels (ils ne peuvent que les baisser), pour tester avec des comptes neufs.
 

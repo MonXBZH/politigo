@@ -13,8 +13,8 @@ import {outfitLook,drawObject,dressColors} from "./looks.mjs";
 import {createLegend,volcanoRoom} from "./legend.mjs";
 import {createBatonDuel,screenOf,feedParts} from "./batonduel.mjs";
 import {noelMoment,noelYear,voeuxText,adventCells,adventGiftText,etProgress,
- cheersPhase,cheersClock,cheersNamesLine,frontLine,newYearYear,newYearScreen,CHEERS_MS,CHEERS_REPLAY_MS} from "./noelui.mjs";
-import {endSummary,frontBar,challengeText,sentText,challengeLists,dareView} from "./snowui.mjs";
+ cheersPhase,cheersClock,cheersNamesLine,frontLine,newYearYear,newYearScreen,CHEERS_MS,CHEERS_REPLAY_MS,nyFrameDue} from "./noelui.mjs";
+import {endSummary,frontBar,challengeText,sentText,challengeLists,dareView,sendsOnDeath} from "./snowui.mjs";
 const {people,personalItems,stresses,shop,fxNames,XP,xpCost,xpFloor,stage}=R;
 const $=s=>document.querySelector(s);
 const motionQuery=matchMedia("(prefers-reduced-motion: reduce)");
@@ -100,8 +100,9 @@ function playJournal(onlyMajor){
   else if(j.k==="stress")stress=j;
   else act=j;
  }
- // A duel or a snowball fight cut short by a death still sends what was played (its taps), like a game given up.
- if(death){anim=null;if(mini?.duel||mini?.key==="snowball"){mini.abort(miniClock);endMini();}pong=mini=null;startScene("death",death.d?.camp||S.camp,death.d?.name||"");toast(death.text,true);return;}
+ // A duel cut short by a death still sends what was played, like a game given up (snowui.mjs sendsOnDeath); a
+ // snowball fight is dropped: the server's death cleared it already.
+ if(death){anim=null;if(sendsOnDeath(mini)){mini.abort(miniClock);endMini();}pong=mini=null;startScene("death",death.d?.camp||S.camp,death.d?.name||"");toast(death.text,true);return;}
  if(evoFirst){
   const from=evoFirst.k==="legend"?evoFirst.d.name:evoFirst.d.from,to=evoLast.k==="legend"?evoLast.d.name:evoLast.d.to;
   const legend=evoLast.k==="legend"&&from===to;
@@ -2593,7 +2594,7 @@ function tickFrame(now){
   // Full frame rate only while something moves fast; the idle screen is fine at ~8 fps and saves battery.
   const ny=nySync(now).scene;
   if(bd.isOpen())bd.frame(now);
-  else if(pong||mini||scene||anim||lvlFx||(ny&&!reduced)||now-lastDraw>=120){lastDraw=now;render(now);}
+  else if(pong||mini||scene||anim||lvlFx||nyFrameDue(ny,reduced,now,lastDraw)||now-lastDraw>=120){lastDraw=now;render(now);}
   if(now-lastHud>500){lastHud=now;refresh();liveSheet();missionClock();eventBar();}
   portraitsTick(now);
   // After a game, in order: what the journal kept back (once the game's own result has been read), the news,

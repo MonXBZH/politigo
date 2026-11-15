@@ -312,20 +312,26 @@ export const MINI={
  cortege:{label:"Le Cortège",camp:"left",xp:35,ms:30000,intro:0,maxScore:250,perSecond:8,bonusRate:0.25,bonusCap:35,great:140,suspect:220},
  epervier:{label:"L'Épervier",camp:"right",xp:35,ms:35000,intro:0,maxScore:60,perSecond:2,bonusRate:2,bonusCap:35,great:18,suspect:40},
  // Trêve des confiseurs. The score is never taken from the browser: the server replays the taps (snowball.mjs), so the
- // replay is the referee and judge() only checks the id and the time. Its caps (maxScore, perSecond, suspect) are set
- // far above any real fight so that they never refuse a legitimate replayed score.
- snowball:{label:"Bataille de boules de neige",camp:null,xp:35,ms:45000,intro:0,minScore:10,bonusRate:0.4,bonusCap:35,great:80,maxScore:1000,perSecond:1000,suspect:1e6}
+ // replay is the referee and judge() only checks the id and the time. Its caps (maxScore, perSecond) are set far above
+ // any real fight so that they never refuse a legitimate replayed score; over 160 (suspect) the fight is flagged
+ // "plafond": still paid, kept out of the Front and worth 0 in a challenge (a script that knows the seed tops 300).
+ snowball:{label:"Bataille de boules de neige",camp:null,xp:35,ms:45000,intro:0,minScore:10,bonusRate:0.4,bonusCap:35,great:80,maxScore:1000,perSecond:1000,suspect:161}
 };
 // The bonus of a snowball fight: nothing under minScore points, then 0.4 XP a point, 35 at most (times the event's multiplier).
 export const snowBonus=(score,x=1)=>score<MINI.snowball.minScore?0:Math.round(x*Math.min(MINI.snowball.bonusCap,Math.floor(score*MINI.snowball.bonusRate)));
 // The signals the admin reads on a fight (a flagged game still pays; the server keeps it out of the camp counter).
-// taps: the browser's taps; result: the replay; reactions: ms between a foe showing up and the tap that hit him.
+// taps: the browser's taps; result: the replay (its events); reactions: ms between a foe showing up and the tap that
+// hit him; firstPop: when the first foe shows. The precision is on the foes only: among the balls that land once the
+// first foe is up, those that hit one (the sleigh and the parries are left out, and so are balls thrown into the void
+// before the first pop to dilute it).
 export const SNOW_FUTURE_MS=1500;
-export const SNOW_BOT={gapMs:80,gapTaps:20,precision:0.95,precisionThrows:40,reflexMs:180,reflexHits:4};
-export function snowFlags(taps,result,reactions){
+export const SNOW_BOT={gapMs:80,gapTaps:20,precision:0.95,precisionThrows:25,reflexMs:180,reflexHits:4};
+export function snowFlags(taps,result,reactions,{firstPop=0}={}){
  const flags=[],ts=taps.map(p=>p.t).sort((a,b)=>a-b);
  if(ts.length>SNOW_BOT.gapTaps&&(ts[ts.length-1]-ts[0])/(ts.length-1)<SNOW_BOT.gapMs)flags.push("taps_rapides");
- if(result.thrown>SNOW_BOT.precisionThrows&&result.hits/result.thrown>SNOW_BOT.precision)flags.push("precision");
+ const landed=(Array.isArray(result?.events)?result.events:[]).filter(e=>e.t>=firstPop&&(e.kind==="hit"||e.kind==="pass"||e.kind==="miss"));
+ const foeHits=landed.filter(e=>e.kind==="hit").length;
+ if(landed.length>SNOW_BOT.precisionThrows&&foeHits/landed.length>SNOW_BOT.precision)flags.push("precision");
  if(reactions.length>=SNOW_BOT.reflexHits&&reactions.reduce((a,b)=>a+b,0)/reactions.length<SNOW_BOT.reflexMs)flags.push("reflexe");
  return flags;
 }
@@ -697,7 +703,7 @@ function actOn(S,a,{now,speed=1,random=Math.random,event="",mythic=null,boost=NO
    const sched=schedule(m.seed,S.camp),{events,...result}=play(sched,taps);
    const j=judge(k,cfg,{sc:result.score,secs,idOk,minSeconds:MINI_RULES.minSeconds,expiry});
    const reactions=events.filter(e=>e.kind==="hit").map(e=>e.from-sched.pops[e.i].t);
-   const flags=[...j.flags,...snowFlags(taps,result,reactions)],audit={...base,...j.audit,flags};
+   const flags=[...j.flags,...snowFlags(taps,{...result,events},reactions,{firstPop:sched.pops[0]?.t??0})],audit={...base,...j.audit,flags};
    if(j.refused)return refused(audit);
    const sc=result.score,bonus=snowBonus(sc,x);addXp(S,bonus);ACT.progress(S,"minis");
    log(S,"mini",`${cfg.label} : ${sc} point${sc>1?"s":""}, bonus +${bonus} XP.`,{game:k,score:sc,bonus,great:sc>=cfg.great&&!flags.length&&!greatAnnounced(S)});

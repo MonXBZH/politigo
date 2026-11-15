@@ -44,11 +44,14 @@ export const toastEnd=(year,at=null)=>closingAt(year,at)+TOAST_MS;
 // ---- the counter. A player is paid for the camp he FOUGHT for (kept with each fight), whatever his camp at the
 // closing; one who fought for both camps is paid once if either won. exists(id): false for a deleted player (skipped).
 // (campOf(id), the first version's option, still works as "exists": a deleted player has no camp.)
-export function createSnowFront(db,{exists,campOf}={}){
+// A fight brings perFight points at most, and a player perDay a server day (whatever the camp): what a script farms
+// beyond that is dropped. The day's allowance is spent in the same write as the points (snowfront_daily).
+export function createSnowFront(db,{exists,campOf,perFight=120,perDay=400}={}){
  const alive=exists??(campOf?id=>campOf(id)!=null:()=>true);
  db.exec(`CREATE TABLE IF NOT EXISTS snowfront(year INTEGER NOT NULL,camp TEXT NOT NULL,points INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(year,camp));
 CREATE TABLE IF NOT EXISTS snowfront_players(year INTEGER NOT NULL,player_id INTEGER NOT NULL,camp TEXT NOT NULL,PRIMARY KEY(year,player_id,camp));
-CREATE TABLE IF NOT EXISTS snowfront_results(year INTEGER PRIMARY KEY,winner TEXT NOT NULL,left_pts INTEGER NOT NULL,right_pts INTEGER NOT NULL,t INTEGER NOT NULL);`);
+CREATE TABLE IF NOT EXISTS snowfront_results(year INTEGER PRIMARY KEY,winner TEXT NOT NULL,left_pts INTEGER NOT NULL,right_pts INTEGER NOT NULL,t INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS snowfront_daily(day INTEGER NOT NULL,player_id INTEGER NOT NULL,pts INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(day,player_id));`);
  const q={
   addPts:db.prepare("INSERT INTO snowfront(year,camp,points) VALUES(?,?,?) ON CONFLICT(year,camp) DO UPDATE SET points=points+excluded.points"),
   addPlayer:db.prepare("INSERT OR IGNORE INTO snowfront_players(year,player_id,camp) VALUES(?,?,?)"),
@@ -57,6 +60,8 @@ CREATE TABLE IF NOT EXISTS snowfront_results(year INTEGER PRIMARY KEY,winner TEX
   last:db.prepare("SELECT MAX(year) AS y FROM snowfront"),
   result:db.prepare("SELECT winner,left_pts,right_pts FROM snowfront_results WHERE year=?"),
   close:db.prepare("INSERT INTO snowfront_results(year,winner,left_pts,right_pts,t) VALUES(?,?,?,?,?)"),
+  spent:db.prepare("SELECT pts FROM snowfront_daily WHERE day=? AND player_id=?"),
+  spend:db.prepare("INSERT INTO snowfront_daily(day,player_id,pts) VALUES(?,?,?) ON CONFLICT(day,player_id) DO UPDATE SET pts=pts+excluded.pts"),
  };
  let sp=0;
  function atomic(fn){
@@ -76,11 +81,18 @@ CREATE TABLE IF NOT EXISTS snowfront_results(year INTEGER PRIMARY KEY,winner TEX
   const r=q.result.get(year);return r?{winner:r.winner,left:Number(r.left_pts),right:Number(r.right_pts)}:null;
  }
  // False when nothing was added: an unknown camp, a score that is not a whole number >= 0, a year already closed.
- function add(year,camp,playerId,points){
+ // day: the server day of the fight (R.dayKey), for the player's daily allowance (without it, only the fight's cap).
+ // A fight past the allowance still counts as played (the player is paid if his camp wins), for 0 points.
+ function add(year,camp,playerId,points,day=null){
   if(!okYear(year)||!CAMPS.includes(camp)||!Number.isSafeInteger(playerId)||!Number.isSafeInteger(points)||points<0)return false;
   return atomic(()=>{
    if(q.result.get(year))return false;
-   q.addPts.run(year,camp,points);q.addPlayer.run(year,playerId,camp);
+   let pts=Math.min(points,perFight);
+   if(Number.isSafeInteger(day)){
+    const left=Math.max(0,perDay-Number(q.spent.get(day,playerId)?.pts??0));
+    pts=Math.min(pts,left);q.spend.run(day,playerId,pts);
+   }
+   q.addPts.run(year,camp,pts);q.addPlayer.run(year,playerId,camp);
    return true;
   });
  }

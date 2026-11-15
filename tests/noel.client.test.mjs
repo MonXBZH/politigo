@@ -37,6 +37,8 @@ test("costumes: same keys, both camps, only the names change",()=>{
  assert.equal(itemName(shop[0],"left",""),shop[0].left);
  assert.ok(NOEL.pong.left.length>=10);
  assert.ok(NOEL.pong.right.length>=10);
+ // the two counts below only tell the themes apart while their question lists differ in length
+ assert.notEqual(HALLOWEEN.questions.length,NOEL.questions.length);
  assert.equal(debateCount("noel"),QUESTIONS.length+NOEL.questions.length);
  assert.equal(debateCount("halloween"),QUESTIONS.length+HALLOWEEN.questions.length);
  assert.equal(debateCount(""),QUESTIONS.length);

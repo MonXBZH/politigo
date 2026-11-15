@@ -118,3 +118,8 @@ export function newYearScreen({ny,banner,closed,replayEnd,now,serverMs}){
  if(live)return {scene:closed?null:"live",banner:false};
  return {scene:now<replayEnd?"replay":null,banner:banner===true||serverMs>=ny.until};   // the banner stays: no jump
 }
+
+// The midnight scene's redraw: about 30 fps (one frame every NY_FRAME_MS at most), and never at full pace with reduced
+// motion (the idle screen's pace then). scene: newYearScreen's scene ("live", "replay" or null).
+export const NY_FRAME_MS=33;
+export const nyFrameDue=(scene,reduced,now,lastDraw)=>!!scene&&!reduced&&now-lastDraw>=NY_FRAME_MS;

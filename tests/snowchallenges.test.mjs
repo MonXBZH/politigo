@@ -91,6 +91,39 @@ it("expire after 24 h; cancelAll and cancelOf",()=>{
  assert.deepEqual(c.recent(10).map(r=>r.id),[z,y,x,b,a]);
 });
 
+it("play: a challenge in play is no longer open; it finishes from there, or at 0 once its game is over",()=>{
+ const c=fresh(),now=Date.UTC(2026,11,10,12);
+ const a=c.open({challenger:1,defender:2,seed:1,score:10,now}).id;
+ assert.equal(c.play(a,"g1",now+1),true);
+ assert.equal(c.play(a,"g2",now+2),false,"played once");
+ const r=c.get(a);
+ assert.equal(r.status,"playing");assert.equal(r.dGame,"g1");assert.equal(r.dStart,now+1);
+ assert.deepEqual(c.forDefender(2,now+3),[],"no longer offered");
+ assert.deepEqual(c.forChallenger(1,now+3).map(x=>[x.id,x.status]),[[a,"playing"]]);
+ assert.throws(()=>c.open({challenger:2,defender:1,seed:1,score:1,now:now+4}),{message:"Déjà un défi ouvert avec ce joueur."});
+ assert.deepEqual(c.expire(now+2*DAY),[],"in play, it does not expire");
+ // the games over: those begun at or before the cut
+ assert.deepEqual(c.playingDue(now),[]);
+ assert.deepEqual(c.playingDue(now+1),[a]);
+ assert.deepEqual(c.finish(a,12,now+5,[]),{winner:2,tie:false});
+ assert.equal(c.get(a).status,"done");assert.deepEqual(c.playingDue(now+DAY),[]);
+ // never finished: the server closes it with 0 for the defender
+ const b=c.open({challenger:3,defender:4,seed:1,score:10,now}).id;
+ c.play(b,"g3",now);
+ assert.deepEqual(c.playingDue(now+10),[b]);
+ assert.deepEqual(c.finish(b,0,now+10),{winner:3,tie:false});
+ // only an open one goes into play; nonsense is refused
+ assert.equal(c.play(b,"g4",now+11),false);
+ assert.equal(c.play(999999,"g",now),false);
+ const d=c.open({challenger:5,defender:6,seed:1,score:1,now}).id;
+ for(const bad of [null,"",42,"x".repeat(41)])assert.equal(c.play(d,bad,now),false,String(bad));
+ // a player gone: the one in play is cancelled too, and so is everything at the end of the theme
+ c.play(d,"g5",now);
+ assert.deepEqual(c.cancelOf(6,now+1),[d]);
+ const e=c.open({challenger:7,defender:8,seed:1,score:1,now}).id;c.play(e,"g6",now);
+ assert.deepEqual(c.cancelAll(now+1),[e]);
+});
+
 // ---------------------------------------------------------------- a real server
 const centre=i=>{const s=SPOTS[i];return {x:s.x,y:Math.round(s.base-(64+COVER)/2*s.k)};};
 const goodTaps=(seed,camp,upTo=2600)=>schedule(seed,camp).pops.filter(p=>p.passant===null&&p.t+300<=upTo).map(p=>({t:Math.round(p.t+300),...centre(p.spot)}));
@@ -263,4 +296,41 @@ it("the end of the theme cancels every open challenge; no new one outside it",as
  assert.equal(r.status,422);assert.equal(r.json.error,"Les défis de neige ont lieu seulement pendant la Trêve des confiseurs.");
  assert.equal((await adm({cmd:"event-set",mode:"noel"})).ok,true);
  void C;
+});
+
+it("a challenge is played once: a second start is refused, a refused game finishes it at 0",async()=>{
+ const A=await player(PORT,"Neige Romeo","left"),B=await player(PORT,"Neige Sierra","right");
+ const f=await fight(A);assert.ok(f.score>0);
+ const id=(await A.call("POST","/api/snow/challenge",{to:"Neige Sierra",gameId:f.game.id})).json.challenge.id;
+ const m0=(await me(A)).state.moral;
+ const s1=await B.call("POST","/api/action",{type:"snowStart",challenge:id});
+ assert.equal(s1.status,200,JSON.stringify(s1.json));
+ const r=await B.call("POST","/api/action",{type:"snowStart",challenge:id});
+ assert.equal(r.status,422);assert.equal(r.json.error,"Ce défi est déjà en cours.");
+ assert.equal((await me(B)).state.mini.id,s1.json.game.id,"the game in play goes on");
+ assert.equal((await list(A)).sent.find(x=>x.id===id).status,"playing");
+ assert.equal((await list(B)).received.length,0);
+ // the game is refused (malformed taps): the challenge ends at 0 for the defender
+ await sleep(3300);
+ assert.equal((await B.call("POST","/api/action",{type:"miniEnd",id:s1.json.game.id,taps:"pas des touches"})).status,422);
+ assert.deepEqual((await list(A)).sent.find(x=>x.id===id).result,{mine:f.score,theirs:0,outcome:"win"});
+ assert.equal((await me(A)).state.moral,Math.min(100,m0+10));
+});
+
+it("challenges open at the duels' level, for both players",async()=>{
+ const port=3946,dir=mkdtempSync(join(tmpdir(),"pgch-lvl-"));
+ const p=await boot(port,dir,{POLITIGO_EVENT:"noel",POLITIGO_DUEL_MIN_LEVEL:"2",POLITIGO_SNOW_CHALLENGE_MS:"60000"});
+ try{
+  const A=await player(port,"Niveau Alpha","left"),B=await player(port,"Niveau Bravo","right"),C=await player(port,"Niveau Charlie","left");
+  const post=(c,body)=>c.call("POST","/api/snow/challenge",body);
+  assert.equal((await me(C)).state.lvl,1);
+  let r=await post(C,{to:"Niveau Bravo",gameId:"x"});
+  assert.equal(r.status,422);assert.equal(r.json.error,"Les défis s'ouvrent au niveau 2.");
+  const f=await fight(A);assert.ok((await me(A)).state.lvl>=2,"one fight brings level 2");
+  r=await post(A,{to:"Niveau Bravo",gameId:f.game.id});
+  assert.equal(r.status,422);assert.equal(r.json.error,"Les défis s'ouvrent au niveau 2.","the defender too");
+  await fight(B);
+  r=await post(A,{to:"Niveau Bravo",gameId:f.game.id});
+  assert.equal(r.status,200,JSON.stringify(r.json));
+ }finally{await stop(p);}
 });

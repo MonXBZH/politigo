@@ -8,7 +8,7 @@ import {DatabaseSync} from "node:sqlite";
 import {mkdtempSync,readFileSync,writeFileSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
-import {boot,stop,player,login,until,sleep,keys,FCM} from "./server-helpers.mjs";
+import {boot,stop,player,login,until,sleep,keys,FCM,dayNow} from "./server-helpers.mjs";
 import {schedule,play,SPOTS,COVER} from "../web/snowball.mjs";
 import {snowFlags} from "../web/rules.mjs";
 
@@ -40,6 +40,31 @@ it("points add up per camp and year",()=>{
  assert.equal(f.add(2026,"right",5,0),true);
  assert.deepEqual(f.totals(2026),{left:20,right:7});
  assert.equal(f.result(2026),null);
+});
+
+it("a fight brings 120 points at most and a player 400 a server day: the excess is dropped, the fight still counts as played",()=>{
+ const db=new DatabaseSync(":memory:"),f=SF.createSnowFront(db,{exists:()=>true}),D=20000;
+ assert.equal(f.add(2026,"left",1,300,D),true);
+ assert.deepEqual(f.totals(2026),{left:120,right:0},"120 a fight");
+ f.add(2026,"left",1,120,D);f.add(2026,"left",1,110,D);
+ assert.deepEqual(f.totals(2026),{left:350,right:0});
+ assert.equal(f.add(2026,"left",1,90,D),true);
+ assert.deepEqual(f.totals(2026),{left:400,right:0},"400 a day");
+ assert.equal(f.add(2026,"left",1,60,D),true,"a fight past the cap is still played");
+ assert.deepEqual(f.totals(2026),{left:400,right:0});
+ // another player, another day: their own allowance
+ f.add(2026,"right",2,100,D);f.add(2026,"left",1,70,D+1);
+ assert.deepEqual(f.totals(2026),{left:470,right:100});
+ assert.equal(db.prepare("SELECT pts FROM snowfront_daily WHERE day=? AND player_id=?").get(D,1).pts,400);
+ // a camp change the same day does not reopen the allowance
+ f.add(2026,"right",1,50,D);assert.deepEqual(f.totals(2026),{left:470,right:100});
+ // in the caller's transaction, rolled back with it: the allowance is not spent
+ db.exec("BEGIN");f.add(2026,"right",3,120,D);db.exec("ROLLBACK");
+ f.add(2026,"right",3,120,D);f.add(2026,"right",3,120,D);f.add(2026,"right",3,120,D);f.add(2026,"right",3,120,D);
+ assert.deepEqual(f.totals(2026),{left:470,right:500});
+ // a closed year spends nothing
+ f.close(2026);assert.equal(f.add(2026,"left",4,50,D),false);
+ assert.equal(db.prepare("SELECT pts FROM snowfront_daily WHERE day=? AND player_id=?").get(D,4),undefined);
 });
 
 it("closing pays only those of the winning camp who played, once",()=>{
@@ -155,6 +180,9 @@ it("a fight raises its camp on the Front by the score the server recomputed, nev
  assert.equal(e.status,200,JSON.stringify(e.json));
  assert.deepEqual(e.json.me.snowFront,{left:want,right:0,closed:false});
  assert.equal(e.json.front,true,"the reply says the fight counted");
+ // the day's allowance is kept with the add (the server day of the fight's start)
+ {const db=new DatabaseSync(join(A.dir,"t.db"),{readOnly:true});
+  try{assert.deepEqual(db.prepare("SELECT day,pts FROM snowfront_daily").all().map(r=>({...r})),[{day:dayNow(),pts:want}]);}finally{db.close();}}
  assert.deepEqual((await me(r)).snowFront,{left:want,right:0,closed:false},"the same counter for everyone");
  // the open screens hear it through the "snowFront" event (no full me payload for everyone)
  const sf=await until(()=>got(s,"snowFront").at(-1));
@@ -230,6 +258,10 @@ test("midnight: one toast push, the Front closes after the fights begun before i
  assert.ok(await until(()=>setting("snowfront_closed")===String(year),15000),"the Front closes");
  assert.equal(await bulletins(L1),b0.L1+3);
  assert.equal(await bulletins(L2),b0.L2);assert.equal(await bulletins(R1),b0.R1);assert.equal(await bulletins(S),b0.S);
+ // the prize is told in the winner's journal, nobody else's
+ const prize="❄️ Le Front de neige est tombé : ton camp l'emporte. +3 bulletins.";
+ assert.ok((await me(L1)).state.journal.some(j=>j.k==="snowfront"&&j.text===prize),"in the winner's journal");
+ assert.ok(!(await me(R1)).state.journal.some(j=>j.k==="snowfront"));
  const line=`❄️ Le Front de neige est tombé : la Gauche l'emporte (${sc1} contre 0).`;
  const feed=async()=>(await S.call("GET","/api/board")).json.feed.filter(e=>e.text===line);
  assert.equal((await feed()).length,1,"one line in the public feed");

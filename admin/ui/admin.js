@@ -37,7 +37,7 @@ const campBadge=c=>c?h("span",{class:`badge ${c}`},CAMP[c]||c):null;
 const who=a=>typeof a==="string"?a:a?.name??"?";
 // Raw values from the API, in French.
 const DUEL_STATUS={c_play:"le lanceur joue",pending:"en attente du défié",d_play:"le défié joue",done:"terminé",refused:"refusé",expired:"expiré",void:"annulé",annulled:"annulé, gains rendus"};
-const SNOW_STATUS={open:"en cours",done:"terminé",expired:"expiré",cancelled:"annulé"};
+const SNOW_STATUS={open:"ouvert",playing:"en cours",done:"terminé",expired:"expiré",cancelled:"annulé"};
 const DUEL_RES={win:"victoire",loss:"défaite",tie:"égalité",chicken:"refusé ou sans réponse"};
 const EVENT={halloween:"Halloween",noel:"Noël"};
 const VIA={cli:"console",web:"web",schedule:"planif."};

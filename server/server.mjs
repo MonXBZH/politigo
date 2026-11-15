@@ -483,8 +483,9 @@ const nameKey=n=>n.normalize("NFKD").replace(/\p{M}/gu,"").toLocaleLowerCase("fr
 // Lookalikes count as the letter they mimic (0 and Ø for o; 1, i, I and ł for l; 3 for e, 4 for a, ŋ, đ, œ), spaces and
 // signs not at all; both words anywhere in the name ("Annonces officielles", "Officiel annonce") are refused too.
 const lookalike=s=>s.replace(/œ/g,"oe").replace(/[0ø]/g,"o").replace(/[1ił]/g,"l").replace(/3/g,"e").replace(/4/g,"a").replace(/ŋ/g,"n").replace(/đ/g,"d").replace(/[^a-z]/g,"");
-const RESERVED_WORDS=["annonce","officiel"].map(lookalike);
-const reservedName=n=>{const k=lookalike(nameKey(n));return RESERVED_WORDS.every(w=>k.includes(w));};
+// The game's own name signs its news in the feed (the Front de neige, the Bâton): no player may take it either.
+const RESERVED_WORDS=["annonce","officiel"].map(lookalike),RESERVED_GAME=lookalike("politigo");
+const reservedName=n=>{const k=lookalike(nameKey(n));return RESERVED_WORDS.every(w=>k.includes(w))||k.includes(RESERVED_GAME);};
 // Keys written by an older version are brought up to date (a clash keeps the older key).
 for(const p of players.values()){try{q.setKey.run(nameKey(p.name),p.id);}catch(e){console.error(`player ${p.id}: name key not updated (${e.message})`);}}
 
@@ -623,10 +624,12 @@ function mePayload(p){return {name:p.name,state:publicState(p.state),speed:SPEED
 
 // ===================================================================== TRÊVE: THE FRONT DE NEIGE AND THE NEW YEAR TOAST
 // Every snowball fight the server replayed adds its score to its player's camp (snowfront.mjs), unless flagged as a
-// bot, begun outside the Trêve, or begun at/after New Year's midnight: the start decides, so a fight begun at 23:59
-// and ended after midnight counts. The closing waits for those fights (their longest life is the judge's expiry).
+// bot (or over 160 points, "plafond"), begun outside the Trêve, or begun at/after New Year's midnight: the start
+// decides, so a fight begun at 23:59 and ended after midnight counts. 120 points a fight at most, 400 a player a
+// server day (the day of the fight's start; snowfront.mjs keeps it with the add). The closing waits for those fights
+// (their longest life is the judge's expiry).
 const SNOW_LIVE_MS=(R.MINI.snowball.ms/1000+R.MINI_RULES.graceSeconds)*1000+1000;
-const SNOW_BOT_FLAGS=new Set(["taps_rapides","precision","reflexe"]);
+const SNOW_BOT_FLAGS=new Set(["taps_rapides","precision","reflexe","plafond"]);
 const FRONT_EVERY=10e3,FRONT_PRIZE=3,TOAST_TEXT="🥂 Bonne année ! Toute la République trinque, gauche et droite réunies. Viens lever ton verre !";
 const nyYear=now=>SF.frontYear(now,NEWYEAR_AT),nyClosing=y=>SF.closingAt(y,NEWYEAR_AT);
 function frontView(now){const y=nyYear(now),t=front.totals(y);return {left:t.left,right:t.right,closed:now>=nyClosing(y)};}
@@ -661,7 +664,7 @@ function frontAdd(p,a){
  if(a.noel!==true||!Number.isFinite(a.start)||!Number.isSafeInteger(a.score)||a.score<0)return false;
  if(Array.isArray(a.flags)&&a.flags.some(f=>SNOW_BOT_FLAGS.has(f)))return false;
  const y=nyYear(a.start);if(a.start>=nyClosing(y))return false;
- if(!front.add(y,p.state.camp,p.id,a.score))return false;
+ if(!front.add(y,p.state.camp,p.id,a.score,R.dayKey(Math.floor(a.start/R.H))))return false;
  frontChanged();return true;
 }
 // The open screens hear the counter through the "snowFront" event ({left,right,closed}), at most once per FRONT_EVERY.
@@ -700,7 +703,9 @@ function closeFront(y,now){
   for(const id of res.paid){
    const p=players.get(id);if(!p||p.suspended)continue;
    keep.set(id,p.state);
-   update(p,S=>{const w=S.wardrobe;if(!w)return false;const b=Number.isFinite(w.bulletins)?w.bulletins:0;w.bulletins=Math.min(9999,b+FRONT_PRIZE);});
+   update(p,S=>{const w=S.wardrobe;if(!w)return false;const b=Number.isFinite(w.bulletins)?w.bulletins:0;w.bulletins=Math.min(9999,b+FRONT_PRIZE);
+    R.logEntry(S,"snowfront",res.winner==="tie"?`❄️ Le Front de neige est tombé : égalité, les deux camps l'emportent. +${FRONT_PRIZE} bulletins.`
+     :`❄️ Le Front de neige est tombé : ton camp l'emporte. +${FRONT_PRIZE} bulletins.`,{bulletins:FRONT_PRIZE});});
    paid++;
   }
   setSetting("snowfront_closed",String(y));
@@ -726,7 +731,9 @@ setInterval(()=>{try{newYearTick();}catch(e){console.error("New Year tick:",e);}
 // are those the server kept when the fight ended (in memory: a restart only loses the right to launch from it), never
 // the body's. The defender plays it through snowStart {challenge:id}; the best score takes +10 moral, a tie +5 each.
 // A fight flagged as a bot counts 0 for the challenge. Never XP, never FM. Open ones expire after 24 h (plus a fight's
-// longest life, so a fight begun in time still finishes), and are all cancelled once the theme is over.
+// longest life, so a fight begun in time still finishes), and are all cancelled once the theme is over. A challenge
+// is played once: the defender's first start puts it in play (its game's id kept); a game refused, or never ended
+// within its longest life, closes it at 0 for the defender. Both players need the duels' level to launch one.
 const SNOWCH_LAUNCH_MS=knob(env.POLITIGO_SNOW_CHALLENGE_MS,10*60e3);
 if(SNOWCH_LAUNCH_MS!==10*60e3)console.warn(`Snow challenge test setting active: launched within ${SNOWCH_LAUNCH_MS} ms of the fight (normal: 10 min).`);
 const snowCh=createChallenges(db),SNOWCH_WIN=10,SNOWCH_TIE=5;
@@ -736,24 +743,30 @@ const isBotFight=flags=>Array.isArray(flags)&&flags.some(f=>SNOW_BOT_FLAGS.has(f
 const snowChId=v=>Number.isSafeInteger(v)&&v>0?v:typeof v==="string"&&/^[1-9][0-9]{0,14}$/.test(v)?Number(v):null;
 const sseTo=(id,ev,data)=>{for(const c of clients)if(c.playerId===id)sse(c.res,ev,data);};
 // /api/action snowStart {challenge:id}: the rules' opts.challenge, only for its defender, while it is open, in time,
-// and its challenger still plays. Otherwise refused before anything is spent.
+// and its challenger still plays. Otherwise refused before anything is spent. Once its game started, never again.
 function snowChallengeOpts(p,v,now){
  const id=snowChId(v),r=id&&snowCh.get(id),c=r&&players.get(r.challenger);
+ if(r&&r.defender===p.id&&r.status==="playing")throw new HttpError(422,"Ce défi est déjà en cours.");
  if(!r||r.defender!==p.id||r.status!=="open"||now>=r.expires||!c||c.suspended)throw new HttpError(422,"Ce défi n'est plus ouvert.");
  return {id:String(r.id),seed:r.seed};
 }
 // From /api/action, with the rules' hidden audit of any snowball fight (ok: validated). started: S.mini before it ended.
+// A challenge's game refused closes the challenge at 0 for the defender.
 function snowChEnded(p,a,ok,started,now){
- if(!ok||!Number.isSafeInteger(a.score)||a.score<0)return;
- const ch=typeof a.ch==="string";
+ const ch=typeof a.ch==="string",flags=Array.isArray(a.flags)?a.flags:[];
+ if(!ok||!Number.isSafeInteger(a.score)||a.score<0){if(ch)snowChFinish(p,a.ch,started,0,flags,now);return;}
  if(started&&typeof started.id==="string"&&started.seed===a.seed&&started.t===a.start)
-  snowGames.set(p.id,{gameId:started.id,seed:a.seed,score:a.score,bot:isBotFight(a.flags),ch,t:now});
- if(ch)snowChFinish(p,a,now);
+  snowGames.set(p.id,{gameId:started.id,seed:a.seed,score:a.score,bot:isBotFight(flags),ch,t:now});
+ if(ch)snowChFinish(p,a.ch,started,isBotFight(flags)?0:a.score,flags,now);
 }
-function snowChFinish(p,a,now){
- const r=snowCh.get(snowChId(a.ch));
- if(!r||r.defender!==p.id||r.status!=="open")return;
- const flags=Array.isArray(a.flags)?a.flags:[],sc=isBotFight(flags)?0:a.score;
+// Only the game that put the challenge in play ends it.
+function snowChFinish(p,chId,started,sc,flags,now){
+ const r=snowCh.get(snowChId(chId));
+ if(!r||r.defender!==p.id||r.status!=="playing"||r.dGame!==started?.id)return;
+ snowChClose(r,sc,flags,now);
+}
+// The result, paid to both sides (from a game ended, or from the tick: a game never ended counts 0).
+function snowChClose(r,sc,flags,now){
  const res=snowCh.finish(r.id,sc,now,flags);if(!res)return;
  const pay=(id,moral,text)=>{
   const pl=players.get(id);if(!pl)return;
@@ -763,7 +776,7 @@ function snowChFinish(p,a,now){
   sseTo(id,"snowChallenge",{kind:"done",id:r.id});
  };
  if(res.tie){
-  pay(r.challenger,SNOWCH_TIE,`❄️ Défi de neige : égalité avec ${p.name}, ${sc} partout. Moral +${SNOWCH_TIE}.`);
+  pay(r.challenger,SNOWCH_TIE,`❄️ Défi de neige : égalité avec ${nameOf(r.defender)}, ${sc} partout. Moral +${SNOWCH_TIE}.`);
   pay(r.defender,SNOWCH_TIE,`❄️ Défi de neige : égalité avec ${nameOf(r.challenger)}, ${sc} partout. Moral +${SNOWCH_TIE}.`);
   return;
  }
@@ -777,10 +790,12 @@ function snowChCancelOf(id,now){
  snowGames.delete(id);
 }
 // From chores (and at once when the console changes the theme): the end of the theme cancels everything open
-// (idempotent: nothing open, nothing done), the overdue expire, the launch rights past their window go.
+// (idempotent: nothing open, nothing done), the overdue expire, the ones whose game is over without an end close at
+// 0 for the defender, the launch rights past their window go.
 function snowChTick(now){
  if(!R.isNoel(eventNow())){const n=snowCh.cancelAll(now).length;if(n)console.log(`Trêve over: ${n} snow challenge(s) cancelled`);}
  snowCh.expire(now-SNOW_LIVE_MS);
+ for(const id of snowCh.playingDue(now-SNOW_LIVE_MS)){const r=snowCh.get(id);if(r)try{snowChClose(r,0,[],now);}catch(e){console.error(`snow challenge ${id}: not closed`,e);}}
  for(const [id,g] of snowGames)if(now-g.t>SNOWCH_LAUNCH_MS)snowGames.delete(id);
  snowCh.purge(now-30*864e5);
 }
@@ -792,6 +807,8 @@ async function snowChallengeRoute(req,res){
  if(!players.has(p.id))throw new HttpError(401,"Connexion requise.");   // deleted while the body was arriving
  if(!R.isNoel(eventNow()))throw new HttpError(422,"Les défis de neige ont lieu seulement pendant la Trêve des confiseurs.");
  if(typeof b.to!=="string"||typeof b.gameId!=="string"||!b.gameId||b.gameId.length>40)throw new HttpError(400,"Défi : le pseudo du joueur (to) et la partie (gameId).");
+ const lowLevel=`Les défis s'ouvrent au niveau ${DUEL_MIN_LEVEL}.`;
+ if(p.state.lvl<DUEL_MIN_LEVEL)throw new HttpError(422,lowLevel);
  const now=Date.now(),g=snowGames.get(p.id);
  if(!g||g.gameId!==b.gameId)throw new HttpError(422,"Cette partie ne peut pas servir de défi : joue d'abord une partie de bataille.");
  if(g.ch)throw new HttpError(422,"Une partie de défi ne se relance pas.");
@@ -799,6 +816,7 @@ async function snowChallengeRoute(req,res){
  if(now-g.t>SNOWCH_LAUNCH_MS)throw new HttpError(422,"Trop tard : un défi se lance dans les 10 minutes qui suivent la partie.");
  const row=q.playerByKey.get(nameKey(cleanName(b.to).slice(0,40))),o=row&&players.get(row.id);
  if(!o||o.suspended)throw new HttpError(422,"Joueur introuvable.");
+ if(o.id!==p.id&&o.state.lvl<DUEL_MIN_LEVEL)throw new HttpError(422,lowLevel);
  let id;
  try{({id}=snowCh.open({challenger:p.id,defender:o.id,seed:g.seed,score:g.score,now}));}catch(e){throw new HttpError(422,e.message);}
  logActivity(p,req,"snowChallenge");
@@ -1679,6 +1697,8 @@ async function route(req,res){
    if(r.ok&&a.game==="snowball"){r.front=false;try{r.front=frontAdd(p,a);}catch(e){console.error(`player ${p.id}: Front de neige`,e);}}
    if(a.game==="snowball"){try{snowChEnded(p,a,r.ok,started,now);}catch(e){console.error(`player ${p.id}: snow challenge`,e);}}
   }
+  // The challenge's game started: in play from now on, never offered again.
+  if(r.ok&&opts.challenge&&r.game?.id){try{snowCh.play(Number(opts.challenge.id),r.game.id,now);}catch(e){console.error(`player ${p.id}: snow challenge in play`,e);}}
   if(r.ok&&b.type==="draw")drawNews(p,r,won.v,now);
   // The rules hand the turn (its seed included) to the server only, out of the reply.
   if(r.ok&&b.type==="debate"&&r.turn&&p.state.mini?.k==="debate")soloTurns.set(p.id,{t:miniKey(p.state.mini),st:r.turn,q:null});
@@ -2107,7 +2127,9 @@ const GAMES={
  duel:{full:Infinity,max:R.DEBATE.maxPoints,minSecs:null},   // a duel turn: the Débat chrono against a rival
  pong:{full:Math.ceil(P_.bonusCap/P_.bonusPerReturn),max:P_.maxScore,minSecs:sc=>Math.max(P_.minSeconds,(sc-1)/P_.returnsPerSecond)},
  ...Object.fromEntries(["cortege","epervier"].map(k=>{const m=R.MINI[k];
-  return [k,{full:Math.ceil(m.bonusCap/m.bonusRate),max:m.maxScore,minSecs:sc=>Math.max(R.MINI_RULES.minSeconds,(sc-1)/m.perSecond+(m.intro||0)/1000)}];}))
+  return [k,{full:Math.ceil(m.bonusCap/m.bonusRate),max:m.maxScore,minSecs:sc=>Math.max(R.MINI_RULES.minSeconds,(sc-1)/m.perSecond+(m.intro||0)/1000)}];})),
+ // The snowball fight is scored by the server's replay (no pace to check); its histogram tops at 160, the "plafond" line.
+ snowball:{full:Math.ceil(R.MINI.snowball.bonusCap/R.MINI.snowball.bonusRate),max:R.MINI.snowball.suspect-1,minSecs:null},
 };
 const HIST_BINS=10,NOT_IMPLAUSIBLE=new Set(["zero_erreur"]);
 function gameStats(rows){

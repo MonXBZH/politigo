@@ -76,7 +76,7 @@ export const HELP=[
   "Du 1er décembre au 1er janvier, la République passe l'hiver dehors : décor de neige, tenues de saison et une Buvette qui a changé de nom. Les costumes gardent leurs prix et leurs effets.",
   ["Le calendrier de l'Avent : une case par jour à ouvrir, un petit cadeau, sans jamais de vrais euros ni de FM.",
    "La bataille de neige : une partie rapide, comme les autres mini-jeux, qui rapporte de l'XP. Le score est calculé par le serveur.",
-   "Les défis de neige : lance ta partie à un autre joueur, qui a quelques minutes pour faire mieux que toi.",
+   "Les défis de neige : à partir du niveau 5, comme les duels, lance ta partie à un autre joueur, qui a 24 h pour faire mieux sur le même tirage. Un défi se lance dans les 10 minutes qui suivent ta partie.",
    "Le Front de neige : chaque partie de la saison compte pour ton camp. Le décompte s'arrête à minuit, la nuit du 31 décembre.",
    "À minuit pile, tout le monde lève son verre : un toast pour la nouvelle année, camps réunis."]]},
  {id:"social",title:"Classement, fil, chat et notifications",parts:[

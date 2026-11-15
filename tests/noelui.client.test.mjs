@@ -294,3 +294,13 @@ test("newYearScreen: the live scene until `until` unless closed, the replay, the
  assert.deepEqual(newYearScreen({...base,ny:null,banner:true}),{scene:null,banner:false},"no newYear, no banner");
  assert.deepEqual(newYearScreen({...base,ny:{...ny,until:"x"}}),{scene:null,banner:false});
 });
+
+test("the midnight scene redraws at about 30 fps, never with reduced motion",async()=>{
+ const {nyFrameDue,NY_FRAME_MS}=await import("../web/noelui.mjs");
+ assert.equal(NY_FRAME_MS,33);
+ assert.equal(nyFrameDue("live",false,1033,1000),true);
+ assert.equal(nyFrameDue("live",false,1032,1000),false,"not before 33 ms");
+ assert.equal(nyFrameDue("replay",false,2000,1000),true);
+ assert.equal(nyFrameDue("live",true,5000,1000),false,"reduced motion: the idle pace only");
+ assert.equal(nyFrameDue(null,false,5000,1000),false);
+});

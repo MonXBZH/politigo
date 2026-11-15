@@ -151,6 +151,7 @@ export const challengeText=(c,now)=>`${c.from} : ${c.score} point${c.score>1?"s"
 export function sentText(s,now){
  const who=`Défi à ${s.to}`,r=s.result&&typeof s.result==="object"?s.result:{},a=num(r.mine)?r.mine:0,b=num(r.theirs)?r.theirs:0;
  if(s.status==="open")return `${who} : en attente, encore ${leftText(s.expires-now)}`;
+ if(s.status==="playing")return `${who} : partie en cours`;
  if(s.status==="done")return r.outcome==="win"?`${who} : gagné, ${a} à ${b}`:r.outcome==="loss"?`${who} : perdu, ${a} à ${b}`:`${who} : égalité, ${a} partout`;
  if(s.status==="expired")return `${who} : pas relevé à temps`;
  if(s.status==="cancelled")return `${who} : annulé`;
@@ -178,3 +179,7 @@ export function dareView(data,err,me){
  if(!all.length)return {state:"empty",text:"Personne d'autre pour l'instant.",names:[],top:[]};
  return {state:"list",text:"",names:all.map(o=>o.name),top:all.slice(0,12)};
 }
+
+// A death in the middle of a game: a duel's turn is still sent (the server waits for it); any other game, the snowball
+// fight included, is dropped, since the server's death already cleared it (a miniEnd would only be refused).
+export const sendsOnDeath=m=>!!m?.duel;

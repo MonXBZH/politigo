@@ -242,6 +242,7 @@ test("sentText: open, won, lost, tie, expired, cancelled",()=>{
  assert.equal(U.sentText({to:"Bob",status:"done",result:{mine:20,theirs:20,outcome:"tie"}},now),"Défi à Bob : égalité, 20 partout");
  assert.equal(U.sentText({to:"Bob",status:"expired"},now),"Défi à Bob : pas relevé à temps");
  assert.equal(U.sentText({to:"Bob",status:"cancelled"},now),"Défi à Bob : annulé");
+ assert.equal(U.sentText({to:"Bob",status:"playing",expires:5*3600e3},now),"Défi à Bob : partie en cours");
  assert.equal(U.sentText({to:"Bob",status:"weird"},now),"");
 });
 
@@ -274,4 +275,11 @@ test("dareView: loading, error with a retry, empty, or the players (datalist: al
  assert.equal(v.top[0].name,"J29");                 // online first
  // a later failure does not hide a list already loaded (duelErr with duelData)
  assert.equal(U.dareView({opponents:opps},"Erreur du serveur.","Moi").state,"list");
+});
+
+test("a death ends a duel by sending its turn; a snowball fight is dropped (the server already cleared it)",()=>{
+ assert.equal(U.sendsOnDeath({duel:{id:3},key:"debate"}),true);
+ assert.equal(U.sendsOnDeath({key:"snowball"}),false);
+ assert.equal(U.sendsOnDeath({key:"cortege"}),false);
+ assert.equal(U.sendsOnDeath(null),false);
 });

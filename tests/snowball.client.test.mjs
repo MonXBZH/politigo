@@ -2,7 +2,7 @@
 // player's taps with it to compute the score. Pure, seeded, deterministic.
 import {test} from "node:test";
 import assert from "node:assert/strict";
-import {SNOW,SPOTS,COVER,schedule,validTaps,play,mult,visible,sleighPos} from "../web/snowball.mjs";
+import {SNOW,SPOTS,COVER,schedule,validTaps,play,mult,visible,sleighPos,incomingAt} from "../web/snowball.mjs";
 
 const C=233,X0=C+42,Y0=420;
 // where the centre of a fully risen foe is, and when a ball thrown at t reaches (x,y)
@@ -368,10 +368,50 @@ test("bot signals: fast taps, too precise, too quick to react",()=>{
  assert.equal(f.r.ok,true,"a flagged game is still paid");assert.equal(f.r.bonus,R.snowBonus(f.r.result.score));assert.equal(f.S.mini,null);
  assert.ok(!run(5,tapsFor(5,6,350)).r.audit.flags.includes("reflexe"));
  const taps=n=>Array.from({length:n},(_,i)=>({t:i*500,x:1,y:1}));
- assert.deepEqual(R.snowFlags(taps(50),{hits:49,thrown:50},[]),["precision"]);
- assert.deepEqual(R.snowFlags(taps(40),{hits:40,thrown:40},[]),[],"40 throws are not over 40");
- assert.deepEqual(R.snowFlags(taps(50),{hits:47,thrown:50},[]),[],"94 % is fine");
+ // precision: the balls that land on a foe among those that land once the first foe is up (the sleigh, the parries
+ // and the balls thrown into the void before the first pop do not count)
+ const ev=(n,kind,t0=1000)=>Array.from({length:n},(_,i)=>({t:t0+i*500,kind}));
+ const fl=events=>R.snowFlags(taps(60),{events},[],{firstPop:900});
+ assert.equal(R.SNOW_BOT.precisionThrows,25);
+ assert.deepEqual(fl(ev(26,"hit")),["precision"]);
+ assert.deepEqual(fl(ev(25,"hit")),[],"25 throws are not over 25");
+ assert.deepEqual(fl([...ev(29,"hit"),...ev(1,"miss")]),["precision"],"96.7 %");
+ assert.deepEqual(fl([...ev(28,"hit"),...ev(2,"pass")]),[],"93.3 % is fine");
+ assert.deepEqual(fl([...ev(24,"hit"),...ev(3,"sleigh"),...ev(20,"parry")]),[],"the sleigh and the parries are not foe hits");
+ assert.deepEqual(fl([...Array.from({length:30},(_,i)=>({t:i*20,kind:"miss"})),...ev(26,"hit")]),["precision"],"misses before the first pop are ignored");
  assert.deepEqual(R.snowFlags([],{hits:0,thrown:0},[]),[]);
+});
+
+// A script that knows the seed: every foe 250 ms after he shows, every incoming ball parried halfway.
+function botTaps(seed){
+ const sched=schedule(seed,"left"),taps=[];
+ for(const p of sched.pops){
+  if(p.passant!==null)continue;
+  taps.push({t:Math.round(p.t+250),...centre(p.spot)});
+  if(p.throws){const t=Math.round(p.throwAt+500),b=incomingAt(p,t);if(b)taps.push({t,x:Math.round(b.x),y:Math.round(b.y)});}
+ }
+ return taps.filter(o=>o.t<=45000&&o.x>=0&&o.x<=466&&o.y>=0&&o.y<=466);
+}
+test("a fight over 160 points is flagged « plafond » (still paid); a naive full fight is flagged « precision »",()=>{
+ assert.equal(R.MINI.snowball.suspect,161,"flagged over 160");
+ const S=newS(),s=doIt(S,{type:"snowStart"},10),xp0=S.xp;
+ const r=doIt(S,{type:"miniEnd",id:s.game.id,taps:botTaps(s.game.seed)},10,{ms:46000});
+ assert.equal(r.ok,true);assert.ok(r.result.score>160,`score ${r.result.score}`);
+ assert.ok(r.audit.flags.includes("plafond"));assert.equal(S.xp,xp0+R.snowBonus(r.result.score));
+ const T=newS(),t=doIt(T,{type:"snowStart"},10);
+ const n=doIt(T,{type:"miniEnd",id:t.game.id,taps:tapsFor(t.game.seed,80)},10,{ms:46000});
+ assert.equal(n.ok,true);assert.ok(n.result.score<=160,`score ${n.result.score}`);
+ assert.ok(!n.audit.flags.includes("plafond"));assert.ok(n.audit.flags.includes("precision"));
+});
+
+test("play reads each tap once: the taps validated are the taps replayed",()=>{
+ const reads={t:0,x:0,y:0},c=centre(0);
+ const tricky={get t(){reads.t++;return reads.t===1?1200:-5;},get x(){reads.x++;return c.x;},get y(){reads.y++;return c.y;}};
+ const r=play({pops:[pop({t:1000,spot:0,stay:2000})],...noSleigh},[tricky]);
+ assert.deepEqual(reads,{t:1,x:1,y:1});
+ assert.equal(r.events[0].kind,"hit");assert.equal(r.events[0].from,1200);
+ let k=0;const bad={get t(){return k++===0?Number.NaN:1200;},x:1,y:1};
+ assert.throws(()=>play({pops:[],...noSleigh},[bad]),RangeError);
 });
 
 test("a stored snowball game survives sanitize; a forged one carries nothing else",()=>{
