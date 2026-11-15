@@ -83,19 +83,21 @@ CREATE TABLE IF NOT EXISTS snowfront_daily(day INTEGER NOT NULL,player_id INTEGE
  // False when nothing was added: an unknown camp, a score that is not a whole number >= 0, a year already closed.
  // day: the server day of the fight (R.dayKey), for the player's daily allowance (without it, only the fight's cap).
  // A fight past the allowance still counts as played (the player is paid if his camp wins), for 0 points.
- function add(year,camp,playerId,points,day=null){
-  if(!okYear(year)||!CAMPS.includes(camp)||!Number.isSafeInteger(playerId)||!Number.isSafeInteger(points)||points<0)return false;
+ // put(): the points really added (null: nothing added); add(): whether it was added.
+ function put(year,camp,playerId,points,day=null){
+  if(!okYear(year)||!CAMPS.includes(camp)||!Number.isSafeInteger(playerId)||!Number.isSafeInteger(points)||points<0)return null;
   return atomic(()=>{
-   if(q.result.get(year))return false;
+   if(q.result.get(year))return null;
    let pts=Math.min(points,perFight);
    if(Number.isSafeInteger(day)){
     const left=Math.max(0,perDay-Number(q.spent.get(day,playerId)?.pts??0));
     pts=Math.min(pts,left);q.spend.run(day,playerId,pts);
    }
    q.addPts.run(year,camp,pts);q.addPlayer.run(year,playerId,camp);
-   return true;
+   return pts;
   });
  }
+ const add=(...a)=>put(...a)!==null;
  // Once per year: the result is kept, and the ids to pay come back only from the call that closed it (the caller pays
  // them in the same transaction, so a crash pays nobody twice). A tie pays both camps.
  function close(year,now=Date.now()){
@@ -110,5 +112,5 @@ CREATE TABLE IF NOT EXISTS snowfront_daily(day INTEGER NOT NULL,player_id INTEGE
  }
  // The most recent year anybody fought in, when it was never closed (a server down through January); else null.
  function lastOpen(){const y=q.last.get()?.y;return Number.isInteger(y)&&!q.result.get(y)?y:null;}
- return {add,totals,result,close,lastOpen};
+ return {add,put,totals,result,close,lastOpen};
 }

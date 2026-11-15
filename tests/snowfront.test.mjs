@@ -62,6 +62,11 @@ it("a fight brings 120 points at most and a player 400 a server day: the excess 
  db.exec("BEGIN");f.add(2026,"right",3,120,D);db.exec("ROLLBACK");
  f.add(2026,"right",3,120,D);f.add(2026,"right",3,120,D);f.add(2026,"right",3,120,D);f.add(2026,"right",3,120,D);
  assert.deepEqual(f.totals(2026),{left:470,right:500});
+ // put(): the points really added (null: nothing added)
+ const g=SF.createSnowFront(new DatabaseSync(":memory:"),{exists:()=>true});
+ assert.equal(g.put(2026,"left",1,150,D),120);assert.equal(g.put(2026,"left",1,300,D),120);
+ assert.equal(g.put(2026,"left",1,300,D),120);assert.equal(g.put(2026,"left",1,300,D),40);assert.equal(g.put(2026,"left",1,300,D),0);
+ assert.equal(g.put(2026,"centre",1,5,D),null);
  // a closed year spends nothing
  f.close(2026);assert.equal(f.add(2026,"left",4,50,D),false);
  assert.equal(db.prepare("SELECT pts FROM snowfront_daily WHERE day=? AND player_id=?").get(D,4),undefined);
@@ -180,6 +185,7 @@ it("a fight raises its camp on the Front by the score the server recomputed, nev
  assert.equal(e.status,200,JSON.stringify(e.json));
  assert.deepEqual(e.json.me.snowFront,{left:want,right:0,closed:false});
  assert.equal(e.json.front,true,"the reply says the fight counted");
+ assert.equal(e.json.frontPts,want,"and how many points the Front took");
  // the day's allowance is kept with the add (the server day of the fight's start)
  {const db=new DatabaseSync(join(A.dir,"t.db"),{readOnly:true});
   try{assert.deepEqual(db.prepare("SELECT day,pts FROM snowfront_daily").all().map(r=>({...r})),[{day:dayNow(),pts:want}]);}finally{db.close();}}
@@ -207,6 +213,7 @@ it("a fight flagged as a bot pays its XP but stays out of the Front",async()=>{
  assert.equal(e.status,200,JSON.stringify(e.json));
  assert.deepEqual(e.json.me.snowFront,before,"not counted");
  assert.equal(e.json.front,false,"and the reply says so");
+ assert.equal(e.json.frontPts,0);
 });
 
 it("no Front outside the theme; a test instant is refused off a dev server",async()=>{

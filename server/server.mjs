@@ -658,14 +658,15 @@ function newYearView(p,now){
  const t=front.result(y)??front.totals(y);
  return {names:names.map(o=>o.name),others,front:t.left+t.right>0?{winner:SF.winnerOf(t),left:t.left,right:t.right}:null,until:SF.toastEnd(y,NEWYEAR_AT)};
 }
-// From /api/action, with the rules' hidden audit of an accepted fight. Returns whether it was added to the Front (the
-// miniEnd reply says so: the browser only tells the player his points counted when they did).
+// From /api/action, with the rules' hidden audit of an accepted fight. Returns the points added to the Front (capped:
+// maybe fewer than the score, 0 past the day's allowance), or false when the fight does not count. The miniEnd reply
+// says both (front, frontPts): the browser tells the player how many of his points counted, only when they did.
 function frontAdd(p,a){
  if(a.noel!==true||!Number.isFinite(a.start)||!Number.isSafeInteger(a.score)||a.score<0)return false;
  if(Array.isArray(a.flags)&&a.flags.some(f=>SNOW_BOT_FLAGS.has(f)))return false;
  const y=nyYear(a.start);if(a.start>=nyClosing(y))return false;
- if(!front.add(y,p.state.camp,p.id,a.score,R.dayKey(Math.floor(a.start/R.H))))return false;
- frontChanged();return true;
+ const pts=front.put(y,p.state.camp,p.id,a.score,R.dayKey(Math.floor(a.start/R.H)));if(pts===null)return false;
+ frontChanged();return pts;
 }
 // The open screens hear the counter through the "snowFront" event ({left,right,closed}), at most once per FRONT_EVERY.
 let frontSent=0,frontTimer=null;
@@ -1694,7 +1695,7 @@ async function route(req,res){
   if(lag!==null)setLag(row,lag);
   if(r.audit){
    const a=r.audit;recordMini(p,a,now);delete r.audit;   // for the admin, not for the player's script
-   if(r.ok&&a.game==="snowball"){r.front=false;try{r.front=frontAdd(p,a);}catch(e){console.error(`player ${p.id}: Front de neige`,e);}}
+   if(r.ok&&a.game==="snowball"){r.front=false;r.frontPts=0;try{const pts=frontAdd(p,a);if(pts!==false){r.front=true;r.frontPts=pts;}}catch(e){console.error(`player ${p.id}: Front de neige`,e);}}
    if(a.game==="snowball"){try{snowChEnded(p,a,r.ok,started,now);}catch(e){console.error(`player ${p.id}: snow challenge`,e);}}
   }
   // The challenge's game started: in play from now on, never offered again.

@@ -218,6 +218,18 @@ test("frontBar: « tes points comptent » only when the server said the game cou
  assert.equal(U.frontBar({...F,closed:true},"right",{score:42,counted:false}).note,"Le Front de neige est tombé : résultat final.");
 });
 
+test("frontBar: the points the Front really took (reply frontPts), said capped when fewer than the score",()=>{
+ const F={left:10,right:20,closed:false};
+ assert.equal(U.frontBar(F,"left",{score:42,counted:true,pts:42}).note,"tes 42 points comptent pour la Gauche");
+ assert.equal(U.frontBar(F,"left",{score:150,counted:true,pts:120}).note,"tes 120 points comptent pour la Gauche (plafonnés)");
+ assert.equal(U.frontBar(F,"right",{score:3,counted:true,pts:1}).note,"ton point compte pour la Droite (plafonné)");
+ assert.equal(U.frontBar(F,"left",{score:80,counted:true,pts:0}).note,"Plafond du jour atteint : cette partie ne rapporte plus de points au Front.");
+ assert.equal(U.frontBar(F,"left",{score:42,counted:false,pts:0}).note,"Cette partie ne compte pas dans le Front.");
+ // no frontPts (an older reply): the score, as before
+ assert.equal(U.frontBar(F,"left",{score:42,counted:true}).note,"tes 42 points comptent pour la Gauche");
+ assert.equal(U.frontBar(F,"left",{score:42,counted:true,pts:"x"}).note,"tes 42 points comptent pour la Gauche");
+});
+
 test("frontBar: nothing without a counter (theme off) or with a malformed one",()=>{
  assert.equal(U.frontBar(null,"left"),null);
  assert.equal(U.frontBar(undefined,"left"),null);

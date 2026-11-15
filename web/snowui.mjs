@@ -132,13 +132,19 @@ export function endSummary({ok,result,bonus,error,xp}={}){
 // ---------------------------------------------------------------- the Front de neige
 // me.snowFront ({left,right,closed}) as a bar: shares (in %), the totals in French, a line for the player. null when
 // there is no counter (the theme is off) or it is malformed. score: this game's (server's) points; counted: the
-// miniEnd reply's `front` (true: added to the Front; false: not; anything else: unknown, a neutral line).
-export function frontBar(front,camp,{score,counted}={}){
+// miniEnd reply's `front` (true: added to the Front; false: not; anything else: unknown, a neutral line); pts: its
+// `frontPts`, the points the Front really took (capped: fewer than the score, 0 past the day's allowance).
+function countedLine(score,pts,name){
+ const n=num(pts)?pts:score,capped=num(pts)&&pts<score;
+ if(n===0)return "Plafond du jour atteint : cette partie ne rapporte plus de points au Front.";
+ return n===1?`ton point compte pour ${name}${capped?" (plafonné)":""}`:`tes ${n} points comptent pour ${name}${capped?" (plafonnés)":""}`;
+}
+export function frontBar(front,camp,{score,counted,pts}={}){
  if(!front||typeof front!=="object"||!num(front.left)||!num(front.right)||front.left<0||front.right<0)return null;
  const tot=front.left+front.right,lp=tot?Math.round(front.left/tot*1000)/10:50,name=camp==="left"?"la Gauche":"la Droite";
  const note=front.closed?"Le Front de neige est tombé : résultat final."
   :counted===false?"Cette partie ne compte pas dans le Front."
-  :counted===true&&num(score)&&score>0?(score===1?`ton point compte pour ${name}`:`tes ${score} points comptent pour ${name}`)
+  :counted===true&&num(score)&&score>0?countedLine(score,pts,name)
   :`Chaque partie compte pour ton camp : ${name}.`;
  return {lp,rp:Math.round((100-lp)*10)/10,leftText:`Gauche ${front.left.toLocaleString("fr-FR")}`,rightText:`Droite ${front.right.toLocaleString("fr-FR")}`,note,closed:!!front.closed};
 }

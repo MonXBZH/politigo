@@ -250,7 +250,7 @@ async function endMini(){
  }finally{miniEnding=false;}
  if(key==="snowball"){
   if(!S)return;
-  snowLast={at:Date.now(),gameId:id,ch,xp,ok:!!r?.ok,result:r?.result,bonus:r?.bonus,front:r?.front,error:r?r.error:"La partie n'a pas pu partir au serveur : réessaie dans un instant."};
+  snowLast={at:Date.now(),gameId:id,ch,xp,ok:!!r?.ok,result:r?.result,bonus:r?.bonus,front:r?.front,frontPts:r?.frontPts,error:r?r.error:"La partie n'a pas pu partir au serveur : réessaie dans un instant."};
   if(r?.ok&&r.bonus>=10)playAnim("win",3000);
   if(!scene)openSnow();
   return;
@@ -2213,7 +2213,7 @@ function renderSnow(body,set){
   if(last.ch&&last.ok)end.append(fine("Partie de défi : le verdict arrive dans ton journal."));
   body.append(end);
  }else body.append(fine("Touche un adversaire pour lui lancer une boule (5 en main, une revient toutes les demi-secondes). Touche les boules qui arrivent pour les parer. Épargne les passants… et vise le traîneau !"));
- const fb=frontBar(snowFront,S.camp,last?.ok?{score:last.result?.score,counted:last.front}:{});
+ const fb=frontBar(snowFront,S.camp,last?.ok?{score:last.result?.score,counted:last.front,pts:last.frontPts}:{});
  if(fb)body.append(frontBlock(fb));
  if(!on)body.append(Object.assign(fine("La bataille revient avec la Trêve des confiseurs, du 1er décembre au 1er janvier."),{className:"fine warn"}));
  else if(err)body.append(Object.assign(fine(`Pas de bataille pour l'instant : ${err}`),{className:"fine warn"}));
