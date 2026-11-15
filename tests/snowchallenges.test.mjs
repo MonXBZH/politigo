@@ -126,7 +126,19 @@ it("play: a challenge in play is no longer open; it finishes from there, or at 0
 
 // ---------------------------------------------------------------- a real server
 const centre=i=>{const s=SPOTS[i];return {x:s.x,y:Math.round(s.base-(64+COVER)/2*s.k)};};
-const goodTaps=(seed,camp,upTo=2600)=>schedule(seed,camp).pops.filter(p=>p.passant===null&&p.t+300<=upTo).map(p=>({t:Math.round(p.t+300),...centre(p.spot)}));
+// A good human fight's first seconds: one ball at each foe (no passer-by) 300 ms after he shows up.
+// When those first foes are all passers-by or out of reach (about 1.5 % of the deals), the next foes too, until the
+// replay scores: computed from the very seed the server dealt, never a 0-point fight (checked on 200 000 seeds; the
+// last tap is at 6.9 s at most).
+function goodTaps(seed,camp,upTo=2600){
+ const sched=schedule(seed,camp),foes=sched.pops.filter(p=>p.passant===null),tap=p=>({t:Math.round(p.t+300),...centre(p.spot)});
+ const taps=foes.filter(p=>p.t+300<=upTo).map(tap);
+ for(const p of foes.slice(taps.length)){if(play(sched,taps).score>0)break;taps.push(tap(p));}
+ return taps;
+}
+// How long to play before sending: at least the server's 3 s, and long enough for the last tap (the server takes no
+// tap later than the time played + 2 s).
+const playFor=taps=>Math.max(3300,Math.max(0,...taps.map(p=>p.t))-1500);
 const me=async c=>(await c.call("GET","/api/me")).json;
 const list=async c=>{const r=await c.call("GET","/api/snow/challenges");assert.equal(r.status,200,JSON.stringify(r.json));return r.json;};
 // A validated fight: good taps (a score above 0), or the taps given; returns the game and the server's score.
@@ -134,7 +146,7 @@ async function fight(c,{challenge,taps}={}){
  const s=await c.call("POST","/api/action",{type:"snowStart",...(challenge!==undefined?{challenge}:{})});
  assert.equal(s.status,200,JSON.stringify(s.json));
  const g=s.json.game,t=taps??goodTaps(g.seed,c.camp);
- await sleep(3300);
+ await sleep(playFor(t));
  const e=await c.call("POST","/api/action",{type:"miniEnd",id:g.id,taps:t,score:999});
  assert.equal(e.status,200,JSON.stringify(e.json));
  return {game:g,score:play(schedule(g.seed,c.camp),t).score,end:e};
@@ -250,8 +262,8 @@ it("a challenge is launched within the window after a clean, ordinary fight",asy
  // a bot-flagged fight cannot be re-dealt
  const C=await player(PORT,"Neige Golf","left");
  const s=await C.call("POST","/api/action",{type:"snowStart"}),g=s.json.game;
- await sleep(3300);
  const burst=[...goodTaps(g.seed,"left"),...Array.from({length:60},(_,i)=>({t:3000+i*30,x:20,y:460}))];
+ await sleep(playFor(burst));
  assert.equal((await C.call("POST","/api/action",{type:"miniEnd",id:g.id,taps:burst})).status,200);
  const r2=await C.call("POST","/api/snow/challenge",{to:"Neige Foxtrot",gameId:g.id});
  assert.equal(r2.status,422);assert.equal(r2.json.error,"Cette partie ne peut pas servir de défi.");

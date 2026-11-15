@@ -148,7 +148,18 @@ it("frontYear and the midnight window",()=>{
 // Where a fully risen foe's head is, as in snowball.client.test.mjs.
 const centre=i=>{const s=SPOTS[i];return {x:s.x,y:Math.round(s.base-(64+COVER)/2*s.k)};};
 // A good human fight's first seconds: one ball at each foe (no passer-by) 300 ms after he shows up.
-const goodTaps=(seed,camp,upTo=2600)=>schedule(seed,camp).pops.filter(p=>p.passant===null&&p.t+300<=upTo).map(p=>({t:Math.round(p.t+300),...centre(p.spot)}));
+// When those first foes are all passers-by or out of reach (about 1.5 % of the deals), the next foes too, until the
+// replay scores: computed from the very seed the server dealt, never a 0-point fight (checked on 200 000 seeds; the
+// last tap is at 6.9 s at most).
+function goodTaps(seed,camp,upTo=2600){
+ const sched=schedule(seed,camp),foes=sched.pops.filter(p=>p.passant===null),tap=p=>({t:Math.round(p.t+300),...centre(p.spot)});
+ const taps=foes.filter(p=>p.t+300<=upTo).map(tap);
+ for(const p of foes.slice(taps.length)){if(play(sched,taps).score>0)break;taps.push(tap(p));}
+ return taps;
+}
+// How long to play before sending: at least the server's 3 s, and long enough for the last tap (the server takes no
+// tap later than the time played + 2 s).
+const playFor=taps=>Math.max(3300,Math.max(0,...taps.map(p=>p.t))-1500);
 async function start(c){const r=await c.call("POST","/api/action",{type:"snowStart"});assert.equal(r.status,200,JSON.stringify(r.json));return r.json.game;}
 async function end(c,game,taps,extra={}){return c.call("POST","/api/action",{type:"miniEnd",id:game.id,taps,...extra});}
 const me=async c=>(await c.call("GET","/api/me")).json;
@@ -180,7 +191,7 @@ it("a fight raises its camp on the Front by the score the server recomputed, nev
  const s=stream(A_PORT,r);t.after(()=>s.close());await until(()=>got(s,"me").length);
  const g=await start(l),taps=goodTaps(g.seed,"left"),want=play(schedule(g.seed,"left"),taps).score;
  assert.ok(want>0,"the taps hit");
- await sleep(3300);
+ await sleep(playFor(taps));
  const e=await end(l,g,taps,{score:999});
  assert.equal(e.status,200,JSON.stringify(e.json));
  assert.deepEqual(e.json.me.snowFront,{left:want,right:0,closed:false});
@@ -208,7 +219,7 @@ it("a fight flagged as a bot pays its XP but stays out of the Front",async()=>{
  assert.ok(res.score>0,"the fight scores");
  assert.ok(snowFlags(taps,res,[]).includes("taps_rapides"),"and is flagged");
  const before=(await me(r)).snowFront;
- await sleep(3300);
+ await sleep(playFor(taps));
  const e=await end(r,g,taps);
  assert.equal(e.status,200,JSON.stringify(e.json));
  assert.deepEqual(e.json.me.snowFront,before,"not counted");
@@ -258,8 +269,8 @@ test("midnight: one toast push, the Front closes after the fights begun before i
  assert.equal(e1.status,200,JSON.stringify(e1.json));assert.equal(e2.status,200,JSON.stringify(e2.json));
  assert.deepEqual(e1.json.me.snowFront,{left:sc1,right:0,closed:true});
  // a fight begun after midnight pays its XP but no longer counts, and does not make its player a winner
- const g3=await start(L2);await sleep(3300);
- const e3=await end(L2,g3,goodTaps(g3.seed,"left"));assert.equal(e3.status,200,JSON.stringify(e3.json));
+ const g3=await start(L2),taps3=goodTaps(g3.seed,"left");await sleep(playFor(taps3));
+ const e3=await end(L2,g3,taps3);assert.equal(e3.status,200,JSON.stringify(e3.json));
  assert.deepEqual(e3.json.me.snowFront,{left:sc1,right:0,closed:true});
  // the closing tick: the left camp wins, its player who played gets 3 bulletins, nobody else
  assert.ok(await until(()=>setting("snowfront_closed")===String(year),15000),"the Front closes");
