@@ -210,6 +210,20 @@ it("a fight raises its camp on the Front by the score the server recomputed, nev
  assert.deepEqual((await me(r)).snowFront,{left:want,right:0,closed:false});
 });
 
+it("an honest fast player's 400 taps (over 4 KiB of JSON) are not refused with a 413",async()=>{
+ const r=await player(A_PORT,"Front Rapide","left");
+ const g=await start(r);
+ // the good taps, then misses spread over the time played, up to SNOW.maxTaps
+ const taps=goodTaps(g.seed,"left");
+ for(let i=0;taps.length<400;i++)taps.push({t:200+i*7,x:233,y:466});
+ const body=JSON.stringify({type:"miniEnd",id:g.id,taps});
+ assert.ok(body.length>4096&&body.length<16384,`body of ${body.length} bytes`);
+ await sleep(playFor(taps));
+ const e=await end(r,g,taps);
+ assert.notEqual(e.status,413,JSON.stringify(e.json));
+ assert.equal(e.status,200,JSON.stringify(e.json));
+});
+
 it("a fight flagged as a bot pays its XP but stays out of the Front",async()=>{
  const r=await player(A_PORT,"Front Robot","right");
  const g=await start(r);

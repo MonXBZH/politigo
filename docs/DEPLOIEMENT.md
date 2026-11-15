@@ -145,7 +145,17 @@ server {
         # $remote_addr et non $proxy_add_x_forwarded_for : une adresse inventée par le visiteur est écrasée.
         proxy_set_header X-Forwarded-For $remote_addr;
     }
-    # Envoi d'images dans le chat (2 Mo au plus) : la seule requête plus grosse que 8 Ko.
+    # Actions de jeu : jusqu'à 16 Ko (un combat de boules de neige envoie jusqu'à 400 touches, environ 11 Ko).
+    location = /api/action {
+        client_max_body_size 16k;
+        proxy_pass http://IP_DU_SERVEUR_DOCKER:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $remote_addr;
+    }
+    # Envoi d'images dans le chat (2 Mo au plus) : la seule requête plus grosse que 16 Ko.
     location = /api/chat/media {
         client_max_body_size 2200k;
         proxy_pass http://IP_DU_SERVEUR_DOCKER:8080;
@@ -173,7 +183,7 @@ server {
 Le reverse proxy ne doit pas réécrire les en-têtes de sécurité envoyés par la pile (CSP, X-Frame-Options…), seulement ajouter HSTS.
 Si l'un de ses `location` utilise `add_header`, recopier la ligne HSTS dedans : nginx n'hérite alors plus de celle du `server`.
 
-**Nginx Proxy Manager** : la même chose dans l'onglet *Advanced* de l'hôte. Sans la `location = /api/chat/media` (ou un
+**Nginx Proxy Manager** : la même chose dans l'onglet *Advanced* de l'hôte. Sans la `location = /api/action` (16k), un combat de boules de neige un peu long est refusé en 413. Sans la `location = /api/chat/media` (ou un
 `client_max_body_size` d'au moins 2200k), l'envoi d'images dans le chat échoue avec une erreur 413 ; le texte, lui, passe.
 
 ## 3. Exploitation

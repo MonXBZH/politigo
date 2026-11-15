@@ -58,7 +58,7 @@ const PRESENCE_MS=Math.max(0,Number(env.PRESENCE_MS??8000));
 // Every game change used to resend the whole board to every stream: now at most one board per BOARD_MS.
 const BOARD_MS=Math.max(0,Number(env.BOARD_MS??1000));
 const MAX_PLAYERS=Math.max(1,Number(env.MAX_PLAYERS)||50);   // a leaked invite code cannot flood the database
-const SESSION_DAYS=90,BODY_LIMIT=4096,FEED_KEEP=200,SESSIONS_PER_PLAYER=10,SSE_PER_PLAYER=3,SSE_TOTAL=300,SSE_PER_IP=12;
+const SESSION_DAYS=90,BODY_LIMIT=4096,ACTION_BODY_LIMIT=16384,FEED_KEEP=200,SESSIONS_PER_PLAYER=10,SSE_PER_PLAYER=3,SSE_TOTAL=300,SSE_PER_IP=12;
 // Sign-ups per address and hour: a group of friends behind one box, not a farm of accounts. Only wrong invite codes
 // count against guessing; a typo in the form (name taken, short password) costs nothing.
 const REG_PER_HOUR=4,REG_BAD_INVITE_PER_HOUR=5;
@@ -523,11 +523,12 @@ function checkOrigin(req){
   if(!o||!(o.host===host||(!host.includes(":")&&o.hostname===host)))throw new HttpError(403,"Origine refusée.");
  }
 }
-async function readJson(req){
+// limit: 4 KiB for every route; POST /api/action alone asks for ACTION_BODY_LIMIT (a snowball fight sends up to 400 taps).
+async function readJson(req,limit=BODY_LIMIT){
  if(!/^application\/json\s*(;|$)/i.test(String(req.headers["content-type"]||"")))throw new HttpError(415,"JSON attendu.");
  checkOrigin(req);
  let size=0;const chunks=[];
- for await(const c of req){size+=c.length;if(size>BODY_LIMIT)throw new HttpError(413,"Requête trop grosse.");chunks.push(c);}
+ for await(const c of req){size+=c.length;if(size>limit)throw new HttpError(413,"Requête trop grosse.");chunks.push(c);}
  try{const v=JSON.parse(Buffer.concat(chunks).toString("utf8")||"{}");if(!v||typeof v!=="object"||Array.isArray(v))throw 0;return v;}
  catch{throw new HttpError(400,"JSON invalide.");}
 }
@@ -1673,7 +1674,7 @@ async function route(req,res){
  }
  if(path==="/api/action"&&method==="POST"){
   const p=auth(req);if(limited("act:"+p.id,40,10e3))throw new HttpError(429,"Doucement : trop d'actions d'un coup.");
-  const b=await readJson(req);
+  const b=await readJson(req,ACTION_BODY_LIMIT);
   if(!players.has(p.id))throw new HttpError(401,"Connexion requise.");   // deleted while the body was arriving
   const row=logActivity(p,req,typeof b.type==="string"?b.type:"?");
   const now=Date.now(),ev=eventNow();let lag=null;

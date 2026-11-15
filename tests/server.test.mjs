@@ -100,7 +100,11 @@ test("cross-site writes are refused: JSON only, same origin only",async()=>{
  assert.ok([200,422].includes(status),"a proxy that drops the port is accepted");
  assert.equal((await c.call("DELETE","/api/account","password=motdepasse1",{"Content-Type":"text/plain"})).status,415);
  assert.equal((await c.call("GET","/api/me")).status,200,"the account is still there");
- assert.equal((await c.call("POST","/api/action","x".repeat(5000))).status,413);
+ // /api/action alone takes up to 16 KiB (a snowball fight's 400 taps); every other route stays at 4 KiB.
+ assert.equal((await c.call("POST","/api/action","x".repeat(16385))).status,413);
+ assert.equal((await c.call("POST","/api/action",JSON.stringify({type:"pet",pad:"x".repeat(5000)}))).status,200,"5000 bytes pass the size check on /api/action");
+ assert.equal((await c.call("POST","/api/login","x".repeat(5000))).status,413);
+ assert.equal((await c.call("POST","/api/register","x".repeat(4097))).status,413);
  assert.equal((await c.call("POST","/api/action","{oops")).status,400);
 });
 
