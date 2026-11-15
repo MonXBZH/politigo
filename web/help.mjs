@@ -72,6 +72,13 @@ export const HELP=[
   ["Dans le jeu, les récompenses et les prix modifiés ressortent, par exemple « ×2 ».",
    "Une partie ou une mission lancée pendant l'événement garde son bonus, même s'il se termine avant elle.",
    "Deux événements du même type ne s'additionnent pas : le plus fort s'applique."]]},
+ {id:"treve",title:"La Trêve des confiseurs",parts:[
+  "Du 1er décembre au 1er janvier, la République passe l'hiver dehors : décor de neige, tenues de saison et une Buvette qui a changé de nom. Les costumes gardent leurs prix et leurs effets.",
+  ["Le calendrier de l'Avent : une case par jour à ouvrir, un petit cadeau, sans jamais de vrais euros ni de FM.",
+   "La bataille de neige : une partie rapide, comme les autres mini-jeux, qui rapporte de l'XP. Le score est calculé par le serveur.",
+   "Les défis de neige : lance ta partie à un autre joueur, qui a quelques minutes pour faire mieux que toi.",
+   "Le Front de neige : chaque partie de la saison compte pour ton camp. Le décompte s'arrête à minuit, la nuit du 31 décembre.",
+   "À minuit pile, tout le monde lève son verre : un toast pour la nouvelle année, camps réunis."]]},
  {id:"social",title:"Classement, fil, chat et notifications",parts:[
   ["Le classement en direct : score, niveau, série record, survie. Touche un élu pour ouvrir sa fiche et le défier.",
    "Le fil de la République raconte les évolutions, les morts politiques, les beaux scores et les duels de chacun.",
@@ -93,4 +100,4 @@ export function signupProblem({name,password,invite}={}){
  return "";
 }
 // The section a sheet's « ? » opens.
-export const SHEET_HELP={food:"jauges",care:"jauges",play:"jeux",duels:"duels",more:"demarrer",wardrobe:"tombola",urn:"tombola",player:"social",chat:"social"};
+export const SHEET_HELP={food:"jauges",care:"jauges",play:"jeux",duels:"duels",more:"demarrer",wardrobe:"tombola",urn:"tombola",player:"social",chat:"social",advent:"treve",snow:"treve"};

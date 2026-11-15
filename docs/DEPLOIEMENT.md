@@ -39,7 +39,7 @@ docker compose up -d --build
 | `POLITIGO_SPEED` | `1` (temps réel ; plus grand uniquement sur un serveur de test) |
 | `POLITIGO_PUSH` | facultatif. Vide : notifications de duel activées ; **`off`** : désactivées (voir « Duels et notifications ») |
 | `POLITIGO_PUSH_CONTACT` | facultatif. Adresse `mailto:` ou `https:` transmise aux services de notification ; vide : la page GitHub du projet |
-| `POLITIGO_EVENT` | facultatif. Vide : événements saisonniers automatiques ; **`off`** : désactivés ; `halloween` : forcé (tests) — voir « Événements saisonniers (Halloween) ». L'interface d'administration peut le changer à chaud |
+| `POLITIGO_EVENT` | facultatif. Vide : événements saisonniers automatiques ; **`off`** : désactivés ; `halloween` ou `noel` : forcé (tests) — voir « Événements saisonniers (Halloween) ». L'interface d'administration peut le changer à chaud |
 | `POLITIGO_SERVER_NAME` | facultatif. Nom de cette partie dans l'interface d'administration (utile quand elle en gère plusieurs) ; vide : « PolitiGo » |
 | `COMPOSE_PROFILES` | `admin` pour lancer l'interface d'administration (conteneur `admin`) ; absent ou vide : le jeu seul. Une seule valeur, sans virgule. À laisser vide sur une partie supplémentaire rattachée à une console ailleurs |
 | `POLITIGO_ADMIN_PASSWORD` | interface d'administration : mot de passe, 12 caractères minimum. **Vide** : un mot de passe est généré au premier démarrage et affiché **une seule fois** dans les logs du conteneur `admin` (seule son empreinte est gardée, dans le volume `politigo-admin-data`) |
@@ -541,6 +541,15 @@ Le panneau **Events** de l'administration crée et gère des événements à dur
   et effets inchangés, duels identiques), sauf une friandise quotidienne : +5 de moral une fois par jour de jeu, éveillé.
   `POLITIGO_EVENT=off` l'arrête avant la fin ; `POLITIGO_EVENT=halloween` le force n'importe quel jour (serveur de test
   uniquement). Vide ou absent : automatique ; une valeur inconnue est signalée dans les logs et traitée comme vide.
+- **Trêve des confiseurs (Noël)** : automatique du 1er décembre 00:00 au 1er janvier 23:59, heure du serveur (`POLITIGO_TZ`,
+  Europe/Paris par défaut). Décor, tenues, calendrier de l'Avent, bataille de neige (mini-jeu à XP, défis entre joueurs) et
+  Front de neige (camp contre camp) ; jamais d'argent réel ni de FM. Le Front de neige se clôt à minuit le 1er janvier,
+  heure du serveur, puis le toast du Nouvel An réunit les joueurs. `POLITIGO_EVENT=noel` force la Trêve n'importe quel
+  jour (serveur de test uniquement), `off` l'arrête ; la console le change aussi (mode « Noël forcé »). La carte
+  « Défis de neige » de la page Duels (commande `snow-challenges`, panneau Duels) est en lecture seule.
+- **Réglages de test de la Trêve** (jamais en production) : `POLITIGO_NEWYEAR_AT` (instant en ms depuis 1970) déplace
+  minuit du Nouvel An ; le serveur refuse de démarrer avec elle si `POLITIGO_VERSION` n'est pas vide ou `dev`.
+  `POLITIGO_SNOW_CHALLENGE_MS` raccourcit le délai laissé au défié (10 minutes par défaut) ; elle ne peut que le réduire.
 - **Réglages de test** (jamais en production) : `POLITIGO_DUEL_MIN_LEVEL` et `POLITIGO_DUEL_MIN_AGE_H` abaissent le niveau
   et l'ancienneté du compte exigés pour les duels (ils ne peuvent que les baisser), pour tester avec des comptes neufs.
 

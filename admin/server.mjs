@@ -133,7 +133,7 @@ const PRESETS=[{id:"chat",label:"Modo chat",panels:["traiter","chat"],actions:["
  {id:"full",label:"Modo complet",panels:PANEL_IDS,actions:ACTION_IDS.filter(a=>a!=="invite"&&a!=="player-delete"&&a!=="give")}];   // the code, deleting a player and gifts stay out unless checked
 // What each command asks of a moderator: one of these panels (p:) or actions (a:). Not listed: the owner's alone.
 const NEEDS={stats:PANEL_IDS.map(p=>"p:"+p),list:["p:tableau","p:joueurs","p:annonces"],player:["p:joueurs"],
- "schedule-list":["p:annonces"],"events-list":["p:events"],"event-save":["a:events-edit"],"event-preview":["a:events-edit"],"event-start":["a:events-run"],"event-stop":["a:events-run"],"event-delete":["a:events-delete"],"announce-history":["p:annonces"],"feed-list":["p:fil"],"duels-list":["p:duels"],"duels-suspects":["p:duels"],
+ "schedule-list":["p:annonces"],"events-list":["p:events"],"event-save":["a:events-edit"],"event-preview":["a:events-edit"],"event-start":["a:events-run"],"event-stop":["a:events-run"],"event-delete":["a:events-delete"],"announce-history":["p:annonces"],"feed-list":["p:fil"],"duels-list":["p:duels"],"snow-challenges":["p:duels"],"duels-suspects":["p:duels"],
  bots:["p:bots"],"chat-reports":["p:chat"],"chat-feed":["p:chat"],"chat-media":["p:chat"],alerts:["p:traiter"],audit:["p:journal"],"invite-get":["a:invite"],
  signout:["a:signout"],rename:["a:rename"],suspend:["a:suspend"],unlock:["a:unlock"],announce:["a:announce"],"schedule-add":["a:announce"],
  "schedule-delete":["a:announce"],"schedule-toggle":["a:announce"],"feed-delete":["a:feed-delete"],"duel-cancel":["a:duel-cancel"],
@@ -294,7 +294,7 @@ const CMDS={
  stats:[],list:[],player:WHO,signout:WHO,rename:[...WHO,"newName"],suspend:[...WHO,"on"],unlock:WHO,
  announce:["text","to","camp"],"events-list":[],"event-save":["id","type","name","msg","params","starts","ends","who","rep","push","ann","rtext","reminds","now"],"event-preview":["type","name","params","starts","ends","ann","rtext"],"event-start":["id"],"event-stop":["id"],"event-delete":["id"],"schedule-list":[],"schedule-add":["text","target","kind","at","time","days","until"],
  "schedule-delete":["id"],"schedule-toggle":["id","enabled"],"announce-history":[],"feed-list":["limit"],"feed-delete":["id"],
- "duels-list":[],"duel-cancel":["id"],"duels-suspects":[],"duel-annul":["id"],"baton-judge":["id","accept"],alerts:[],"alerts-ack":["keys"],"invite-get":[],"invite-regenerate":[],"registrations-set":["open"],"event-set":["mode"],
+ "duels-list":[],"snow-challenges":[],"duel-cancel":["id"],"duels-suspects":[],"duel-annul":["id"],"baton-judge":["id","accept"],alerts:[],"alerts-ack":["keys"],"invite-get":[],"invite-regenerate":[],"registrations-set":["open"],"event-set":["mode"],
  bots:[],"chat-reports":[],"chat-feed":["before","limit","room"],"chat-media":["id"],"chat-delete":["id"],"chat-mute":[...WHO,"hours"],"chat-set":["global","camp"],audit:["limit"],
  "mythic-reset":[],   // the owner's alone: not in NEEDS, so no moderator profile can ever grant it
  "player-delete":[...WHO,"confirm"],give:[...WHO,"lvl","bulletins","item","wear"],"player-protect":[...WHO,"on"],"abandoned-list":[],"abandoned-ignore":["id"],

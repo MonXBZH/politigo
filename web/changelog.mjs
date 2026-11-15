@@ -5,6 +5,22 @@
 import {cmpRelease} from "./rules.mjs";
 
 export const CHANGELOG=[
+ {version:"1.8.0",date:"2026-11-15",help:["treve"],
+  added:[
+   "La Trêve des confiseurs, du 1er décembre au 1er janvier : la République passe l'hiver dehors, avec un décor de neige, des tenues de saison et une Buvette rebaptisée.",
+   "Le calendrier de l'Avent : une case à ouvrir chaque jour, avec un petit cadeau.",
+   "La bataille de neige : une partie rapide pour gagner de l'XP, seul ou en défiant un autre joueur, qui a quelques minutes pour faire mieux.",
+   "Le Front de neige : les camps s'affrontent à coups de boules de neige, jusqu'à minuit le soir du 31 décembre.",
+   "À minuit pile, la nuit du Nouvel An, tout le monde lève son verre : un toast pour tous.",
+   "Quelque chose passe parfois devant la lune… ouvre l'œil."
+  ],
+  fixed:[],
+  admin:[
+   "Le mode événement de la console propose Noël (forcé), et l'automatique couvre aussi la Trêve, du 1er décembre au 1er janvier.",
+   "La Bataille de neige se choisit parmi les mini-jeux des événements Double XP.",
+   "La page Duels a une carte Défis de neige, en lecture seule : date, lanceur, défié, scores, statut et signaux."
+  ]
+ },
  {version:"1.7.4",date:"2026-11-13",
   added:[],
   fixed:[],
