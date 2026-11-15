@@ -123,6 +123,9 @@ test("advent: a missed day stays shut, the 24th pays the big box, nothing after"
  assert.equal(no.ok,false);assert.match(no.error,/pas de calendrier/);
  assert.equal(R.adventBlock(o.S,"halloween")!=="",true);
  assert.equal(R.adventBlock(e.S,"noel"),"Le calendrier est fini : rendez-vous à la Saint-Sylvestre.");
+ assert.match(R.adventBlock(o.S,"noel"),/pas de calendrier/);   // the theme forced in June: no calendar, not « fini »
+ assert.match(R.adventBlock(atAdvent(2027,1,1).S,"noel"),/Le calendrier est fini/);
+ assert.match(R.adventBlock(atAdvent(2027,1,2).S,"noel"),/pas de calendrier/);   // forced past the 1st of January
 });
 
 test("advent: 23:59 and 00:00 are two days; a new year starts empty",()=>{

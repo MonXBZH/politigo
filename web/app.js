@@ -13,7 +13,7 @@ import {outfitLook,drawObject,dressColors} from "./looks.mjs";
 import {createLegend,volcanoRoom} from "./legend.mjs";
 import {createBatonDuel,screenOf,feedParts} from "./batonduel.mjs";
 import {noelMoment,noelYear,voeuxText,adventCells,adventGiftText,etProgress,
- cheersPhase,cheersClock,cheersNamesLine,frontLine,newYearYear,newYearScreen,CHEERS_MS,CHEERS_REPLAY_MS,nyFrameDue} from "./noelui.mjs";
+ cheersPhase,cheersClock,cheersNamesLine,cheersAnnounce,frontLine,newYearYear,newYearScreen,CHEERS_MS,CHEERS_REPLAY_MS,nyFrameDue} from "./noelui.mjs";
 import {endSummary,frontBar,challengeText,sentText,challengeLists,dareView,sendsOnDeath} from "./snowui.mjs";
 const {people,personalItems,stresses,shop,fxNames,XP,xpCost,xpFloor,stage}=R;
 const $=s=>document.querySelector(s);
@@ -154,7 +154,7 @@ function buy(it){closeSheet();send({type:"buy",key:it.key});}
 // the game, the browser plays it (minigames.mjs), the server checks the score.
 let miniEnding=false,miniStartReal=0,pongEnding=false;
 // "Playing": a game on screen, or its score on its way to the server. Toasts, news and scenes wait meanwhile.
-const quiet=()=>!!(pong||mini)||miniEnding||pongEnding||!!bd?.playing();
+const quiet=()=>!!(pong||mini)||miniEnding||pongEnding||!!bd?.playing()||!!nyView.scene;   // the midnight scene counts too
 const drawCand=(p,state,size,cx,ground,t)=>bigSprite(p,state,size,cx,ground,t);
 // The snowball fight's foes: an élu of the other camp in his camp's Santa hat and scarf, or a passer-by; a snowball on
 // the face of the one just hit.
@@ -758,11 +758,13 @@ function cheersWords(c,text,y,size,min,col,face="600 %px Inter, system-ui, sans-
  if(!best){put(text,y);return y+min+5;}
  put(best.l1,y);put(best.l2,y+min+3);return y+2*min+8;
 }
+let cheersSky=null;   // the night sky's gradient, made once per context
 // {names, others, front}: the server's me.newYear; camp and look: the player's élu; year: the year that begins.
 function drawCheers(c,T,{names,others,front,camp,look,year}){
  const t=((T%CHEERS_MS)+CHEERS_MS)%CHEERS_MS,phase=cheersPhase(t),A=reduced?2600:T;   // A: the motion's clock
  c.save();c.beginPath();c.arc(233,233,233,0,Math.PI*2);c.clip();
- const sky=c.createLinearGradient(0,0,0,466);sky.addColorStop(0,"#070b1e");sky.addColorStop(1,"#1d2550");c.fillStyle=sky;c.fillRect(0,0,466,466);
+ if(cheersSky?.c!==c){const g=c.createLinearGradient(0,0,0,466);g.addColorStop(0,"#070b1e");g.addColorStop(1,"#1d2550");cheersSky={c,g};}
+ c.fillStyle=cheersSky.g;c.fillRect(0,0,466,466);
  for(const [x,w,h] of [[0,70,90],[60,60,120],[118,80,80],[300,70,110],[360,110,86]])rect(c,x,262-h,w,h,"#121a3c");
  c.fillStyle="#26306a";c.beginPath();c.moveTo(233,60);c.lineTo(266,262);c.lineTo(200,262);c.closePath();c.fill();rect(c,215,180,36,5,"#26306a");rect(c,207,226,52,5,"#26306a");
  const lit=t>1500;
@@ -792,7 +794,7 @@ function drawCheers(c,T,{names,others,front,camp,look,year}){
 // The page's side: me.newYear and me.newYearBanner (applyMe), the ✕ (closed for this page's life only), « Revoir »
 // (two loops on the page's clock), a DOM button and a DOM banner built with textContent (no HTML, strict CSP).
 let newYear=null,newYearBannerOn=false,nyClosed=false,nyReplayT0=0,nyReplayEnd=0,nyView={scene:null,banner:false};
-const nyClose=document.createElement("button"),nyBanner=document.createElement("div"),nyReplay=document.createElement("button");
+const nyClose=document.createElement("button"),nyBanner=document.createElement("div"),nyReplay=document.createElement("button"),nySay=document.createElement("p");
 {
  nyClose.type="button";nyClose.className="icon-btn ny-close";nyClose.textContent="✕";nyClose.hidden=true;
  nyClose.setAttribute("aria-label","Fermer la scène du nouvel an");
@@ -801,7 +803,8 @@ const nyClose=document.createElement("button"),nyBanner=document.createElement("
  nyReplay.setAttribute("aria-label","Revoir le toast de minuit");
  nyBanner.className="ny-banner";nyBanner.hidden=true;nyBanner.setAttribute("role","region");nyBanner.setAttribute("aria-label","Nouvel an");
  nyBanner.append(words,nyReplay);
- $(".device").append(nyClose);$(".device-wrap").prepend(nyBanner);
+ nySay.className="sr-only";nySay.setAttribute("role","status");nySay.setAttribute("aria-live","polite");
+ $(".device").append(nyClose,nySay);$(".device-wrap").prepend(nyBanner);
 }
 // Worked out every frame (cheap): what to show, and the two DOM pieces kept in step. Never over a game or a scene.
 function nySync(now){
@@ -812,6 +815,7 @@ function nySync(now){
   const held=document.activeElement===nyClose;nyClose.hidden=!v.scene;
   if(held&&!v.scene)(v.banner?nyReplay:cv).focus({preventScroll:true});   // the scene over under the focus: not lost
  }
+ if(!!v.scene!==!!nyView.scene)nySay.textContent=v.scene?cheersAnnounce({names:newYear?.names,others:newYear?.others,front:newYear?.front,year:newYearYear(newYear?.until-1)}):"";   // once per opening
  nyView=v;return v;
 }
 function nyDraw(now){
@@ -1816,7 +1820,7 @@ function renderAdvent(body,set){
   b.textContent=c.text;b.setAttribute("aria-label",c.label);if(c.state==="today")b.setAttribute("aria-current","date");
   b.addEventListener("click",()=>adventTap(c,v));grid.append(b);
  }
- const said=document.createElement("p");said.className="advent-said";
+ const said=document.createElement("p");said.className="advent-said";said.setAttribute("role","status");
  if(adventSaid?.day){
   const g=adventGiftText(adventSaid.day),b1=document.createElement("b"),b2=document.createElement("b");
   b1.textContent=`Case ${adventSaid.day}`;b2.className="gold";b2.textContent=g.pay;said.append("🎁 ",b1,` : ${g.text} `,b2);
@@ -2467,6 +2471,7 @@ let regCamp="left";
 function showAuth(message=""){
  closeSheet();chat.reset();chatFlags(null);es?.close();es=null;S=null;anim=pong=mini=scene=null;newsPending=false;toastQ.length=0;announceQ.length=0;$("#announce").hidden=true;$("#push-ask").hidden=true;pushAskWanted=pushAsked=false;duelData=null;duelErr="";duelSeq++;pushOn=null;pushSynced=false;setNet(true);$("#tips").hidden=true;urnLast=null;wardSwap=false;urnHint=false;batonV=null;bd.close();
  authEl.hidden=false;setBackgroundInert(true);
+ newYear=null;newYearBannerOn=false;nyClosed=false;nyReplayEnd=0;nyView={scene:null,banner:false};nyBanner.hidden=true;nyClose.hidden=true;nySay.textContent="";   // nothing of the midnight toast outlives the session
  homeAuthErr();$("#auth-error").textContent=message;regQuizShow(false);$("#camp-note").textContent="";document.body.dataset.camp=regCamp;
  document.querySelectorAll(".camp").forEach(b=>{
   const f=people[b.dataset.camp][0];

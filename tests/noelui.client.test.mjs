@@ -304,3 +304,12 @@ test("the midnight scene redraws at about 30 fps, never with reduced motion",asy
  assert.equal(nyFrameDue("live",true,5000,1000),false,"reduced motion: the idle pace only");
  assert.equal(nyFrameDue(null,false,5000,1000),false);
 });
+
+import {cheersAnnounce} from "../web/noelui.mjs";
+test("cheersAnnounce: the midnight scene's words for a screen reader, once, plain text",()=>{
+ assert.equal(cheersAnnounce({names:["Hugo"],others:0,year:2027}),"Minuit ! Bonne année 2027 ! Hugo trinque avec toi");
+ assert.equal(cheersAnnounce({}),"Minuit ! Bonne année ! Toute la République trinque avec toi");
+ const s=cheersAnnounce({names:["Hugo"],others:2,front:{winner:"left",left:1200,right:900},year:2027});
+ assert.ok(s.startsWith("Minuit ! Bonne année 2027 ! Hugo… et 2 autres trinquent avec toi"));
+ assert.ok(s.includes("Front de neige")&&!s.includes("❄"));
+});

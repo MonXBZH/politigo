@@ -152,9 +152,9 @@ async function fight(c,{challenge,taps}={}){
  return {game:g,score:play(schedule(g.seed,c.camp),t).score,end:e};
 }
 const PORT=3945,WINDOW=6000;let proc,DIR,SOCK;
-function adm(obj){
+function adm(obj,sock=SOCK){
  return new Promise((ok,ko)=>{
-  const c=createConnection(SOCK);let text="";
+  const c=createConnection(sock);let text="";
   const t=setTimeout(()=>{c.destroy();ko(new Error("admin socket did not answer"));},8e3);
   c.setEncoding("utf8");c.on("data",d=>{text+=d;});c.on("error",ko);
   c.on("close",()=>{clearTimeout(t);try{ok(JSON.parse(text));}catch{ko(new Error("bad reply: "+text));}});
@@ -345,4 +345,88 @@ it("challenges open at the duels' level, for both players",async()=>{
   r=await post(A,{to:"Niveau Bravo",gameId:f.game.id});
   assert.equal(r.status,200,JSON.stringify(r.json));
  }finally{await stop(p);}
+});
+
+// ---------------------------------------------------------------- a second server: a long launch window, the console, the clock
+async function longServer(port,extra={}){
+ const dir=mkdtempSync(join(tmpdir(),"pgch-long-")),sock=join(dir,"admin.sock");
+ const p=await boot(port,dir,{POLITIGO_EVENT:"noel",POLITIGO_ADMIN_SOCKET:sock,POLITIGO_SNOW_CHALLENGE_MS:"120000",...extra});
+ return {p,dir,sock,db:()=>new DatabaseSync(join(dir,"t.db"))};
+}
+const post=(c,body)=>c.call("POST","/api/snow/challenge",body);
+
+it("playing a received challenge keeps the fight one may still dare others from; a challenge's own game cannot be re-dealt",async()=>{
+ const S=await longServer(3947);
+ try{
+  const A=await player(3947,"Garde Alpha","left"),X=await player(3947,"Garde Xavier","right"),Y=await player(3947,"Garde Yankee","left");
+  const fa=await fight(A);assert.ok(fa.score>0);
+  const fx=await fight(X);
+  const id=(await post(X,{to:"Garde Alpha",gameId:fx.game.id})).json.challenge.id;
+  const reply=await fight(A,{challenge:id});   // A answers X's challenge after his own fight
+  assert.equal((await list(X)).sent.find(c=>c.id===id).status,"done");
+  let r=await post(A,{to:"Garde Yankee",gameId:reply.game.id});
+  assert.equal(r.status,422);assert.equal(r.json.error,"Une partie de défi ne se relance pas.","the reply game itself is never re-dealt");
+  r=await post(A,{to:"Garde Yankee",gameId:fa.game.id});
+  assert.equal(r.status,200,"the remembered fight is still launchable: "+JSON.stringify(r.json));
+  assert.equal(r.json.challenge.score,fa.score);
+  void Y;
+ }finally{await stop(S.p);}
+});
+
+it("a bot-flagged reply counts 0 but its real replayed score is kept for the console",async()=>{
+ const S=await longServer(3948);
+ try{
+  const C=await player(3948,"Brut Charlie","left"),D=await player(3948,"Brut Delta","left"),E=await player(3948,"Brut Echo","left"),F=await player(3948,"Brut Foxtrot","left");
+  const fc=await fight(C);
+  const id=(await post(C,{to:"Brut Delta",gameId:fc.game.id})).json.challenge.id;
+  const s=await D.call("POST","/api/action",{type:"snowStart",challenge:id});
+  const burst=[...goodTaps(s.json.game.seed,"left"),...Array.from({length:60},(_,i)=>({t:3000+i*30,x:20,y:460}))];
+  const real=play(schedule(s.json.game.seed,"left"),burst).score;
+  assert.ok(real>0);
+  await sleep(playFor(burst));
+  assert.equal((await D.call("POST","/api/action",{type:"miniEnd",id:s.json.game.id,taps:burst})).status,200);
+  const row=(await adm({cmd:"snow-challenges"},S.sock)).items.find(x=>x.id===id);
+  assert.equal(row.dScore,0,"counts 0");assert.equal(row.rawScore,real,"the real replayed score");assert.ok(row.dFlags.includes("taps_rapides"));
+  // a clean reply: raw = counted
+  const fe=await fight(E);
+  const id2=(await post(E,{to:"Brut Foxtrot",gameId:fe.game.id})).json.challenge.id;
+  const g=await fight(F,{challenge:id2});
+  const row2=(await adm({cmd:"snow-challenges"},S.sock)).items.find(x=>x.id===id2);
+  assert.equal(row2.dScore,g.score);assert.equal(row2.rawScore,g.score);
+  // the challenge is still listed before the restart
+  const open=(await adm({cmd:"snow-challenges"},S.sock)).items.find(x=>x.id===id);
+  assert.ok(open);
+  // an older database gets the column, once (additive migration)
+  const db=S.db();db.exec("ALTER TABLE snow_challenges DROP COLUMN d_raw");db.close();
+  await stop(S.p);S.p=await boot(3948,S.dir,{POLITIGO_EVENT:"noel",POLITIGO_ADMIN_SOCKET:S.sock,POLITIGO_SNOW_CHALLENGE_MS:"120000"});
+  const again=(await adm({cmd:"snow-challenges"},S.sock)).items.find(x=>x.id===id);
+  assert.equal(again.dScore,0);assert.equal(again.rawScore,null,"an old row has no raw score");
+ }finally{await stop(S.p);}
+});
+
+it("24 h expiry: a challenge past its time can no longer be played, is not offered, then is closed by the clock",async()=>{
+ const S=await longServer(3950);
+ try{
+  const A=await player(3950,"Delai Alpha","left"),B=await player(3950,"Delai Bravo","right");
+  const f=await fight(A);
+  const id=(await post(A,{to:"Delai Bravo",gameId:f.game.id})).json.challenge.id;
+  const row=()=>{const db=S.db();try{return db.prepare("SELECT created,expires,status FROM snow_challenges WHERE id=?").get(id);}finally{db.close();}};
+  const r0=row();assert.equal(r0.expires-r0.created,24*3600e3,"24 h to answer");
+  assert.equal((await list(B)).received.length,1);
+  // the clock reaches the expiry (the row moved back 24 h: no 24 h sleep)
+  {const db=S.db();db.prepare("UPDATE snow_challenges SET created=created-?,expires=expires-? WHERE id=?").run(24*3600e3,24*3600e3,id);db.close();}
+  assert.equal((await list(B)).received.length,0,"no longer offered");
+  const s=await B.call("POST","/api/action",{type:"snowStart",challenge:id});
+  assert.equal(s.status,422);assert.equal(s.json.error,"Ce défi n'est plus ouvert.");
+  assert.equal((await me(B)).state.mini,null,"nothing spent");
+  // the sweep closes it once a fight's longest life more is over too (a game begun in time still finishes): one more hour back
+  {const db=S.db();db.prepare("UPDATE snow_challenges SET expires=expires-? WHERE id=?").run(3600e3,id);db.close();}
+  assert.equal((await adm({cmd:"event-set",mode:"noel"},S.sock)).ok,true);   // runs the tick at once (else within the minute)
+  assert.ok(await until(()=>row().status==="expired",10000),"expired by the clock");
+  const sent=(await list(A)).sent.find(x=>x.id===id);
+  assert.equal(sent.status,"expired");
+  // and it freed the pair
+  const f2=await fight(A);
+  assert.equal((await post(A,{to:"Delai Bravo",gameId:f2.game.id})).status,200);
+ }finally{await stop(S.p);}
 });

@@ -697,6 +697,7 @@ function newYearTick(now=Date.now()){
 const fightsBefore=(at,now)=>[...players.values()].some(p=>{const m=p.state.mini;return m?.k==="snowball"&&m.noel===true&&m.t<at&&now-m.t<=SNOW_LIVE_MS;});
 // The result, the bulletins and the "closed" setting in ONE transaction: a crash or an error pays everybody or nobody,
 // and the next tick retries; the live states are put back on an error. The feed line and the admin log come after.
+const nfFr=new Intl.NumberFormat("fr-FR");
 function closeFront(y,now){
  const keep=new Map();let res,paid=0;
  batonBusy=true;db.exec("BEGIN");
@@ -704,11 +705,11 @@ function closeFront(y,now){
   res=front.close(y,now);
   for(const id of res.paid){
    const p=players.get(id);if(!p||p.suspended)continue;
-   keep.set(id,p.state);
-   update(p,S=>{const w=S.wardrobe;if(!w)return false;const b=Number.isFinite(w.bulletins)?w.bulletins:0;w.bulletins=Math.min(9999,b+FRONT_PRIZE);
+   keep.set(id,p.state);let credited=false;
+   update(p,S=>{const w=S.wardrobe;if(!w)return false;credited=true;const b=Number.isFinite(w.bulletins)?w.bulletins:0;w.bulletins=Math.min(9999,b+FRONT_PRIZE);
     R.logEntry(S,"snowfront",res.winner==="tie"?`❄️ Le Front de neige est tombé : égalité, les deux camps l'emportent. +${FRONT_PRIZE} bulletins.`
      :`❄️ Le Front de neige est tombé : ton camp l'emporte. +${FRONT_PRIZE} bulletins.`,{bulletins:FRONT_PRIZE});});
-   paid++;
+   if(credited)paid++;   // exact: a player without a wardrobe is not paid, so not counted
   }
   setSetting("snowfront_closed",String(y));
   db.exec("COMMIT");
@@ -721,8 +722,9 @@ function closeFront(y,now){
  console.log(`Front de neige ${y} closed: left ${left}, right ${right}, ${paid} player(s) paid`);
  if(R.isNoel(eventNow()))try{broadcast("snowFront",frontView(now));}catch(e){console.error("snowFront broadcast:",e);}
  if(!left&&!right&&!res.paid.length)return;   // nobody fought: nothing to tell
- const text=winner==="tie"?`❄️ Le Front de neige est tombé : égalité parfaite, ${left} partout.`
-  :`❄️ Le Front de neige est tombé : la ${winner==="left"?"Gauche":"Droite"} l'emporte (${Math.max(left,right)} contre ${Math.min(left,right)}).`;
+ const nf=n=>nfFr.format(n).replace(/\u202f/g,"\u00a0");   // grouped by thousands, as the client's frontLine (noelui.mjs)
+ const text=winner==="tie"?`❄️ Le Front de neige est tombé : égalité parfaite, ${nf(left)} partout.`
+  :`❄️ Le Front de neige est tombé : la ${winner==="left"?"Gauche":"Droite"} l'emporte (${nf(Math.max(left,right))} contre ${nf(Math.min(left,right))}).`;
  feedLine("PolitiGo","snowfront",text);
  audit("server","noel-front",String(y),`Gauche ${left} · Droite ${right} · ${winner==="tie"?"égalité":winner==="left"?"la Gauche gagne":"la Droite gagne"} · +${FRONT_PRIZE} bulletins à ${paid} joueur${paid>1?"s":""}`);
 }
@@ -739,7 +741,8 @@ setInterval(()=>{try{newYearTick();}catch(e){console.error("New Year tick:",e);}
 const SNOWCH_LAUNCH_MS=knob(env.POLITIGO_SNOW_CHALLENGE_MS,10*60e3);
 if(SNOWCH_LAUNCH_MS!==10*60e3)console.warn(`Snow challenge test setting active: launched within ${SNOWCH_LAUNCH_MS} ms of the fight (normal: 10 min).`);
 const snowCh=createChallenges(db),SNOWCH_WIN=10,SNOWCH_TIE=5;
-const snowGames=new Map();   // playerId -> {gameId,seed,score,bot,ch,t}: their last validated fight
+const snowGames=new Map();   // playerId -> {gameId,seed,score,bot,ch,t}: their last validated ordinary fight (a reply never enters)
+const snowReplies=new Map();   // playerId -> {gameId,t}: their last reply to a challenge, only to tell why it cannot be re-dealt
 const isBotFight=flags=>Array.isArray(flags)&&flags.some(f=>SNOW_BOT_FLAGS.has(f));
 // A challenge id from a body: a positive whole number, or its decimal string.
 const snowChId=v=>Number.isSafeInteger(v)&&v>0?v:typeof v==="string"&&/^[1-9][0-9]{0,14}$/.test(v)?Number(v):null;
@@ -756,20 +759,21 @@ function snowChallengeOpts(p,v,now){
 // A challenge's game refused closes the challenge at 0 for the defender.
 function snowChEnded(p,a,ok,started,now){
  const ch=typeof a.ch==="string",flags=Array.isArray(a.flags)?a.flags:[];
- if(!ok||!Number.isSafeInteger(a.score)||a.score<0){if(ch)snowChFinish(p,a.ch,started,0,flags,now);return;}
+ if(!ok||!Number.isSafeInteger(a.score)||a.score<0){if(ch)snowChFinish(p,a.ch,started,0,flags,now,null);return;}
  if(started&&typeof started.id==="string"&&started.seed===a.seed&&started.t===a.start)
-  snowGames.set(p.id,{gameId:started.id,seed:a.seed,score:a.score,bot:isBotFight(flags),ch,t:now});
- if(ch)snowChFinish(p,a.ch,started,isBotFight(flags)?0:a.score,flags,now);
+  {if(ch)snowReplies.set(p.id,{gameId:started.id,t:now});   // a reply never replaces the fight one may still dare from
+   else snowGames.set(p.id,{gameId:started.id,seed:a.seed,score:a.score,bot:isBotFight(flags),ch:false,t:now});}
+ if(ch)snowChFinish(p,a.ch,started,isBotFight(flags)?0:a.score,flags,now,a.score);
 }
 // Only the game that put the challenge in play ends it.
-function snowChFinish(p,chId,started,sc,flags,now){
+function snowChFinish(p,chId,started,sc,flags,now,raw){
  const r=snowCh.get(snowChId(chId));
  if(!r||r.defender!==p.id||r.status!=="playing"||r.dGame!==started?.id)return;
- snowChClose(r,sc,flags,now);
+ snowChClose(r,sc,flags,now,raw);
 }
 // The result, paid to both sides (from a game ended, or from the tick: a game never ended counts 0).
-function snowChClose(r,sc,flags,now){
- const res=snowCh.finish(r.id,sc,now,flags);if(!res)return;
+function snowChClose(r,sc,flags,now,raw=null){
+ const res=snowCh.finish(r.id,sc,now,flags,raw);if(!res)return;
  const pay=(id,moral,text)=>{
   const pl=players.get(id);if(!pl)return;
   try{update(pl,S=>{if(!pl.suspended)R.advance(S,now,SPEED,rand,fxOf(pl));if(moral)S.moral=R.clamp(S.moral+moral);R.logEntry(S,"snowch",text,{id:r.id,moral});});}
@@ -789,7 +793,7 @@ function snowChClose(r,sc,flags,now){
 // A deleted or suspended player: nothing open touches them any more; the other side's screens are told.
 function snowChCancelOf(id,now){
  for(const c of snowCh.cancelOf(id,now)){const r=snowCh.get(c);if(r)sseTo(r.challenger===id?r.defender:r.challenger,"snowChallenge",{kind:"cancelled",id:c});}
- snowGames.delete(id);
+ snowGames.delete(id);snowReplies.delete(id);
 }
 // From chores (and at once when the console changes the theme): the end of the theme cancels everything open
 // (idempotent: nothing open, nothing done), the overdue expire, the ones whose game is over without an end close at
@@ -799,6 +803,7 @@ function snowChTick(now){
  snowCh.expire(now-SNOW_LIVE_MS);
  for(const id of snowCh.playingDue(now-SNOW_LIVE_MS)){const r=snowCh.get(id);if(r)try{snowChClose(r,0,[],now);}catch(e){console.error(`snow challenge ${id}: not closed`,e);}}
  for(const [id,g] of snowGames)if(now-g.t>SNOWCH_LAUNCH_MS)snowGames.delete(id);
+ for(const [id,g] of snowReplies)if(now-g.t>SNOWCH_LAUNCH_MS)snowReplies.delete(id);
  snowCh.purge(now-30*864e5);
 }
 // POST /api/snow/challenge {to:name, gameId}.
@@ -812,8 +817,8 @@ async function snowChallengeRoute(req,res){
  const lowLevel=`Les défis s'ouvrent au niveau ${DUEL_MIN_LEVEL}.`;
  if(p.state.lvl<DUEL_MIN_LEVEL)throw new HttpError(422,lowLevel);
  const now=Date.now(),g=snowGames.get(p.id);
+ if(snowReplies.get(p.id)?.gameId===b.gameId)throw new HttpError(422,"Une partie de défi ne se relance pas.");
  if(!g||g.gameId!==b.gameId)throw new HttpError(422,"Cette partie ne peut pas servir de défi : joue d'abord une partie de bataille.");
- if(g.ch)throw new HttpError(422,"Une partie de défi ne se relance pas.");
  if(g.bot)throw new HttpError(422,"Cette partie ne peut pas servir de défi.");
  if(now-g.t>SNOWCH_LAUNCH_MS)throw new HttpError(422,"Trop tard : un défi se lance dans les 10 minutes qui suivent la partie.");
  const row=q.playerByKey.get(nameKey(cleanName(b.to).slice(0,40))),o=row&&players.get(row.id);
@@ -2663,7 +2668,7 @@ async function adminCommand(b){
  if(cmd==="duels-list")return {items:q.openDuels.all().map(d=>({id:d.id,status:d.status,challenger:nameOf(d.challenger),defender:nameOf(d.defender),created:d.created,expires:d.expires??null,flags:flagsOf(d)}))};
  // Read-only: the recent snowball challenges, the defender's score and the flags of their fight (counted 0 when a bot's).
  if(cmd==="snow-challenges")return {items:snowCh.recent(limitOf(b.limit,50,200)).map(r=>({id:r.id,challenger:nameOf(r.challenger),defender:nameOf(r.defender),
-  score:r.score,dScore:r.dScore,status:r.status,created:r.created,expires:r.expires,closed:r.closed,winner:r.status==="done"&&r.winner!==null?nameOf(r.winner):null,dFlags:r.dFlags??[]}))};
+  score:r.score,dScore:r.dScore,rawScore:r.dRaw,status:r.status,created:r.created,expires:r.expires,closed:r.closed,winner:r.status==="done"&&r.winner!==null?nameOf(r.winner):null,dFlags:r.dFlags??[]}))};
  if(cmd==="duel-cancel"){
   const d=Number.isSafeInteger(b.id)&&q.duel.get(b.id);
   if(d){guard(d.challenger);guard(d.defender);}

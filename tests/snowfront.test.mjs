@@ -366,3 +366,31 @@ it("a Front an earlier year left open (server down through January) is closed at
  assert.equal((await l2.call("GET","/api/board")).json.feed.filter(e=>e.text===line).length,1);
  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM admin_log WHERE cmd='noel-front' AND target='2025'").get().n,1);
 });
+
+it("the closing logs the number of players really credited, and the feed line groups its numbers by thousands like the client",async t=>{
+ const dir=mkdtempSync(join(tmpdir(),"pgsf-x-")),port=3971,env={POLITIGO_EVENT:"noel"};
+ let p=await boot(port,dir,env);
+ const a=await player(port,"Crédité Un","left");await player(port,"Crédité Deux","left");await player(port,"Suspendu Neige","left");
+ const b0=(await me(a)).state.wardrobe.bulletins;
+ await stop(p);
+ {const db=new DatabaseSync(join(dir,"t.db"));
+  const id=n=>db.prepare("SELECT id FROM players WHERE name=?").get(n).id;
+  // two are credited; the third is suspended and the fourth is gone: neither is paid nor counted
+  db.exec("INSERT INTO snowfront(year,camp,points) VALUES(2025,'left',1234567),(2025,'right',2000)");
+  const ins=db.prepare("INSERT INTO snowfront_players(year,player_id,camp) VALUES(2025,?,'left')");
+  for(const n of ["Crédité Un","Crédité Deux","Suspendu Neige"])ins.run(id(n));
+  ins.run(999);   // gone
+  db.prepare("UPDATE players SET suspended=1 WHERE id=?").run(id("Suspendu Neige"));
+  db.close();}
+ p=await boot(port,dir,env);t.after(()=>stop(p));
+ const db=new DatabaseSync(join(dir,"t.db"),{readOnly:true});t.after(()=>db.close());
+ assert.ok(await until(()=>db.prepare("SELECT 1 FROM snowfront_results WHERE year=2025").get(),15000),"closed");
+ const l=await login(port,"Crédité Un");
+ assert.equal((await me(l)).state.wardrobe.bulletins,b0+3);
+ const NB=" ";
+ const line=`❄️ Le Front de neige est tombé : la Gauche l'emporte (1${NB}234${NB}567 contre 2${NB}000).`;
+ assert.equal((await l.call("GET","/api/board")).json.feed.filter(e=>e.text===line).length,1,"numbers grouped with no-break spaces, as the client's frontLine");
+ const log=db.prepare("SELECT detail FROM admin_log WHERE cmd='noel-front' AND target='2025'").get();
+ assert.match(log.detail,/à 2 joueurs$/,"the two players really credited, not the suspended nor the gone: "+log.detail);
+ assert.match(p.out,/2 player\(s\) paid/);
+});

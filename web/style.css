@@ -566,3 +566,4 @@ body[data-season=noel],body[data-camp][data-season=noel]{--accent-2:#f4c84a;--bg
 .ny-close[hidden],.ny-banner[hidden]{display:none}
 .ny-banner{width:min(92vw,var(--dev));display:flex;gap:10px;align-items:center;justify-content:space-between;padding:8px 10px 8px 14px;border-radius:14px;background:linear-gradient(90deg,#3a2a05,#6b4f10);border:1px solid #f4c84a88;color:#fff6e0;font-size:13px;box-shadow:0 6px 20px #0006}
 .ny-banner .btn{flex:none;padding:8px 14px;font-size:13px;color:#fff6e0;border-color:#f4c84a}
+.sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}

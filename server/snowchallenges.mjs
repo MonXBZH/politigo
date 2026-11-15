@@ -11,19 +11,19 @@ const int=(v,max=Number.MAX_SAFE_INTEGER)=>Number.isSafeInteger(v)&&v>=0&&v<=max
 const flagsOf=s=>{try{const f=JSON.parse(s||"[]");return Array.isArray(f)?f:[];}catch{return [];}};
 const view=r=>r?{id:r.id,challenger:r.challenger,defender:r.defender,seed:r.seed,score:r.score,created:r.created,expires:r.expires,
  status:r.status,dScore:r.d_score??null,dFlags:r.d_score==null?null:flagsOf(r.d_flags),closed:r.closed??null,winner:r.winner??null,
- dGame:r.d_game??null,dStart:r.d_start??null}:null;
+ dGame:r.d_game??null,dStart:r.d_start??null,dRaw:r.d_raw??null}:null;
 const LIVE="('open','playing')";
 
 export function createChallenges(db,{perDay=3,ttl=864e5}={}){
  db.exec(`CREATE TABLE IF NOT EXISTS snow_challenges(id INTEGER PRIMARY KEY,challenger INTEGER NOT NULL,defender INTEGER NOT NULL,
  seed INTEGER NOT NULL,score INTEGER NOT NULL,created INTEGER NOT NULL,day INTEGER NOT NULL,expires INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'open',
- d_score INTEGER,d_flags TEXT,closed INTEGER,winner INTEGER,d_game TEXT,d_start INTEGER);
+ d_score INTEGER,d_flags TEXT,closed INTEGER,winner INTEGER,d_game TEXT,d_start INTEGER,d_raw INTEGER);
 CREATE INDEX IF NOT EXISTS snow_challenges_open ON snow_challenges(status,expires);
 CREATE INDEX IF NOT EXISTS snow_challenges_c ON snow_challenges(challenger,day);
 CREATE INDEX IF NOT EXISTS snow_challenges_d ON snow_challenges(defender,status);`);
- // A table made by an earlier build of 1.8.0 gets the game in play (idempotent; a twin process may have done it).
+ // A table made by an earlier build of 1.8.0 gets the game in play and the replayed score (idempotent; a twin process may have done it).
  {const cols=new Set(db.prepare("PRAGMA table_info(snow_challenges)").all().map(c=>c.name));
-  for(const [c,type] of [["d_game","TEXT"],["d_start","INTEGER"]])if(!cols.has(c)){
+  for(const [c,type] of [["d_game","TEXT"],["d_start","INTEGER"],["d_raw","INTEGER"]])if(!cols.has(c)){
    try{db.exec(`ALTER TABLE snow_challenges ADD COLUMN ${c} ${type}`);}catch(e){if(!/duplicate column/i.test(e.message))throw e;}
   }}
  const q={
@@ -31,7 +31,7 @@ CREATE INDEX IF NOT EXISTS snow_challenges_d ON snow_challenges(defender,status)
   get:db.prepare("SELECT * FROM snow_challenges WHERE id=?"),
   pair:db.prepare(`SELECT 1 FROM snow_challenges WHERE status IN ${LIVE} AND ((challenger=? AND defender=?) OR (challenger=? AND defender=?)) LIMIT 1`),
   today:db.prepare("SELECT COUNT(*) AS n FROM snow_challenges WHERE challenger=? AND day=?"),
-  finish:db.prepare(`UPDATE snow_challenges SET status='done',d_score=?,d_flags=?,closed=?,winner=? WHERE id=? AND status IN ${LIVE}`),
+  finish:db.prepare(`UPDATE snow_challenges SET status='done',d_score=?,d_flags=?,closed=?,winner=?,d_raw=? WHERE id=? AND status IN ${LIVE}`),
   play:db.prepare("UPDATE snow_challenges SET status='playing',d_game=?,d_start=? WHERE id=? AND status='open'"),
   playingDue:db.prepare("SELECT id FROM snow_challenges WHERE status='playing' AND d_start<=? ORDER BY id"),
   dueIds:db.prepare("SELECT id FROM snow_challenges WHERE status='open' AND expires<=? ORDER BY id"),
@@ -67,13 +67,14 @@ CREATE INDEX IF NOT EXISTS snow_challenges_d ON snow_challenges(defender,status)
   },
   // The ones in play whose game began at or before `cut` (its longest life is over): the server closes them at 0.
   playingDue:cut=>q.playingDue.all(cut).map(r=>r.id),
-  // The defender's score against the challenger's (flags: the defender's game, for the admin). null: not open or in play.
-  finish(id,defenderScore,now=Date.now(),flags=[]){
+  // The defender's score against the challenger's (flags: the defender's game, for the admin; raw: the score its game really
+  // replayed, kept for the admin when it counted 0 as a bot's, null when there was none). null: not open or in play.
+  finish(id,defenderScore,now=Date.now(),flags=[],raw=null){
    const r=int(id)&&q.get.get(id);
    if(!r||(r.status!=="open"&&r.status!=="playing")||!int(defenderScore))return null;
    const tie=defenderScore===r.score,winner=tie?null:defenderScore>r.score?r.defender:r.challenger;
    const f=JSON.stringify((Array.isArray(flags)?flags:[]).filter(x=>typeof x==="string").map(x=>x.slice(0,24)).slice(0,8));
-   if(!q.finish.run(defenderScore,f,now,winner,id).changes)return null;
+   if(!q.finish.run(defenderScore,f,now,winner,int(raw)?raw:null,id).changes)return null;
    return {winner,tie};
   },
   expire:(now=Date.now())=>closeAll(q.dueIds.all(now).map(r=>r.id),"expired",now),

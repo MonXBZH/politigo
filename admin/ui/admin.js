@@ -836,7 +836,7 @@ async function viewDuels(){
   snow.error?h("p",{class:"err"},snow.error):Array.isArray(snow.items)&&snow.items.length?h("div",{class:"table-wrap"},h("table",{},
    h("thead",{},h("tr",{},["Date","Lanceur","Défié","Scores","Statut","Signaux"].map(t=>h("th",{},t)))),
    h("tbody",{},snow.items.map(c=>h("tr",{},h("td",{class:"nowrap"},fmt(c.created)),h("td",{},who(c.challenger)),h("td",{},who(c.defender)),
-    h("td",{class:"nowrap"},`${num(c.score)} – ${num(c.dScore)}${c.winner?` (${c.winner})`:""}`),h("td",{},tr(SNOW_STATUS,c.status)),h("td",{},flagBadges(c.dFlags)||"—"))))))
+    h("td",{class:"nowrap"},`${num(c.score)} – ${num(c.dScore)}${c.winner?` (${c.winner})`:""}${Number.isFinite(c.rawScore)&&c.rawScore!==c.dScore?` · rejoué ${num(c.rawScore)}`:""}`),h("td",{},tr(SNOW_STATUS,c.status)),h("td",{},flagBadges(c.dFlags)||"—"))))))
    :empty("Aucun défi de neige pour le moment.")),
  ];
 }

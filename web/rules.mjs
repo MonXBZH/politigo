@@ -501,6 +501,7 @@ export const ADVENT=Array.from({length:24},(_,i)=>i<23?{k:ADVENT_CYCLE[i%6][0],n
 export function adventBlock(S,event=""){
  if(!isNoel(event))return "Il n'y a pas de calendrier de l'Avent en ce moment.";
  const k=dayKey(curIdx(S)),month=Math.floor(k/100)%100,day=k%100;
+ if(month!==12&&!(month===1&&day===1))return "Il n'y a pas de calendrier de l'Avent en ce moment.";   // the theme forced out of season
  if(month!==12||day>24)return "Le calendrier est fini : rendez-vous à la Saint-Sylvestre.";
  if(S.advent.y===Math.floor(k/10000)&&S.advent.opened.includes(day))return "La case du jour est déjà ouverte : reviens demain.";
  return "";

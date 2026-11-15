@@ -45,7 +45,8 @@ export function popRect(pop,vis){
  const s=SPOTS[pop.spot],top=s.base-64*s.k*vis;
  return {x:s.x-32*s.k,y:top,w:64*s.k,h:Math.max(0,s.base-COVER*s.k-top)};
 }
-// the sleigh crosses the sky in 4.5 s; null when it is not there
+// the sleigh crosses the sky in 4.5 s; null when it is not there (Math.sin may differ in the last bit between engines:
+// only the server's result is authoritative)
 export function sleighPos(s,t){
  const k=(t-s.t)/4500;if(k<0||k>1)return null;
  return {x:s.dir>0?-80+k*620:546-k*620,y:92+Math.sin(k*8)*10};
@@ -108,7 +109,7 @@ export function play(sched,input){
  const land=(t,x,y,from)=>{
   for(let j=0;j<sleighs.length;j++){
    const pos=sleighPos(sleighs[j],t);
-   if(pos&&!sleighHit[j]&&x>pos.x-70&&x<pos.x+50&&y>pos.y-20&&y<pos.y+30){sleighHit[j]=1;R.score+=SNOW.sleigh;R.hits++;ev(t,"sleigh",SNOW.sleigh,x,y);return;}
+   if(pos&&!sleighHit[j]&&x>=pos.x-70&&x<=pos.x+50&&y>=pos.y-20&&y<=pos.y+30){sleighHit[j]=1;R.score+=SNOW.sleigh;R.hits++;ev(t,"sleigh",SNOW.sleigh,x,y);return;}
   }
   for(let i=0;i<pops.length;i++){
    if(hit[i])continue;

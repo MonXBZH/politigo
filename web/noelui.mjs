@@ -107,6 +107,11 @@ export function frontLine(f){
  return winner==="tie"?`❄️ Le Front de neige est tombé : égalité parfaite, ${nf.format(left)} partout.`
   :`❄️ Le Front de neige est tombé : la ${winner==="left"?"Gauche":"Droite"} l'emporte (${nf.format(Math.max(left,right))} contre ${nf.format(Math.min(left,right))}).`;
 }
+// The midnight scene's words for a screen reader (a polite live region, filled once when the scene opens).
+export function cheersAnnounce({names,others,front,year}={}){
+ const f=frontLine(front).replace(/^❄️\s*/u,"");
+ return `Minuit ! ${year?`Bonne année ${year} !`:"Bonne année !"} ${cheersNamesLine(names,others)}${f?`. ${f}`:""}`;
+}
 // « Bonne année YYYY ! »: the year after the theme's December (a test instant in November wishes the coming year too).
 export function newYearYear(ms){return Number.isFinite(ms)?noelYear(ms)+1:null;}
 // What the main screen shows: the live scene (until `until`, unless ✕ closed it for the session), the replay of
