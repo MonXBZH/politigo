@@ -198,15 +198,24 @@ test("endSummary: a refused game shows the server's reason, never a local score"
 
 // ---------------------------------------------------------------- the Front de neige
 test("frontBar: shares of the bar, totals in French, the player's camp named",()=>{
- const f=U.frontBar({left:3000,right:1000,closed:false},"left",{score:42});
+ const f=U.frontBar({left:3000,right:1000,closed:false},"left",{score:42,counted:true});
  assert.equal(f.lp,75);assert.equal(f.rp,25);
  assert.equal(f.leftText,`Gauche ${(3000).toLocaleString("fr-FR")}`);
  assert.equal(f.rightText,`Droite ${(1000).toLocaleString("fr-FR")}`);
  assert.equal(f.note,"tes 42 points comptent pour la Gauche");
  assert.equal(U.frontBar({left:0,right:0,closed:false},"right",{}).lp,50);
  assert.equal(U.frontBar({left:0,right:0,closed:false},"right",{}).note,"Chaque partie compte pour ton camp : la Droite.");
- assert.equal(U.frontBar({left:5,right:9,closed:true},"left",{score:3}).note,"Le Front de neige est tombé : résultat final.");
- assert.equal(U.frontBar({left:1,right:0,closed:false},"left",{score:1}).note,"ton point compte pour la Gauche");
+ assert.equal(U.frontBar({left:5,right:9,closed:true},"left",{score:3,counted:true}).note,"Le Front de neige est tombé : résultat final.");
+ assert.equal(U.frontBar({left:1,right:0,closed:false},"left",{score:1,counted:true}).note,"ton point compte pour la Gauche");
+});
+
+test("frontBar: « tes points comptent » only when the server said the game counted (reply front:true)",()=>{
+ const F={left:10,right:20,closed:false};
+ assert.equal(U.frontBar(F,"right",{score:42}).note,"Chaque partie compte pour ton camp : la Droite.");          // no word from the server
+ assert.equal(U.frontBar(F,"right",{score:42,counted:false}).note,"Cette partie ne compte pas dans le Front.");
+ assert.equal(U.frontBar(F,"right",{score:0,counted:true}).note,"Chaque partie compte pour ton camp : la Droite.");
+ assert.equal(U.frontBar(F,"right",{score:42,counted:"yes"}).note,"Chaque partie compte pour ton camp : la Droite.");
+ assert.equal(U.frontBar({...F,closed:true},"right",{score:42,counted:false}).note,"Le Front de neige est tombé : résultat final.");
 });
 
 test("frontBar: nothing without a counter (theme off) or with a malformed one",()=>{
@@ -251,4 +260,18 @@ test("dareList: players of both camps, never oneself, online first, at most `lim
  assert.deepEqual(new Set(l.map(o=>o.camp)),new Set(["left","right"]));
  assert.equal(U.dareList(opps,"Moi",1).length,1);
  assert.deepEqual(U.dareList(undefined,"Moi"),[]);
+});
+
+test("dareView: loading, error with a retry, empty, or the players (datalist: all; buttons: the first 12)",()=>{
+ assert.deepEqual(U.dareView(null,"","Moi"),{state:"loading",text:"Chargement des joueurs…",names:[],top:[]});
+ assert.deepEqual(U.dareView(null,"Serveur injoignable.","Moi"),{state:"error",text:"Serveur injoignable.",names:[],top:[]});
+ assert.equal(U.dareView({opponents:[{name:"Moi"}]},"","Moi").state,"empty");
+ assert.equal(U.dareView({opponents:"x"},"","Moi").state,"empty");
+ const opps=Array.from({length:30},(_,i)=>({name:`J${i}`,camp:i%2?"right":"left",online:i===29}));
+ const v=U.dareView({opponents:opps},"","Moi");
+ assert.equal(v.state,"list");assert.equal(v.text,"");
+ assert.equal(v.names.length,30);assert.equal(v.top.length,12);
+ assert.equal(v.top[0].name,"J29");                 // online first
+ // a later failure does not hide a list already loaded (duelErr with duelData)
+ assert.equal(U.dareView({opponents:opps},"Erreur du serveur.","Moi").state,"list");
 });

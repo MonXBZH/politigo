@@ -154,6 +154,7 @@ it("a fight raises its camp on the Front by the score the server recomputed, nev
  const e=await end(l,g,taps,{score:999});
  assert.equal(e.status,200,JSON.stringify(e.json));
  assert.deepEqual(e.json.me.snowFront,{left:want,right:0,closed:false});
+ assert.equal(e.json.front,true,"the reply says the fight counted");
  assert.deepEqual((await me(r)).snowFront,{left:want,right:0,closed:false},"the same counter for everyone");
  // the open screens hear it through the "snowFront" event (no full me payload for everyone)
  const sf=await until(()=>got(s,"snowFront").at(-1));
@@ -177,6 +178,7 @@ it("a fight flagged as a bot pays its XP but stays out of the Front",async()=>{
  const e=await end(r,g,taps);
  assert.equal(e.status,200,JSON.stringify(e.json));
  assert.deepEqual(e.json.me.snowFront,before,"not counted");
+ assert.equal(e.json.front,false,"and the reply says so");
 });
 
 it("no Front outside the theme; a test instant is refused off a dev server",async()=>{

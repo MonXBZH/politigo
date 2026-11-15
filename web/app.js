@@ -13,7 +13,7 @@ import {outfitLook,drawObject,dressColors} from "./looks.mjs";
 import {createLegend,volcanoRoom} from "./legend.mjs";
 import {createBatonDuel,screenOf,feedParts} from "./batonduel.mjs";
 import {noelMoment,noelYear,voeuxText,adventCells,adventGiftText} from "./noelui.mjs";
-import {endSummary,frontBar,challengeText,sentText,challengeLists,dareList} from "./snowui.mjs";
+import {endSummary,frontBar,challengeText,sentText,challengeLists,dareView} from "./snowui.mjs";
 const {people,personalItems,stresses,shop,fxNames,XP,xpCost,xpFloor,stage}=R;
 const $=s=>document.querySelector(s);
 const motionQuery=matchMedia("(prefers-reduced-motion: reduce)");
@@ -97,8 +97,8 @@ function playJournal(onlyMajor){
   else if(j.k==="stress")stress=j;
   else act=j;
  }
- // A duel cut short by a death still sends what was played, like a game given up.
- if(death){anim=null;if(mini?.duel){mini.abort(miniClock);endMini();}pong=mini=null;startScene("death",death.d?.camp||S.camp,death.d?.name||"");toast(death.text,true);return;}
+ // A duel or a snowball fight cut short by a death still sends what was played (its taps), like a game given up.
+ if(death){anim=null;if(mini?.duel||mini?.key==="snowball"){mini.abort(miniClock);endMini();}pong=mini=null;startScene("death",death.d?.camp||S.camp,death.d?.name||"");toast(death.text,true);return;}
  if(evoFirst){
   const from=evoFirst.k==="legend"?evoFirst.d.name:evoFirst.d.from,to=evoLast.k==="legend"?evoLast.d.name:evoLast.d.to;
   const legend=evoLast.k==="legend"&&from===to;
@@ -246,7 +246,7 @@ async function endMini(){
  }finally{miniEnding=false;}
  if(key==="snowball"){
   if(!S)return;
-  snowLast={at:Date.now(),gameId:id,ch,xp,ok:!!r?.ok,result:r?.result,bonus:r?.bonus,error:r?r.error:"La partie n'a pas pu partir au serveur : réessaie dans un instant."};
+  snowLast={at:Date.now(),gameId:id,ch,xp,ok:!!r?.ok,result:r?.result,bonus:r?.bonus,front:r?.front,error:r?r.error:"La partie n'a pas pu partir au serveur : réessaie dans un instant."};
   if(r?.ok&&r.bonus>=10)playAnim("win",3000);
   if(!scene)openSnow();
   return;
@@ -1261,9 +1261,10 @@ function renderSheet(kind,opener){
    boosted(itemButton(`Manif : ${manifLabel(S.camp)}`,err||(S.camp==="left"
     ?"Tiens le cortège jusqu'à Nation en 30 s : esquive LBD et lacrymo, ramasse les tracts et les merguez. Doigt, souris ou flèches ; parapluie avec un deuxième doigt ou Espace."
     :"Joue l'épervier 35 s avec un CRS : interpelle les manifestants, esquive pavés et molotovs, ramasse les rapports d'incident. Gare aux journalistes et aux collègues infiltrés."),side(manif,"manif"),!!err,()=>startMini("manifStart")),f.xp.manif>1),
-   // The Trêve des confiseurs' game, only while the theme is on: it opens the battle sheet (play, challenges, Front).
-   ...(noel()?[boosted(itemButton("❄️ Bataille de boules de neige",err||"45 s contre les élus de l'autre camp : vise, pare leurs boules, épargne les passants. Puis défie un joueur sur le même tirage.",
-    `Saison${snowIn()?` · ${snowIn()} défi${snowIn()>1?"s":""}`:""}`,!!err,openSnow),true)]:[]),
+   // The Trêve des confiseurs' game, only while the theme is on. Always open, like the Duels: the battle sheet shows the
+   // challenges and lets him dare (free) even without an activity left; there, « Jouer » and « Relever » say why not.
+   ...(noel()?[boosted(itemButton("❄️ Bataille de boules de neige","45 s contre les élus de l'autre camp : vise, pare leurs boules, épargne les passants. Puis défie un joueur sur le même tirage.",
+    `Saison${snowIn()?` · ${snowIn()} défi${snowIn()>1?"s":""}`:""}`,false,openSnow),true)]:[]),
    // Always open: even when he cannot duel now, the sheet shows the challenges, the results and why.
    boosted(itemButton("Duels",`Défie un rival au Débat chrono : mêmes questions, meilleur score. ${R.DUEL.perDay+f.duels} défis par jour.`,`${dn?`${dn} défi${dn>1?"s":""}`:"PvP"}${f.duelMult>1?` (×${frNum(f.duelMult)})`:""}`,false,openDuels),f.duels>0||f.duelMult>1)
   ));
@@ -1875,7 +1876,8 @@ async function duelsLoad(){
  if(seq!==duelSeq||!S||me!==who)return duelData;             // a newer load, or another player, won the race
  if(r.ok){duelData=r;duelErr="";pushSync(r.pushKey);if(incoming().length)pushAsk();}else duelErr=r.error;
  refresh();
- if(sheetKind==="duels"||(r.ok&&["play","more","player","snowdare"].includes(sheetKind)))liveSheet(true);
+ if(sheetKind==="duels"||(r.ok&&["play","more","player"].includes(sheetKind)))liveSheet(true);
+ snowDarePlayers();                                  // the dare sheet holds a form: filled in place, never redrawn
  return duelData;
 }
 function openDuels(){openSheet("duels");duelsLoad();}
@@ -1989,7 +1991,7 @@ function renderSnow(body,set){
   if(last.ch&&last.ok)end.append(fine("Partie de défi : le verdict arrive dans ton journal."));
   body.append(end);
  }else body.append(fine("Touche un adversaire pour lui lancer une boule (5 en main, une revient toutes les demi-secondes). Touche les boules qui arrivent pour les parer. Épargne les passants… et vise le traîneau !"));
- const fb=frontBar(snowFront,S.camp,{score:last?.ok?last.result?.score:undefined});
+ const fb=frontBar(snowFront,S.camp,last?.ok?{score:last.result?.score,counted:last.front}:{});
  if(fb)body.append(frontBlock(fb));
  if(!on)body.append(Object.assign(fine("La bataille revient avec la Trêve des confiseurs, du 1er décembre au 1er janvier."),{className:"fine warn"}));
  else if(err)body.append(Object.assign(fine(`Pas de bataille pour l'instant : ${err}`),{className:"fine warn"}));
@@ -2026,28 +2028,33 @@ function renderSnowDare(body,set){
  set("Défier un joueur",Number.isFinite(score)?`Ton tirage et tes ${score} points : il a 24 h pour faire mieux.`:"Ton tirage : il a 24 h pour faire mieux.");
  const back=()=>{const r=document.createElement("div");r.className="btn-row";r.append(smallButton("‹ La bataille","",()=>openSnow()));return r;};
  if(!last||!last.ok||last.ch){body.append(fine("Joue d'abord une partie de bataille : un défi se lance dans les 10 minutes qui suivent."),back());return;}
- // A form: Enter sends, and the sheet is not redrawn under a half-typed name (liveSheet).
+ // A form: Enter sends. liveSheet never redraws a sheet holding a form (a half-typed name survives), so the players'
+ // list and the datalist are filled in place by snowDarePlayers, now and each time GET /api/duels answers.
  const form=document.createElement("form"),lab=document.createElement("label"),inp=document.createElement("input"),dl=document.createElement("datalist");
  form.className="inline-form snow-dare";lab.htmlFor="snow-dare-name";lab.textContent="Pseudo du joueur";
  Object.assign(inp,{id:"snow-dare-name",type:"text",autocomplete:"off",maxLength:40,required:true});inp.setAttribute("list","snow-dare-list");dl.id="snow-dare-list";
- const all=dareList(duelData?.opponents,me,500);
- for(const o of all)dl.append(Object.assign(document.createElement("option"),{value:o.name}));
  const go=Object.assign(document.createElement("button"),{type:"submit",className:"btn go",textContent:"Défier"});
  form.append(lab,inp,dl,go);
  form.addEventListener("submit",e=>{e.preventDefault();snowDare(inp.value);});
- body.append(form);
- if(!duelData)body.append(fine(duelErr||"Chargement des joueurs…"));
- else{
-  const top=all.slice(0,12);
-  if(top.length){
-   body.append(blockTitle("Joueurs"));
-   body.append(list(...top.map(o=>{
-    const b=itemButton(o.name,`${o.candidate||"?"} · ${o.camp==="right"?"Droite":"Gauche"}${o.online?" · en ligne":""}`,"Défier",false,()=>snowDare(o.name));
-    nameWithDot(b.querySelector("b"),o.name,o.online);b.classList.add("opp",o.camp==="right"?"right":"left");return b;
-   })));
-  }else body.append(fine("Personne d'autre pour l'instant."));
+ const box=document.createElement("div");box.id="snow-dare-players";box.setAttribute("aria-live","polite");
+ body.append(form,box,back());
+ snowDarePlayers();
+}
+// The players to dare (snowui.mjs dareView): loading, the error with « Réessayer », nobody, or the buttons; the datalist too.
+function snowDarePlayers(){
+ const box=$("#snow-dare-players"),dl=$("#snow-dare-list");if(sheetKind!=="snowdare"||!box||!dl)return;
+ const v=dareView(duelData,duelErr,me);
+ dl.replaceChildren(...v.names.map(n=>Object.assign(document.createElement("option"),{value:n})));
+ box.replaceChildren();
+ if(v.state!=="list"){
+  box.append(v.state==="error"?Object.assign(fine(v.text),{className:"fine warn"}):fine(v.text));
+  if(v.state==="error"){const r=document.createElement("div");r.className="btn-row";r.append(smallButton("Réessayer","",()=>{duelErr="";snowDarePlayers();duelsLoad();}));box.append(r);}
+  return;
  }
- body.append(back());
+ box.append(blockTitle("Joueurs"),list(...v.top.map(o=>{
+  const b=itemButton(o.name,`${o.candidate||"?"} · ${o.camp==="right"?"Droite":"Gauche"}${o.online?" · en ligne":""}`,"Défier",false,()=>snowDare(o.name));
+  nameWithDot(b.querySelector("b"),o.name,o.online);b.classList.add("opp",o.camp==="right"?"right":"left");return b;
+ })));
 }
 async function snowDare(name){
  const to=String(name||"").trim(),last=snowRecent();

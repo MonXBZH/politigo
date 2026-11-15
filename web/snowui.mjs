@@ -131,12 +131,14 @@ export function endSummary({ok,result,bonus,error,xp}={}){
 
 // ---------------------------------------------------------------- the Front de neige
 // me.snowFront ({left,right,closed}) as a bar: shares (in %), the totals in French, a line for the player. null when
-// there is no counter (the theme is off) or it is malformed. score: this game's (server's) points, when it counted.
-export function frontBar(front,camp,{score}={}){
+// there is no counter (the theme is off) or it is malformed. score: this game's (server's) points; counted: the
+// miniEnd reply's `front` (true: added to the Front; false: not; anything else: unknown, a neutral line).
+export function frontBar(front,camp,{score,counted}={}){
  if(!front||typeof front!=="object"||!num(front.left)||!num(front.right)||front.left<0||front.right<0)return null;
  const tot=front.left+front.right,lp=tot?Math.round(front.left/tot*1000)/10:50,name=camp==="left"?"la Gauche":"la Droite";
  const note=front.closed?"Le Front de neige est tombé : résultat final."
-  :num(score)&&score>0?(score===1?`ton point compte pour ${name}`:`tes ${score} points comptent pour ${name}`)
+  :counted===false?"Cette partie ne compte pas dans le Front."
+  :counted===true&&num(score)&&score>0?(score===1?`ton point compte pour ${name}`:`tes ${score} points comptent pour ${name}`)
   :`Chaque partie compte pour ton camp : ${name}.`;
  return {lp,rp:Math.round((100-lp)*10)/10,leftText:`Gauche ${front.left.toLocaleString("fr-FR")}`,rightText:`Droite ${front.right.toLocaleString("fr-FR")}`,note,closed:!!front.closed};
 }
@@ -167,4 +169,12 @@ export function dareList(opps,me,limit=40){
  if(!Array.isArray(opps))return [];
  return opps.filter(o=>o&&typeof o.name==="string"&&o.name!==me).map((o,k)=>({o,k}))
   .sort((a,b)=>(b.o.online?1:0)-(a.o.online?1:0)||a.k-b.k).map(x=>x.o).slice(0,limit);
+}
+// The dare sheet's list of players, from GET /api/duels (duelData) and its last error: loading, an error (to retry),
+// nobody, or the list ({names} for the datalist, {top} the first 12 as buttons, online first).
+export function dareView(data,err,me){
+ if(!data||typeof data!=="object")return err?{state:"error",text:String(err),names:[],top:[]}:{state:"loading",text:"Chargement des joueurs…",names:[],top:[]};
+ const all=dareList(data.opponents,me,500);
+ if(!all.length)return {state:"empty",text:"Personne d'autre pour l'instant.",names:[],top:[]};
+ return {state:"list",text:"",names:all.map(o=>o.name),top:all.slice(0,12)};
 }
