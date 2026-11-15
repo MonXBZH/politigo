@@ -54,3 +54,24 @@ export function adventGiftText(day){
  const pay=g.k==="bulletins"?`+${g.n} bulletin${g.n>1?"s":""}`:`${fxNames[g.k]} +${g.n}`;
  return {text:FLAVOUR[(day-1)%FLAVOUR.length],pay};
 }
+
+// E.T. (homage): a boy's bike crossing the moon, now and then. A draw per hour of the SERVER's clock, so every
+// player sees it at the same moment: 0, 1 or 2 passes (40/40/20 %), at whole minutes before minute 55, two passes
+// at least 10 minutes apart, ET_MS each. The hour's index alone seeds the draw (mulberry32, as in snowball.mjs).
+export const ET_MS=15000;   // from the left edge of the round screen to the right one, at the validated speed
+const HOUR_MS=3600000;
+function rng(seed){return()=>{seed|=0;seed=seed+0x6D2B79F5|0;let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+// The passes of the hour `hourIdx` (Math.floor(ms / 3 600 000)), as offsets in ms from the top of the hour, sorted.
+export function etPlan(hourIdx){
+ if(!Number.isInteger(hourIdx)||hourIdx<0)return [];
+ const r=rng(Math.imul(hourIdx,2654435761)>>>0),a=r();if(a<0.4)return [];
+ const m1=Math.floor(r()*50);if(a<0.8)return [m1*60000];
+ const m2=(m1+10+Math.floor(r()*35))%55;return [m1*60000,m2*60000].sort((x,y)=>x-y);
+}
+// How far through a pass the bike is at `serverMs` (0 to 1), or null when it is not flying.
+export function etProgress(serverMs){
+ if(!Number.isFinite(serverMs))return null;
+ const hi=Math.floor(serverMs/HOUR_MS),off=serverMs-hi*HOUR_MS;
+ for(const at of etPlan(hi)){const k=(off-at)/ET_MS;if(k>=0&&k<=1)return k;}
+ return null;
+}

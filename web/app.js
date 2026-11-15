@@ -12,7 +12,7 @@ import * as E from "./events.mjs";
 import {outfitLook,drawObject,dressColors} from "./looks.mjs";
 import {createLegend,volcanoRoom} from "./legend.mjs";
 import {createBatonDuel,screenOf,feedParts} from "./batonduel.mjs";
-import {noelMoment,noelYear,voeuxText,adventCells,adventGiftText} from "./noelui.mjs";
+import {noelMoment,noelYear,voeuxText,adventCells,adventGiftText,etProgress} from "./noelui.mjs";
 import {endSummary,frontBar,challengeText,sentText,challengeLists,dareView} from "./snowui.mjs";
 const {people,personalItems,stresses,shop,fxNames,XP,xpCost,xpFloor,stage}=R;
 const $=s=>document.querySelector(s);
@@ -408,13 +408,15 @@ function bigSprite(p,state,size,cx,ground,t,legend=false,food,costume="",over=nu
  ctx.imageSmoothingEnabled=false;ctx.drawImage(scratch,cx-size/2,ground-size,size,size);
 }
 // Fits a centred label inside the round panel: shrink first, then split into two balanced lines.
-function fitLabel(text,y){
+// band: a dark strip behind the words (the Trêve des confiseurs' snowy ground), sized to one or two lines.
+function fitLabel(text,y,band=false){
  const room=yy=>2*Math.sqrt(233*233-(yy-233)**2)-40;
- for(let size=15;size>=11;size--){ctx.font=`600 ${size}px Inter, system-ui, sans-serif`;if(ctx.measureText(text).width<=room(y)){ctx.fillText(text,233,y);return;}}
+ const back=(top,h)=>{if(!band)return;const f=ctx.fillStyle;ctx.fillStyle="#0007";ctx.fillRect(63,top,340,h);ctx.fillStyle=f;};
+ for(let size=15;size>=11;size--){ctx.font=`600 ${size}px Inter, system-ui, sans-serif`;if(ctx.measureText(text).width<=room(y)){back(y-18,26);ctx.fillText(text,233,y);return;}}
  const words=text.split(" ");let best=null;
  for(let i=1;i<words.length;i++){const l1=words.slice(0,i).join(" "),l2=words.slice(i).join(" "),w=Math.max(ctx.measureText(l1).width,ctx.measureText(l2).width);if(!best||w<best.w)best={l1,l2,w};}
- if(!best){ctx.fillText(text,233,y);return;}
- ctx.fillText(best.l1,233,y-7);ctx.fillText(best.l2,233,y+8);
+ if(!best){back(y-18,26);ctx.fillText(text,233,y);return;}
+ back(y-25,41);ctx.fillText(best.l1,233,y-7);ctx.fillText(best.l2,233,y+8);
 }
 function room(night){
  const left=S.camp==="left",h=hodOf(curIdx()),spooky=hw();
@@ -530,26 +532,140 @@ function hwCandle(t){
  ctx.fillStyle="#fff3c0";ctx.beginPath();ctx.ellipse(330,295,1.5,2.5,0,0,Math.PI*2);ctx.fill();
 }
 // ---------- Trêve des confiseurs (1 December to 1 January, rules.mjs eventAt): decor only, like Halloween ----------
-// Ported from the validated mockup (maquette/noel.js). The moments (noelui.mjs noelMoment) follow the server's clock.
-const NW={x:60,y:150,w:104,h:88};                                  // the window's pane, left of the élu
-const FLAKES=[...Array(28)].map((_,i)=>({x:(i*37)%NW.w,y:(i*61)%NW.h,s:1+i%2,v:10+(i*13)%18}));
-// The tricolour garland hangs along the top of the round panel, between the gauges, clear of the name: its wire
-// (four swags) and its bulbs are worked out once.
-let garlandCache=null;
-function garlandPath(){
- if(garlandCache)return garlandCache;
- const a0=238*Math.PI/180,a1=302*Math.PI/180,at=(k,drop)=>{const f=(k*4)%1,r=202-9*Math.sin(Math.PI*f)-drop,a=a0+(a1-a0)*k;return [233+Math.cos(a)*r,233+Math.sin(a)*r];};
- return garlandCache={wire:Array.from({length:49},(_,i)=>at(i/48,0)),bulbs:Array.from({length:13},(_,i)=>at((i+1)/14,6))};
+// Ported from the validated mockup (maquette-noel-outdoor.js): the élu outside on a winter evening, under a big moon.
+// The sky (stars, moon, E.T., the sleigh) keeps the mockup's numbers; the ground layer (hills, chalet, lamppost,
+// garland, snowman, tree) is the mockup's too, raised by NOEL_DY to meet the game's élu (feet at 318, not 400).
+// The moments (noelui.mjs noelMoment) and E.T.'s passes (noelui.mjs etProgress) follow the server's clock.
+const NOEL_DY=-40;
+const ET_MOON=0.285;   // where E.T.'s arc crosses the moon's middle (the still picture for reduced motion)
+const MOON={x:124,y:112,r:60},CRATERS=[[-20,-14,11],[16,8,14],[-8,26,8],[26,-22,6],[-32,10,5],[4,-34,4],[30,30,5]];
+// The stars and the snowflakes, fixed: their places and their pace.
+const STARS=[...Array(70)].map((_,i)=>({x:(i*137+31)%466,y:8+(i*89)%250,s:i%9===0?2:1,p:(i*53)%400,i}));
+const SNOWFALL=[...Array(70)].map((_,i)=>({x:(i*97)%466,y:(i*61)%466,s:1+i%3,v:12+(i*13)%22}));
+// The gradients and paths that never change, made once (the context never changes).
+let noelCache=null;
+function noelPaint(c){
+ if(noelCache)return noelCache;
+ const lin=(y0,y1,a,b)=>{const g=c.createLinearGradient(0,y0,0,y1);g.addColorStop(0,a);g.addColorStop(1,b);return g;};
+ const {x:MX,y:MY,r:MR}=MOON;
+ const halo=c.createRadialGradient(MX,MY,MR-10,MX,MY,MR+50);halo.addColorStop(0,"#dfeaff66");halo.addColorStop(1,"#dfeaff00");
+ const disc=c.createRadialGradient(MX-14,MY-16,6,MX,MY,MR);disc.addColorStop(0,"#ffffff");disc.addColorStop(0.7,"#e6efff");disc.addColorStop(1,"#c9dbf7");
+ const glow=r=>{const g=c.createRadialGradient(26,256,2,26,256,r);g.addColorStop(0,"#ffe39a88");g.addColorStop(1,"#ffe39a00");return g;};
+ const hills=new Path2D();hills.moveTo(0,300);hills.quadraticCurveTo(120,262,240,296);hills.quadraticCurveTo(360,268,466,300);hills.lineTo(466,340);hills.lineTo(0,340);hills.closePath();
+ // the garland, from the lamppost to the tree: its wire and its bulbs
+ const at=(k,d)=>[32+328*k,262+26*4*k*(1-k)+d];
+ const wire=new Path2D();for(let i=0;i<=40;i++){const [x,y]=at(i/40,0);if(i)wire.lineTo(x,y);else wire.moveTo(x,y);}
+ return noelCache={sky:{day:lin(0,340,"#1c3a72","#5f84c0"),eve:lin(0,340,"#0a1438","#23407a"),night:lin(0,340,"#040818","#101c40")},
+  halo,disc,lamp:{day:glow(46),night:glow(70)},dark:lin(200,466,"#02061400","#020614aa"),hills,wire,
+  bulbs:Array.from({length:15},(_,i)=>at((i+1)/16,6))};
 }
 const GARLAND=["#2f6fe0","#f4f1ea","#e0413a"];
-function garland(c,t){
- const G=garlandPath();
- c.strokeStyle="#2e5d3a";c.lineWidth=3;c.beginPath();G.wire.forEach(([x,y],i)=>i?c.lineTo(x,y):c.moveTo(x,y));c.stroke();
- G.bulbs.forEach(([x,y],i)=>{
-  const on=(Math.floor(t/500)+i)%3!==0,col=GARLAND[i%3];
-  if(on){c.fillStyle=col+"44";c.beginPath();c.arc(x,y,8,0,Math.PI*2);c.fill();}
-  c.fillStyle=on?col:"#555a66";c.beginPath();c.ellipse(x,y,3.5,5,0,0,Math.PI*2);c.fill();
- });
+// The tricolour garland, lit, from the lamppost to the tree.
+function garland(c,t,P){
+ c.strokeStyle="#2e5d3a";c.lineWidth=4;c.stroke(P.wire);c.lineWidth=1;
+ P.bulbs.forEach(([x,y],j)=>{const i=j+1,on=(Math.floor(t/500)+i)%3!==0,col=GARLAND[i%3];
+  c.fillStyle=on?col:"#555";c.beginPath();c.ellipse(x,y,5,7,0,0,Math.PI*2);c.fill();
+  if(on){c.fillStyle=col+"55";c.beginPath();c.arc(x,y,11,0,Math.PI*2);c.fill();}});
+}
+// The chalet on the hill: its lit windows, its wreath, the smoke of its chimney.
+function chalet(c,t,night){
+ const x=58,b=316;
+ rect(c,x,b-46,78,46,"#7a4a2a");for(let i=0;i<5;i++)rect(c,x,b-46+i*9,78,1,"#5e381f");
+ c.fillStyle="#f4f8ff";c.beginPath();c.moveTo(x-8,b-44);c.lineTo(x+39,b-76);c.lineTo(x+86,b-44);c.closePath();c.fill();
+ rect(c,x+58,b-80,10,20,"#5a3a2a");rect(c,x+56,b-82,14,4,"#f4f8ff");
+ for(let i=0;i<4;i++){const k=((t/2200)+i/4)%1;c.fillStyle=`rgba(230,236,248,${0.5*(1-k)})`;c.beginPath();c.arc(x+63+Math.sin(k*6+i)*6,b-86-k*40,4+k*6,0,Math.PI*2);c.fill();}
+ const lit=night?"#ffd36b":"#ffcf5a";
+ for(const wx of [x+10,x+50]){rect(c,wx,b-34,18,16,lit);rect(c,wx+8,b-34,2,16,"#7a4a2a");rect(c,wx,b-27,18,2,"#7a4a2a");}
+ rect(c,x+32,b-26,14,26,"#4a2a18");rect(c,x+36,b-14,2,2,"#f4c84a");
+ c.fillStyle="#2f7d4f";c.beginPath();c.arc(x+39,b-34,5,0,Math.PI*2);c.fill();rect(c,x+38,b-30,3,3,"#c8283a");
+}
+// The lamppost, its glow and its wreath (with five little lights).
+function lamppost(c,t,night,P){
+ const x=26,b=420;
+ rect(c,x-2,b-160,5,160,"#23283a");rect(c,x-8,b-6,17,6,"#23283a");rect(c,x-9,b-170,19,12,"#23283a");rect(c,x-6,b-168,13,8,"#ffe39a");
+ c.fillStyle=night?P.lamp.night:P.lamp.day;c.fillRect(x-80,b-240,160,160);
+ c.strokeStyle="#2f7d4f";c.lineWidth=5;c.beginPath();c.arc(x,b-120,11,0,Math.PI*2);c.stroke();c.lineWidth=1;
+ rect(c,x-4,b-112,8,5,"#c8283a");rect(c,x-6,b-108,3,6,"#c8283a");rect(c,x+3,b-108,3,6,"#c8283a");
+ for(let i=0;i<5;i++)rect(c,x-11+i*5,b-127+(i%2)*4,2,2,["#ffd23f","#ff5a5a","#7fb2ff"][(i+Math.floor(t/600))%3]);
+}
+// The snowman in the yard, in a red scarf and a top hat.
+function yardSnowman(c,x,b,night){
+ c.fillStyle=night?"#d8e2f2":"#ffffff";
+ c.beginPath();c.arc(x,b-16,18,0,Math.PI*2);c.fill();c.beginPath();c.arc(x,b-42,12,0,Math.PI*2);c.fill();
+ rect(c,x-5,b-46,3,3,"#202330");rect(c,x+3,b-46,3,3,"#202330");rect(c,x,b-42,7,2,"#f2902a");
+ rect(c,x-11,b-33,22,4,"#c8283a");rect(c,x+6,b-33,4,10,"#c8283a");
+ rect(c,x-10,b-55,20,4,"#202330");rect(c,x-7,b-67,14,12,"#202330");rect(c,x-7,b-59,14,2,"#c8283a");
+ c.strokeStyle="#6b4426";c.lineWidth=2;c.beginPath();c.moveTo(x-16,b-22);c.lineTo(x-30,b-34);c.moveTo(x+16,b-22);c.lineTo(x+30,b-32);c.stroke();c.lineWidth=1;
+}
+// E.T. (homage): a small dark silhouette, a boy's bike entering by the left edge of the round screen and leaving by
+// the right one, on a gentle arc across the sky through the moon, tilting along the curve; a little passenger wrapped
+// in a blanket in the front basket, like the film's poster. Smooth vector drawing, not pixels. Off-screen at p=0 and 1.
+function etBike(c,p){
+ const x=-60+p*646,y=190-Math.sin(p*Math.PI)*110,tilt=Math.atan2(-110*Math.PI*Math.cos(p*Math.PI),646),ink="#04060f",k=0.85,wave=Math.sin(p*90);
+ c.save();c.translate(x,y);c.rotate(tilt);c.scale(k,k);
+ c.strokeStyle=ink;c.fillStyle=ink;c.lineCap="round";c.lineJoin="round";
+ // wheels and a hint of spokes
+ c.lineWidth=2.2;for(const wx of [-12,12]){c.beginPath();c.arc(wx,0,8.5,0,Math.PI*2);c.stroke();}
+ c.lineWidth=0.6;for(const wx of [-12,12])for(let i=0;i<4;i++){const a=i*Math.PI/4+p*25;c.beginPath();c.moveTo(wx+Math.cos(a)*8,Math.sin(a)*8);c.lineTo(wx-Math.cos(a)*8,-Math.sin(a)*8);c.stroke();}
+ // frame and handlebar
+ c.lineWidth=1.8;c.beginPath();c.moveTo(-12,0);c.lineTo(-1,1);c.lineTo(-5,-8);c.lineTo(8,-8);c.lineTo(12,0);c.moveTo(-1,1);c.lineTo(8,-8);c.moveTo(8,-8);c.lineTo(9,-15);c.lineTo(13,-16);c.stroke();
+ // the boy: hooded, leaning forward, pedalling
+ c.lineWidth=2.4;const pk=Math.sin(p*60)*2;
+ c.beginPath();c.moveTo(-4,-10);c.lineTo(0,-4+pk);c.lineTo(-1,1+pk*0.5);c.moveTo(-4,-10);c.lineTo(3,-5-pk);c.lineTo(2,1-pk*0.5);c.stroke();
+ c.beginPath();c.moveTo(-7,-10);c.quadraticCurveTo(-6,-22,3,-24);c.lineTo(9,-19);c.lineTo(-1,-8);c.closePath();c.fill();
+ c.beginPath();c.ellipse(5.5,-26,4.2,4.6,0,0,Math.PI*2);c.fill();
+ c.lineWidth=1.6;c.beginPath();c.moveTo(6,-20);c.lineTo(12,-16);c.stroke();
+ // his cape, flying behind
+ c.beginPath();c.moveTo(-1,-23);c.bezierCurveTo(-9,-25+wave,-17,-21-wave*1.5,-24,-18+wave*2);c.lineTo(-21,-13+wave);c.bezierCurveTo(-15,-14,-9,-12,-5,-10);c.closePath();c.fill();
+ // the basket and the passenger wrapped in his blanket, his round head out, all in silhouette
+ c.fillRect(12.5,-20,10,6);
+ c.beginPath();c.moveTo(12.5,-19.5);c.bezierCurveTo(12,-26,14.5,-30,17.5,-30.5);c.bezierCurveTo(21,-30,23.5,-26,22.5,-19.5);c.closePath();c.fill();
+ c.beginPath();c.ellipse(18.6,-33,4.4,3.4,-0.2,0,Math.PI*2);c.fill();
+ c.fillStyle="#1d2747";c.beginPath();c.moveTo(14,-24);c.quadraticCurveTo(15,-29,17.8,-29.6);c.quadraticCurveTo(16.4,-26,16.6,-21);c.closePath();c.fill();   // a fold of the blanket catching the moonlight
+ c.restore();
+}
+// The scene behind the élu: the sky, the stars, the moon (and E.T.), the sleigh on Christmas Eve, the hills, the
+// chalet, the ground, the lamppost, the garland, the snowman, the tree; the flags on New Year's Eve.
+function drawNoelScene(c,t,S){
+ const P=noelPaint(c),night=R.isNight(S),m=moment(),h=hodOf(curIdx()),eve=!night&&(m==="eve"||m==="voeux"||h>=18||h<8);
+ c.fillStyle=night?P.sky.night:eve?P.sky.eve:P.sky.day;c.fillRect(0,0,466,466);
+ // twinkling stars (fainter by day)
+ const starA=night?1:eve?0.9:0.45;
+ for(const s of STARS){const a=starA*(0.35+0.65*Math.abs(Math.sin(t/(380+s.p)+s.i)));c.globalAlpha=a;rect(c,s.x,s.y,s.s,s.s,"#fffbe6");if(s.s>1&&a>0.8){rect(c,s.x-2,s.y+0.5,s.s+4,1,"#fffbe6");rect(c,s.x+0.5,s.y-2,1,s.s+4,"#fffbe6");}}
+ c.globalAlpha=1;
+ // the full moon, its halo and its craters
+ const {x:MX,y:MY,r:MR}=MOON;
+ c.fillStyle=P.halo;c.fillRect(MX-120,MY-120,240,240);
+ c.fillStyle=P.disc;c.beginPath();c.arc(MX,MY,MR,0,Math.PI*2);c.fill();
+ c.fillStyle="#b9cdeeaa";for(const [dx,dy,r] of CRATERS){c.beginPath();c.arc(MX+dx,MY+dy,r,0,Math.PI*2);c.fill();}
+ // E.T.: at most twice an hour, at the same moment for everyone (held still in front of the moon with reduced motion)
+ const et=etProgress(serverNow());if(et!==null)etBike(c,reduced?ET_MOON:et);
+ if(m==="eve"){const p=reduced?0.5:(t%9000)/9000;sleigh(c,520-p*620,70+Math.sin(p*8)*8,1);}
+ // the snowy hills, the chalet, the ground
+ c.save();c.translate(0,NOEL_DY);
+ c.fillStyle=night?"#8796b8":"#cfdcf0";c.fill(P.hills);
+ chalet(c,t,night);
+ c.fillStyle=night?"#aab8d4":"#eef4fc";c.fillRect(0,330,466,200);
+ c.restore();
+ // the trodden snow under the élu's feet
+ c.fillStyle=night?"#97a6c4":"#dde7f5";c.beginPath();c.ellipse(233,320,190,22,0,0,Math.PI*2);c.fill();
+ c.save();c.translate(0,NOEL_DY);
+ lamppost(c,t,night,P);
+ garland(c,t,P);
+ yardSnowman(c,96,410,night);
+ noelTree(c,t,382,400,1);
+ c.restore();
+ if(m==="voeux"&&!R.isAsleep(S)){flag(c,140,168,false,t,1);flag(c,288,168,true,t,1);}
+}
+// In front of the élu: the night's shade and its big Zzz, then the small snowflakes over everything.
+function drawNoelFront(c,t,S){
+ if(R.isNight(S)){
+  c.fillStyle=noelPaint(c).dark;c.fillRect(0,200,466,266);
+  c.save();c.fillStyle="#cfe0ff";c.textAlign="start";
+  for(let i=0;i<3;i++){c.font=`700 ${16+i*4}px Fredoka, system-ui, sans-serif`;c.fillText("z",293+i*16,178-i*22-((t/60)%14));}
+  c.restore();
+ }
+ for(const f of SNOWFALL){const y=(f.y+t*f.v/1400)%466,x=(f.x+Math.sin(t/900+f.y)*8)%466,s=f.s>2?2:1;rect(c,x,y,s,s,"#ffffffdd");}
 }
 // The tree, its blinking lights, the star and the presents, in the mockup's coordinates (base at 0), scaled k.
 const TREE_LIGHTS=[[-30,-82],[18,-90],[-12,-120],[26,-128],[-20,-160],[10,-168],[0,-140],[-38,-100],[36,-104],[-4,-190]];
@@ -576,27 +692,6 @@ function flag(c,x,y,eu,t,k){
  else{rect(c,3,4+wv,w/3,h,"#2f5fb4");rect(c,3+w/3,4+wv,w/3,h,"#f4f1ea");rect(c,3+2*w/3,4+wv,w/3,h,"#e0413a");}
  c.restore();
 }
-// The window: snow falling outside, the town's roofs, the sleigh on Christmas Eve; snow piled on the sill.
-function noelWindow(c,t,night,m){
- const {x,y,w,h}=NW,dark=night||m==="eve"||m==="voeux",frame=night?"#c9cfdc":"#f4f1ea";
- c.save();c.beginPath();c.rect(x,y,w,h);c.clip();
- c.fillStyle=night?"#0b1530":dark?"#1c3462":"#a8cdf0";c.fillRect(x,y,w,h);
- for(const [dx,bw,bh] of [[0,30,30],[28,22,44],[48,32,26],[78,26,38]])rect(c,x+dx,y+h-bh,bw,bh,dark?"#0a1022":"#7f97b4");
- for(const [dx,bh] of [[32,44],[82,38]])for(let i=0;i<3;i++)rect(c,x+dx+i*6,y+h-bh+8,3,4,dark?"#f4c84a":"#dfe9f4");
- if(m==="eve"){const p=reduced?0.5:(t%7000)/7000;c.save();c.translate(x+w+30-p*(w+90),y+26+Math.sin(p*9)*4);c.scale(0.55,0.55);sleigh(c,0,0);c.restore();}
- for(const f of FLAKES)rect(c,x+(f.x+Math.sin(t/900+f.y)*5+w)%w,y+(f.y+t*f.v/1000)%h,f.s,f.s,"#ffffff");
- c.restore();
- rect(c,x-6,y-6,w+12,6,frame);rect(c,x-6,y-6,6,h+14,frame);rect(c,x+w,y-6,6,h+14,frame);rect(c,x+w/2-2,y,4,h,frame);rect(c,x,y+h/2-2,w,4,frame);
- rect(c,x-6,y+h,w+12,8,frame);rect(c,x-8,y+h-3,w+16,5,"#ffffff");
-}
-// The room's Christmas decor, behind the élu: the window, the garland, the tree; the flags on New Year's Eve.
-function drawNoelRoom(c,t,S){
- const night=R.isNight(S),m=moment();
- noelWindow(c,t,night,m);
- garland(c,t);
- noelTree(c,t,372,324,0.62);
- if(m==="voeux"&&!R.isAsleep(S)){flag(c,150,206,false,t,0.75);flag(c,292,206,true,t,0.75);}
-}
 // The vœux's lectern, in front of the élu (a tricolour band, a microphone).
 function lectern(c){
  rect(c,189,258,88,7,"#5a4430");rect(c,193,265,80,53,"#3a2a1c");
@@ -621,7 +716,8 @@ function miniTree(c,x,y){
  c.fillStyle="#2f7d4f";c.beginPath();c.moveTo(x,y-8);c.lineTo(x+6,y+4);c.lineTo(x-6,y+4);c.closePath();c.fill();
  rect(c,x-1,y+4,2,3,"#6b4426");rect(c,x-1,y-10,2,2,"#f4c84a");rect(c,x-2,y-2,1,1,"#ff5a5a");rect(c,x+2,y+1,1,1,"#ffd23f");
 }
-function gauges(now){
+// Outdoors (the Trêve des confiseurs), the words get a dark outline: the moon and the snow are light.
+function gauges(now,outline=false){
  ctx.lineCap="round";
  for(const g of GAUGES){
   const a0=g.a*Math.PI/180,a1=(g.a+50)*Math.PI/180,v=S[g.k];
@@ -631,9 +727,11 @@ function gauges(now){
    ctx.strokeStyle=low?"#ff6b7a":g.c;ctx.beginPath();ctx.arc(233,233,214,a0,a0+(a1-a0)*v/100);ctx.stroke();ctx.globalAlpha=1;
   }
   const m=(g.a+25)*Math.PI/180;ctx.fillStyle="#ffffffc0";ctx.font="700 12px ui-monospace, monospace";ctx.textAlign="center";
-  ctx.fillText(g.l,233+Math.cos(m)*192,233+Math.sin(m)*192+4);
+  const gx=233+Math.cos(m)*192,gy=233+Math.sin(m)*192+4;
+  if(outline){ctx.strokeStyle="#0b1430b0";ctx.lineWidth=3;ctx.lineJoin="round";ctx.strokeText(g.l,gx,gy);}
+  ctx.fillText(g.l,gx,gy);
  }
- ctx.lineCap="butt";
+ ctx.lineCap="butt";ctx.lineJoin="miter";
 }
 // The speech bubble stays inside the inner edge of the rim gauges (radius 209): its corners are checked, not guessed.
 function bubble(text,tag){
@@ -659,18 +757,24 @@ function render(now){
  // New Year's Eve: the élu stands at the lectern, arms up, for the vœux.
  const state=anim?(anim.name==="bath"?"idle":anim.name):night?"sleep":m==="voeux"?"win":"idle";
  const costume=spooky&&state==="sleep"?(S.camp==="left"?"hunter":"vampire"):"";
+ const outdoor=xmas&&worn().object!=="baton";
  // The Bâton de feu held: the hemicycle gives way to the erupting volcano (legend.mjs), Halloween's decor included.
  if(worn().object==="baton")volcanoRoom(ctx,t);
- else{room(isNight());if(spooky){hwRoom(t,now);hwProps(costume);}else if(xmas)drawNoelRoom(ctx,t,S);}
+ else if(outdoor)drawNoelScene(ctx,t,S);   // the Trêve des confiseurs: outside, under the moon
+ else{room(isNight());if(spooky){hwRoom(t,now);hwProps(costume);}}
  if(S.sleeping&&!isNight()){ctx.fillStyle="rgba(6,8,22,.62)";ctx.fillRect(0,0,466,466);if(spooky)hwCandle(t);}   // light off during a nap
- gauges(now);
- const p=look();
- ctx.textAlign="center";ctx.fillStyle="#fff6ea";ctx.font="600 25px Fredoka, system-ui, sans-serif";ctx.fillText(p.name,233,92);
- ctx.font="600 13px ui-monospace, monospace";ctx.fillStyle="#ffffffc0";ctx.fillText(`NIVEAU ${S.lvl}${S.lvl===100?" · LÉGENDE":""}`,233,112);
+ gauges(now,outdoor);
+ const p=look(),lvlText=`NIVEAU ${S.lvl}${S.lvl===100?" · LÉGENDE":""}`;
+ ctx.textAlign="center";ctx.font="600 25px Fredoka, system-ui, sans-serif";
+ if(outdoor){ctx.strokeStyle="#0b1430b0";ctx.lineJoin="round";ctx.lineWidth=4;ctx.strokeText(p.name,233,92);ctx.font="600 13px ui-monospace, monospace";ctx.lineWidth=3;ctx.strokeText(lvlText,233,112);ctx.lineJoin="miter";ctx.lineWidth=1;ctx.font="600 25px Fredoka, system-ui, sans-serif";}
+ ctx.fillStyle="#fff6ea";ctx.fillText(p.name,233,92);
+ ctx.font="600 13px ui-monospace, monospace";ctx.fillStyle="#ffffffc0";ctx.fillText(lvlText,233,112);
  const part=S.lvl>=100?1:Math.min(1,(S.xp-xpFloor(S.lvl))/xpCost(S.lvl));
+ if(outdoor){ctx.fillStyle="#0b143080";ctx.fillRect(172,118,122,6);}
  ctx.fillStyle="#ffffff26";ctx.fillRect(173,119,120,4);ctx.fillStyle="#ffd59a";ctx.fillRect(173,119,Math.round(120*part),4);
  bigSprite(p,state,192,233,318,t,S.lvl===100,anim&&anim.food,costume,xmas?c=>noelCostume(c,t,S.camp,state):null);
  if(m==="voeux"&&!night)lectern(ctx);
+ if(outdoor)drawNoelFront(ctx,t,S);
  if(lvlFx){                                        // the small level-up burst
   const e=(now-lvlFx.t0)/1000;
   if(e>1.6)lvlFx=null;
@@ -686,9 +790,9 @@ function render(now){
  if(anim&&anim.stress)bubble(`« ${anim.stress.line} »`,(anim.factor>1?`STRESS ×${anim.factor} · `:"")+anim.stress.trigger.toUpperCase());
  else if(anim&&anim.line)bubble(anim.line);
  else{
-  ctx.fillStyle=S.zero?"#ff9aa5":"#ffd59a";
+  ctx.fillStyle=S.zero?"#ff9aa5":outdoor?(R.isNight(S)?"#bcd0f5":"#ffffff"):"#ffd59a";
   const xmasLine=xmas&&!S.zero?{eve:"Réveillon de Noël · le traîneau passe !",voeux:"En direct de l'hémicycle : les vœux"}[m]:"";
-  fitLabel(night?(spooky?R.HALLOWEEN.sleep[S.camp]:xmas?R.NOEL.sleep[S.camp]:S.sleeping&&!isNight()?"Zzz… sieste en cours":"Zzz… il dort"):xmasLine||(S.zero?`Jauge à zéro depuis ${S.zero} h : danger !`:S.form==="Excellente"?(S.streak>=6?`En pleine forme · série de ${S.streak} h`:"En pleine forme"):`Forme ${S.form.toLowerCase()}`),356);
+  fitLabel(night?(spooky?R.HALLOWEEN.sleep[S.camp]:xmas?R.NOEL.sleep[S.camp]:S.sleeping&&!isNight()?"Zzz… sieste en cours":"Zzz… il dort"):xmasLine||(S.zero?`Jauge à zéro depuis ${S.zero} h : danger !`:S.form==="Excellente"?(S.streak>=6?`En pleine forme · série de ${S.streak} h`:"En pleine forme"):`Forme ${S.form.toLowerCase()}`),356,outdoor);
  }
 }
 

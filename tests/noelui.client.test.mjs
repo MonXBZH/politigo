@@ -161,3 +161,67 @@ test("adventGiftText: a flavour line and what it pays, matching ADVENT; the 24th
  assert.equal(adventGiftText(0),null);
  assert.equal(adventGiftText(25),null);
 });
+
+// ---------------------------------------------------------------- E.T. (homage): the bike crossing the moon
+import {etPlan,etProgress,ET_MS} from "../web/noelui.mjs";
+const HOUR=3600000,MIN=60000;
+
+test("etPlan: deterministic from the hour index alone",()=>{
+ for(let h=0;h<500;h++)assert.deepEqual(etPlan(h),etPlan(h));
+ assert.deepEqual(etPlan(493000),etPlan(493000));
+ // not all hours alike
+ const shapes=new Set(Array.from({length:200},(_,h)=>JSON.stringify(etPlan(h))));
+ assert.ok(shapes.size>20);
+});
+
+test("etPlan: 0, 1 or 2 sorted passes, whole minutes, before minute 55, at least 10 minutes apart",()=>{
+ const base=Math.floor(Date.UTC(2026,11,1)/HOUR);
+ for(let h=base;h<base+10000;h++){
+  const p=etPlan(h);
+  assert.ok(Array.isArray(p)&&p.length<=2,`hour ${h}: ${p}`);
+  for(const at of p){assert.ok(Number.isInteger(at)&&at>=0&&at<55*MIN&&at%MIN===0,`hour ${h}: ${at}`);assert.ok(at+ET_MS<HOUR);}
+  if(p.length===2){assert.ok(p[0]<p[1]);assert.ok(p[1]-p[0]>=10*MIN,`hour ${h}: ${p}`);}
+ }
+});
+
+test("etPlan: about 40 % of hours without, 40 % with one, 20 % with two (±3 %)",()=>{
+ const n=10000,count=[0,0,0],base=Math.floor(Date.UTC(2026,11,1)/HOUR);
+ for(let h=base;h<base+n;h++)count[etPlan(h).length]++;
+ const f=count.map(c=>c/n);
+ assert.ok(Math.abs(f[0]-0.4)<=0.03,`none ${f[0]}`);
+ assert.ok(Math.abs(f[1]-0.4)<=0.03,`one ${f[1]}`);
+ assert.ok(Math.abs(f[2]-0.2)<=0.03,`two ${f[2]}`);
+});
+
+test("etPlan: odd hour indexes are tolerated",()=>{
+ for(const h of [NaN,-1,1.5,Infinity,undefined,"3"])assert.deepEqual(etPlan(h),[]);
+});
+
+test("ET_MS: 15 s, from the left edge of the screen to the right one at the validated speed",()=>{assert.equal(ET_MS,15000);});
+
+const hourWith=k=>{const base=Math.floor(Date.UTC(2026,11,1)/HOUR);for(let h=base;;h++)if(etPlan(h).length===k)return h;};
+
+test("etProgress: 0 at the start of a pass, 1 at its end, null just outside",()=>{
+ const h=hourWith(1),at=h*HOUR+etPlan(h)[0];
+ assert.equal(etProgress(at-1),null);
+ assert.equal(etProgress(at),0);
+ assert.equal(etProgress(at+ET_MS/2),0.5);
+ assert.equal(etProgress(at+ET_MS),1);
+ assert.equal(etProgress(at+ET_MS+1),null);
+});
+
+test("etProgress: both passes of a two-pass hour, nothing between them; null in a hour without",()=>{
+ const h=hourWith(2),[a,b]=etPlan(h);
+ for(const at of [a,b]){const ms=h*HOUR+at;for(let s=0;s<=ET_MS;s+=250){const k=etProgress(ms+s);assert.ok(k!==null&&k>=0&&k<=1);}}
+ assert.equal(etProgress(h*HOUR+a+ET_MS+MIN),null);
+ const z=hourWith(0);
+ for(let m=0;m<60;m++)assert.equal(etProgress(z*HOUR+m*MIN+1000),null);
+ assert.equal(etProgress(NaN),null);
+ assert.equal(etProgress(undefined),null);
+});
+
+test("etProgress: over a whole day, on screen a handful of seconds an hour at most",()=>{
+ const base=Math.floor(Date.UTC(2026,11,7)/HOUR)*HOUR;let on=0;
+ for(let ms=base;ms<base+24*HOUR;ms+=500){const k=etProgress(ms);if(k!==null){assert.ok(k>=0&&k<=1);on++;}}
+ assert.ok(on<=24*2*(ET_MS/500+1));
+});
