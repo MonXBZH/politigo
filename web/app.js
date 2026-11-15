@@ -12,7 +12,8 @@ import * as E from "./events.mjs";
 import {outfitLook,drawObject,dressColors} from "./looks.mjs";
 import {createLegend,volcanoRoom} from "./legend.mjs";
 import {createBatonDuel,screenOf,feedParts} from "./batonduel.mjs";
-import {noelMoment,noelYear,voeuxText,adventCells,adventGiftText,etProgress} from "./noelui.mjs";
+import {noelMoment,noelYear,voeuxText,adventCells,adventGiftText,etProgress,
+ cheersPhase,cheersClock,cheersNamesLine,frontLine,newYearYear,newYearScreen,CHEERS_MS,CHEERS_REPLAY_MS} from "./noelui.mjs";
 import {endSummary,frontBar,challengeText,sentText,challengeLists,dareView} from "./snowui.mjs";
 const {people,personalItems,stresses,shop,fxNames,XP,xpCost,xpFloor,stage}=R;
 const $=s=>document.querySelector(s);
@@ -67,6 +68,8 @@ function applyMe(m,{replay=false}={}){
  if(R.EVENT_MODES.includes(m.event)&&m.event!==EVENT_MODE){EVENT_MODE=m.event;seasonAt=0;momentAt=0;}
  if(Array.isArray(m.events))liveEvents=m.events;
  snowFront=m.snowFront&&typeof m.snowFront==="object"?m.snowFront:null;   // only while the Trêve is on
+ // The midnight toast: live for five minutes, then the banner's « Revoir » until 2 January (server noelView).
+ newYear=m.newYear&&typeof m.newYear==="object"&&Number.isFinite(m.newYear.until)?m.newYear:null;newYearBannerOn=m.newYearBanner===true;
  const first=!S||me!==m.name;
  // The action answer and the live stream race each other: an older copy of the state never replaces a newer one.
  if(!first&&m.state.lastReal<S.lastReal)return;
@@ -260,7 +263,7 @@ function rematch(){closeSheet();send({type:"rematch"});}
 function toggleLight(){closeSheet();send({type:"light"});}
 async function equip(i){await send({type:"equip",i});liveSheet();}
 async function pet(){
- if(!S||pong||scene)return;
+ if(!S||pong||scene||nyView.scene)return;
  if(isAsleep()){toast(isNight()?"Zzz… il dort. Reviens après 6 h.":"Zzz… il fait la sieste. Rallume la lumière dans Soins.");return;}
  playAnim("win",1200);
  const r=await send({type:"pet"});if(r?.ok&&r.petted)toast("Une petite tape sur l'épaule : moral +2");
@@ -711,6 +714,119 @@ function noelCostume(c,t,camp,state="idle",hat="#d23a3a"){
  rect(c,42+sway,0,5,5,"#f4f1ea");rect(c,43+sway,1,3,3,"#ffffff");
  c.restore();
 }
+// ---------------------------------------------------------------- the midnight toast (New Year)
+// Ported from the validated mockup (maquette/noel.js cheers): Paris at night and the Eiffel tower sparkling, a table,
+// élus of both camps mixed (a hat of their camp's colour), the player's own in front; an 8 s loop (noelui.mjs
+// cheersPhase): 3, 2, 1, « Minuit ! » and the fireworks, « Tchin ! » as the glasses meet, then « Bonne année YYYY ! »,
+// the server's names (plain text on the canvas) and the Front de neige's result, under the confetti. Everything moving
+// is worked out from T alone. With reduced motion the words still follow the loop, the picture stands still.
+const CHEERS_CROWD=[["left",0],["right",8],["left",8],["right",3],["right",0],["left",4],["left",1],["right",1],["left",6]];
+const CAMP_HAT={left:"#d23a3a",right:"#2f5fb4"};
+function cheersFireworks(c,t){
+ for(let i=0;i<5;i++){
+  const per=1600+i*230,life=((t+i*517)%per)/per,cx=60+((i*137)%340),cy=60+((i*71)%130),col=["#ffd23f","#ff5a5a","#7fb2ff","#7dffb0","#ff9ae6"][i];
+  if(life<0.15){rect(c,cx-1,cy+(1-life/0.15)*120,3,6,"#fff");continue;}
+  const r=(life-0.15)*90;c.globalAlpha=Math.max(0,1-life);
+  for(let k=0;k<14;k++){const an=k/14*Math.PI*2;rect(c,cx+Math.cos(an)*r,cy+Math.sin(an)*r+life*life*20,3,3,col);}
+  c.globalAlpha=1;
+ }
+}
+function cheersFlute(c,x,y,tilt=0){   // a champagne flute, in the 64 grid of the sprite
+ c.save();c.translate(x,y);c.rotate(tilt);
+ rect(c,-1,4,2,6,"#e8eef8");rect(c,-3,10,6,1,"#e8eef8");rect(c,-3,-6,6,10,"#f6d76b");rect(c,-3,-7,6,2,"#fff8e0");rect(c,-3,-6,1,10,"#ffffff88");
+ c.restore();
+}
+// One élu raising his glass, drawn on the shared 64x64 scratch canvas, then scaled k times at (x, y) top-left.
+function toaster(c,p,side,t,x,y,k,{raise,mirror,lean}){
+ const sc=scratch.getContext("2d"),state=raise?"win":"idle";
+ sprite(sc,p,t,state);noelCostume(sc,t,side,state,CAMP_HAT[side]||CAMP_HAT.left);
+ const phase=Math.floor(t/300)%4,lift=raise?5+phase%2*2:0,bob=raise?[0,-3,-5,-2][phase]:[0,-1,0,0][phase];
+ cheersFlute(sc,45,(raise?38:49)-lift+bob,raise?lean:0);
+ c.save();c.imageSmoothingEnabled=false;
+ if(mirror){c.translate(x+64*k,y);c.scale(-1,1);c.drawImage(scratch,0,0,64*k,64*k);}else c.drawImage(scratch,x,y,64*k,64*k);
+ c.restore();
+}
+// Centred words with a dark outline; too wide for the round screen at y, smaller, then on two balanced lines.
+// Returns the baseline below them.
+function cheersWords(c,text,y,size,min,col,face="600 %px Inter, system-ui, sans-serif"){
+ const room=Math.min(400,2*Math.sqrt(Math.max(0,233*233-(y-233)**2))-48);
+ const put=(s,yy)=>{c.strokeText(s,233,yy,room);c.fillStyle=col;c.fillText(s,233,yy,room);};
+ for(let s=size;s>=min;s--){c.font=face.replace("%",s);if(c.measureText(text).width<=room){put(text,y);return y+s+5;}}
+ const words=text.split(" ");let best=null;
+ for(let i=1;i<words.length;i++){const l1=words.slice(0,i).join(" "),l2=words.slice(i).join(" "),w=Math.max(c.measureText(l1).width,c.measureText(l2).width);if(!best||w<best.w)best={l1,l2,w};}
+ if(!best){put(text,y);return y+min+5;}
+ put(best.l1,y);put(best.l2,y+min+3);return y+2*min+8;
+}
+// {names, others, front}: the server's me.newYear; camp and look: the player's élu; year: the year that begins.
+function drawCheers(c,T,{names,others,front,camp,look,year}){
+ const t=((T%CHEERS_MS)+CHEERS_MS)%CHEERS_MS,phase=cheersPhase(t),A=reduced?2600:T;   // A: the motion's clock
+ c.save();c.beginPath();c.arc(233,233,233,0,Math.PI*2);c.clip();
+ const sky=c.createLinearGradient(0,0,0,466);sky.addColorStop(0,"#070b1e");sky.addColorStop(1,"#1d2550");c.fillStyle=sky;c.fillRect(0,0,466,466);
+ for(const [x,w,h] of [[0,70,90],[60,60,120],[118,80,80],[300,70,110],[360,110,86]])rect(c,x,262-h,w,h,"#121a3c");
+ c.fillStyle="#26306a";c.beginPath();c.moveTo(233,60);c.lineTo(266,262);c.lineTo(200,262);c.closePath();c.fill();rect(c,215,180,36,5,"#26306a");rect(c,207,226,52,5,"#26306a");
+ const lit=t>1500;
+ if(lit)for(let i=0;i<26;i++)if((Math.floor(A/120)+i*7)%5===0)rect(c,233+((i*37)%50-25)*(((i*53)%200)/200),62+(i*53)%200,2,2,"#fff6c0");
+ if(lit){cheersFireworks(c,A);cheersFireworks(c,A+900);}
+ rect(c,0,346,466,120,"#141a36");
+ rect(c,20,292,426,14,"#f4f1ea");rect(c,20,306,426,40,"#e3ddd0");
+ const clink=phase==="tchin",lean=clink?0.35:0,st=reduced?0:T;
+ CHEERS_CROWD.slice(0,5).forEach(([side,i],n)=>{const x=50+n*76,k=1.45,m=n<2,p=people[side][i];if(p)toaster(c,p,side,st+n*170,x+(clink?(m?8:n>2?-8:0):0),298-60*k,k,{raise:lit,mirror:!m&&n!==2,lean});});
+ CHEERS_CROWD.slice(5).forEach(([side,i],n)=>{const x=30+n*104+(n>1?60:0),k=1.9,m=n<2,p=people[side][i];if(p)toaster(c,p,side,st+n*230,x+(clink?(m?10:-10):0),404-60*k,k,{raise:lit,mirror:!m,lean});});
+ toaster(c,look,camp,st,233-64*1.1,418-64*2.2,2.2,{raise:lit,mirror:false,lean});
+ c.textAlign="center";c.strokeStyle="#070b1e";c.lineJoin="round";c.lineWidth=5;
+ const big=(txt,y,size,col)=>{c.font=`700 ${size}px Fredoka, system-ui, sans-serif`;c.strokeText(txt,233,y);c.fillStyle=col;c.fillText(txt,233,y);};
+ if(phase.startsWith("count"))big(String(3-Math.floor(t/500)),120,72,"#ffffff");
+ else if(phase==="minuit")big("Minuit !",110,46,"#f4c84a");
+ else if(clink){big("Tchin !",110,46,"#ffffff");for(let i=0;i<10;i++)rect(c,113+((i*53)%240),180+((i*29)%80)-(reduced?0:(t-2200)/20),3,3,"#fff6c0");}
+ else{
+  big(year?`Bonne année ${year} !`:"Bonne année !",100,34,"#f4c84a");
+  c.lineWidth=3;
+  const y=cheersWords(c,cheersNamesLine(names,others),128,13,11,"#ffffff");
+  const f=frontLine(front);if(f)cheersWords(c,f,y+4,12,10,"#cfe3ff");
+ }
+ c.textAlign="start";c.lineWidth=1;c.lineJoin="miter";
+ if(t>3400)for(let i=0;i<24;i++)rect(c,(i*61+A/9)%466,(i*37+A/6)%466,3,4,["#fbd47b","#ed819a","#8db4ff","#7dffb0"][i%4]);
+ c.restore();
+}
+// The page's side: me.newYear and me.newYearBanner (applyMe), the ✕ (closed for this page's life only), « Revoir »
+// (two loops on the page's clock), a DOM button and a DOM banner built with textContent (no HTML, strict CSP).
+let newYear=null,newYearBannerOn=false,nyClosed=false,nyReplayT0=0,nyReplayEnd=0,nyView={scene:null,banner:false};
+const nyClose=document.createElement("button"),nyBanner=document.createElement("div"),nyReplay=document.createElement("button");
+{
+ nyClose.type="button";nyClose.className="icon-btn ny-close";nyClose.textContent="✕";nyClose.hidden=true;
+ nyClose.setAttribute("aria-label","Fermer la scène du nouvel an");
+ const words=document.createElement("span");words.textContent="🥂 Minuit : toute la République a trinqué.";
+ nyReplay.type="button";nyReplay.className="btn small go";nyReplay.textContent="Revoir";
+ nyReplay.setAttribute("aria-label","Revoir le toast de minuit");
+ nyBanner.className="ny-banner";nyBanner.hidden=true;nyBanner.setAttribute("role","region");nyBanner.setAttribute("aria-label","Nouvel an");
+ nyBanner.append(words,nyReplay);
+ $(".device").append(nyClose);$(".device-wrap").prepend(nyBanner);
+}
+// Worked out every frame (cheap): what to show, and the two DOM pieces kept in step. Never over a game or a scene.
+function nySync(now){
+ const v=newYearScreen({ny:noel()?newYear:null,banner:newYearBannerOn,closed:nyClosed,replayEnd:nyReplayEnd,now,serverMs:serverNow()});
+ if(v.scene&&(pong||mini||scene||bd.isOpen()))v.scene=null;
+ if(nyBanner.hidden!==!v.banner)nyBanner.hidden=!v.banner;
+ if(nyClose.hidden!==!v.scene){
+  const held=document.activeElement===nyClose;nyClose.hidden=!v.scene;
+  if(held&&!v.scene)(v.banner?nyReplay:cv).focus({preventScroll:true});   // the scene over under the focus: not lost
+ }
+ nyView=v;return v;
+}
+function nyDraw(now){
+ const ny=newYear||{};
+ const T=nyView.scene==="live"?cheersClock(serverNow(),ny.until):now-nyReplayT0;
+ drawCheers(ctx,T,{names:ny.names,others:ny.others,front:ny.front,camp:S.camp,look:look(),year:newYearYear(ny.until-1)});
+}
+nyClose.addEventListener("click",()=>{
+ if(nyView.scene==="live")nyClosed=true;
+ nyReplayEnd=0;const v=nySync(performance.now());
+ (v.banner?nyReplay:cv).focus();
+});
+nyReplay.addEventListener("click",()=>{
+ nyReplayT0=performance.now();nyReplayEnd=nyReplayT0+CHEERS_REPLAY_MS;
+ if(nySync(nyReplayT0).scene)nyClose.focus();
+});
 // The Pong's tiny tree, in front of the words (instead of Halloween's pumpkin).
 function miniTree(c,x,y){
  c.fillStyle="#2f7d4f";c.beginPath();c.moveTo(x,y-8);c.lineTo(x+6,y+4);c.lineTo(x-6,y+4);c.closePath();c.fill();
@@ -752,6 +868,7 @@ function render(now){
  if(scene&&drawScene(now))return;
  if(pong){drawPong(now);return;}
  if(mini){mini.draw(miniClock);return;}
+ if(nyView.scene){nyDraw(now);return;}   // New Year's midnight: the whole Republic toasts
  const night=isAsleep(),t=reduced?0:now,spooky=hw(),xmas=noel(),m=xmas?moment():"";
  if(anim&&now>anim.until)anim=null;
  // New Year's Eve: the élu stands at the lectern, arms up, for the vœux.
@@ -2474,8 +2591,9 @@ function tickFrame(now){
   // The mini-games run on their own clock, which a scene stops and a hidden tab pauses (one frame is 100 ms at most).
   if(mini&&!scene){const d=Math.min(100,fdt);miniClock+=d;mini.step(miniClock,Math.min(0.05,d/1000));if(mini.over(miniClock))endMini();}
   // Full frame rate only while something moves fast; the idle screen is fine at ~8 fps and saves battery.
+  const ny=nySync(now).scene;
   if(bd.isOpen())bd.frame(now);
-  else if(pong||mini||scene||anim||lvlFx||now-lastDraw>=120){lastDraw=now;render(now);}
+  else if(pong||mini||scene||anim||lvlFx||(ny&&!reduced)||now-lastDraw>=120){lastDraw=now;render(now);}
   if(now-lastHud>500){lastHud=now;refresh();liveSheet();missionClock();eventBar();}
   portraitsTick(now);
   // After a game, in order: what the journal kept back (once the game's own result has been read), the news,

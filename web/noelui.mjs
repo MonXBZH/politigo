@@ -75,3 +75,46 @@ export function etProgress(serverMs){
  for(const at of etPlan(hi)){const k=(off-at)/ET_MS;if(k>=0&&k<=1)return k;}
  return null;
 }
+
+// ---- the midnight toast (New Year): the server's me.newYear {names, others, front, until, live} and me.newYearBanner.
+// The scene's 8 s loop (the validated mockup's): 3, 2, 1, « Minuit ! » and the fireworks, « Tchin ! », the vœux.
+export const CHEERS_MS=8000,CHEERS_REPLAY_MS=2*CHEERS_MS;
+const TOAST_MS=5*60000;   // the live scene's five minutes (server snowfront.mjs): it began at until - TOAST_MS
+export function cheersPhase(t){
+ const x=Number.isFinite(t)&&t>=0?t%CHEERS_MS:0;
+ return x<500?"count3":x<1000?"count2":x<1500?"count1":x<2200?"minuit":x<3400?"tchin":"voeux";
+}
+// Where the live loop stands: every player's countdown hits « Minuit ! » together, on the server's clock.
+export const cheersClock=(serverMs,until)=>Math.max(0,serverMs-(until-TOAST_MS));
+// Thousands grouped the French way, with a plain no-break space (the narrow one may vanish in a canvas font).
+const nfr=new Intl.NumberFormat("fr-FR"),nf={format:n=>nfr.format(n).replace(/ /g," ")};
+const cleanName=n=>{if(typeof n!=="string")return "";const s=n.trim();return [...s].length>24?[...s].slice(0,23).join("").trimEnd()+"…":s;};
+const andList=a=>a.length<2?a.join(""):`${a.slice(0,-1).join(", ")} et ${a[a.length-1]}`;
+// The line under the vœux: up to 4 names (the server's, drawn on the canvas as plain text), then the others.
+export function cheersNamesLine(names,others){
+ const list=(Array.isArray(names)?names:[]).map(cleanName).filter(Boolean).slice(0,4);
+ const n=Number.isFinite(others)&&others>0?Math.floor(others):0;
+ if(list.length&&n)return `${list.join(", ")}… et ${nf.format(n)} autre${n>1?"s":""} trinquent avec toi`;
+ if(list.length)return `${andList(list)} ${list.length>1?"trinquent":"trinque"} avec toi`;
+ if(n)return n>1?`${nf.format(n)} autres joueurs trinquent avec toi`:"1 autre joueur trinque avec toi";
+ return "Toute la République trinque avec toi";
+}
+// The Front de neige's result, in the words of the server's feed line (server.mjs closeFront), the numbers grouped;
+// "" when unknown.
+export function frontLine(f){
+ if(!f||!["left","right","tie"].includes(f.winner)||!Number.isFinite(f.left)||!Number.isFinite(f.right))return "";
+ const {winner,left,right}=f;
+ return winner==="tie"?`❄️ Le Front de neige est tombé : égalité parfaite, ${nf.format(left)} partout.`
+  :`❄️ Le Front de neige est tombé : la ${winner==="left"?"Gauche":"Droite"} l'emporte (${nf.format(Math.max(left,right))} contre ${nf.format(Math.min(left,right))}).`;
+}
+// « Bonne année YYYY ! »: the year after the theme's December (a test instant in November wishes the coming year too).
+export function newYearYear(ms){return Number.isFinite(ms)?noelYear(ms)+1:null;}
+// What the main screen shows: the live scene (until `until`, unless ✕ closed it for the session), the replay of
+// « Revoir » (until replayEnd, on the page's clock `now`), and the golden banner (the server's newYearBanner, or the
+// live window just over: the server's next word may come later).
+export function newYearScreen({ny,banner,closed,replayEnd,now,serverMs}){
+ if(!ny||typeof ny!=="object"||!Number.isFinite(ny.until))return {scene:null,banner:false};
+ const live=ny.live===true&&serverMs<ny.until;
+ if(live)return {scene:closed?null:"live",banner:false};
+ return {scene:now<replayEnd?"replay":null,banner:banner===true||serverMs>=ny.until};   // the banner stays: no jump
+}

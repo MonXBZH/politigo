@@ -561,3 +561,8 @@ body[data-season=noel],body[data-camp][data-season=noel]{--accent-2:#f4c84a;--bg
 .snow-front .bar i.left{background:#e0413a}.snow-front .bar i.right{background:#2f6fe0}
 .snow-dare{margin-top:6px;align-items:end}
 .snow-dare label{flex:1 0 100%;font-size:13px;color:var(--muted)}
+/* Trêve des confiseurs, New Year's midnight: the ✕ over the scene, and the golden banner to see it again */
+.ny-close{position:absolute;top:1%;right:1%;z-index:2;display:grid;place-items:center;padding:0;background:#0b1430e6;color:#fff6ea;border-color:#f4c84a99}
+.ny-close[hidden],.ny-banner[hidden]{display:none}
+.ny-banner{width:min(92vw,var(--dev));display:flex;gap:10px;align-items:center;justify-content:space-between;padding:8px 10px 8px 14px;border-radius:14px;background:linear-gradient(90deg,#3a2a05,#6b4f10);border:1px solid #f4c84a88;color:#fff6e0;font-size:13px;box-shadow:0 6px 20px #0006}
+.ny-banner .btn{flex:none;padding:8px 14px;font-size:13px;color:#fff6e0;border-color:#f4c84a}

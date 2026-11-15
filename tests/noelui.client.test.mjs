@@ -225,3 +225,72 @@ test("etProgress: over a whole day, on screen a handful of seconds an hour at mo
  for(let ms=base;ms<base+24*HOUR;ms+=500){const k=etProgress(ms);if(k!==null){assert.ok(k>=0&&k<=1);on++;}}
  assert.ok(on<=24*2*(ET_MS/500+1));
 });
+
+// ---------------------------------------------------------------- the midnight toast (Task 9)
+import {cheersPhase,cheersNamesLine,frontLine,newYearYear,newYearScreen,CHEERS_MS} from "../web/noelui.mjs";
+
+test("cheersPhase: the 8 s loop, 3-2-1, Minuit, Tchin, the vœux; any number of loops, junk safe",()=>{
+ assert.equal(CHEERS_MS,8000);
+ const want=[[0,"count3"],[499,"count3"],[500,"count2"],[999,"count2"],[1000,"count1"],[1499,"count1"],[1500,"minuit"],[2199,"minuit"],
+  [2200,"tchin"],[3399,"tchin"],[3400,"voeux"],[7999,"voeux"],[8000,"count3"],[16000+2500,"tchin"],[3*8000+5000,"voeux"]];
+ for(const [t,p] of want)assert.equal(cheersPhase(t),p,`t=${t}`);
+ assert.equal(cheersPhase(-1),"count3");
+ assert.equal(cheersPhase(NaN),"count3");
+ assert.equal(cheersPhase(undefined),"count3");
+ assert.equal(cheersPhase(Infinity),"count3");
+});
+
+test("cheersNamesLine: up to 4 names, then the others, in correct French whatever the counts",()=>{
+ assert.equal(cheersNamesLine(["Hugo","Camille","Lucie","Marc"],1342),"Hugo, Camille, Lucie, Marc… et 1 342 autres trinquent avec toi");
+ assert.equal(cheersNamesLine(["Hugo"],1),"Hugo… et 1 autre trinquent avec toi");
+ assert.equal(cheersNamesLine(["Hugo"],0),"Hugo trinque avec toi");
+ assert.equal(cheersNamesLine(["Hugo","Camille"],0),"Hugo et Camille trinquent avec toi");
+ assert.equal(cheersNamesLine(["Hugo","Camille","Lucie"],0),"Hugo, Camille et Lucie trinquent avec toi");
+ assert.equal(cheersNamesLine([],1),"1 autre joueur trinque avec toi");
+ assert.equal(cheersNamesLine([],12),"12 autres joueurs trinquent avec toi");
+ assert.equal(cheersNamesLine([],0),"Toute la République trinque avec toi");
+ assert.equal(cheersNamesLine(null,undefined),"Toute la République trinque avec toi");
+ assert.equal(cheersNamesLine(["Hugo","Camille","Lucie","Marc","Inès","Yanis"],0),"Hugo, Camille, Lucie et Marc trinquent avec toi","never more than 4");
+ assert.equal(cheersNamesLine(["Hugo",42,"","  ",null,"Inès"],-3),"Hugo et Inès trinquent avec toi","junk dropped, a negative count is 0");
+ assert.equal(cheersNamesLine(["Hugo"],2.7),"Hugo… et 2 autres trinquent avec toi");
+ assert.equal(cheersNamesLine(["Zoé 🎄","O'Brien <b>"],0),"Zoé 🎄 et O'Brien <b> trinquent avec toi","names are text, kept as they are");
+ assert.equal(cheersNamesLine(["x".repeat(80)],0),`${"x".repeat(23)}… trinque avec toi`,"a very long name is cut (with an ellipsis)");
+ assert.equal(cheersNamesLine(["Marie-Antoinette de La Rochefoucauld"],0),"Marie-Antoinette de La… trinque avec toi","no space before the ellipsis");
+});
+
+test("frontLine: the server's feed wording, or nothing",()=>{
+ assert.equal(frontLine({winner:"left",left:30,right:12}),"❄️ Le Front de neige est tombé : la Gauche l'emporte (30 contre 12).");
+ assert.equal(frontLine({winner:"right",left:9,right:41}),"❄️ Le Front de neige est tombé : la Droite l'emporte (41 contre 9).");
+ assert.equal(frontLine({winner:"tie",left:7,right:7}),"❄️ Le Front de neige est tombé : égalité parfaite, 7 partout.");
+ assert.equal(frontLine({winner:"left",left:1284220,right:1251900}),"❄️ Le Front de neige est tombé : la Gauche l'emporte (1 284 220 contre 1 251 900).","grouped with a plain no-break space");
+ assert.equal(frontLine({winner:"tie",left:1500,right:1500}),"❄️ Le Front de neige est tombé : égalité parfaite, 1 500 partout.");
+ assert.equal(frontLine(null),"");
+ assert.equal(frontLine(undefined),"");
+ assert.equal(frontLine({winner:"middle",left:1,right:2}),"");
+ assert.equal(frontLine({winner:"left",left:"30",right:12}),"");
+ assert.equal(frontLine({winner:"left",left:NaN,right:12}),"");
+});
+
+test("newYearYear: the year that begins, from 1 January or from a test instant at any date",()=>{
+ assert.equal(newYearYear(paris(2027,1,1,0)),2027);
+ assert.equal(newYearYear(paris(2027,1,1,0,5)),2027);
+ assert.equal(newYearYear(paris(2027,1,1,23,59)),2027);
+ assert.equal(newYearYear(paris(2026,12,31,23,59)),2027);
+ assert.equal(newYearYear(paris(2026,11,15,14)),2027,"POLITIGO_NEWYEAR_AT in November: the coming year");
+ assert.equal(newYearYear(NaN),null);
+});
+
+test("newYearScreen: the live scene until `until` unless closed, the replay, the banner",()=>{
+ const until=paris(2027,1,1,0,5),ny={names:[],others:0,front:null,until,live:true};
+ const base={ny,banner:false,closed:false,replayEnd:0,now:1000,serverMs:until-60000};
+ assert.deepEqual(newYearScreen(base),{scene:"live",banner:false});
+ assert.deepEqual(newYearScreen({...base,closed:true}),{scene:null,banner:false},"✕: hidden for the session");
+ assert.deepEqual(newYearScreen({...base,serverMs:until}),{scene:null,banner:true},"after the five minutes, the banner without waiting for the server");
+ assert.deepEqual(newYearScreen({...base,ny:{...ny,live:false},banner:true,serverMs:until+3600e3}),{scene:null,banner:true});
+ assert.deepEqual(newYearScreen({...base,ny:{...ny,live:false},banner:true,closed:true,serverMs:until+3600e3}),{scene:null,banner:true},"✕ does not hide the banner");
+ assert.deepEqual(newYearScreen({...base,ny:{...ny,live:false},banner:true,replayEnd:5000,now:1000,serverMs:until+60e3}),{scene:"replay",banner:true},"Revoir: two loops, the banner kept (the screen does not jump)");
+ assert.deepEqual(newYearScreen({...base,ny:{...ny,live:false},banner:true,replayEnd:5000,now:5000,serverMs:until+60e3}),{scene:null,banner:true});
+ assert.deepEqual(newYearScreen({...base,ny:null}),{scene:null,banner:false});
+ assert.deepEqual(newYearScreen({...base,ny:null,banner:true}),{scene:null,banner:false},"no newYear, no banner");
+ assert.deepEqual(newYearScreen({...base,ny:{...ny,until:"x"}}),{scene:null,banner:false});
+});
