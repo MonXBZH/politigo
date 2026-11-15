@@ -372,13 +372,15 @@ test("bot signals: fast taps, too precise, too quick to react",()=>{
  // and the balls thrown into the void before the first pop do not count)
  const ev=(n,kind,t0=1000)=>Array.from({length:n},(_,i)=>({t:t0+i*500,kind}));
  const fl=events=>R.snowFlags(taps(60),{events},[],{firstPop:900});
- assert.equal(R.SNOW_BOT.precisionThrows,25);
- assert.deepEqual(fl(ev(26,"hit")),["precision"]);
- assert.deepEqual(fl(ev(25,"hit")),[],"25 throws are not over 25");
- assert.deepEqual(fl([...ev(29,"hit"),...ev(1,"miss")]),["precision"],"96.7 %");
- assert.deepEqual(fl([...ev(28,"hit"),...ev(2,"pass")]),[],"93.3 % is fine");
- assert.deepEqual(fl([...ev(24,"hit"),...ev(3,"sleigh"),...ev(20,"parry")]),[],"the sleigh and the parries are not foe hits");
- assert.deepEqual(fl([...Array.from({length:30},(_,i)=>({t:i*20,kind:"miss"})),...ev(26,"hit")]),["precision"],"misses before the first pop are ignored");
+ // Ruling 21: over 98 % on more than 40 landings (a fast honest player reaches 95 %; the Front's caps are the defence)
+ assert.equal(R.SNOW_BOT.precisionThrows,40);assert.equal(R.SNOW_BOT.precision,0.98);
+ assert.deepEqual(fl(ev(41,"hit")),["precision"],"41 landings, all on a foe");
+ assert.deepEqual(fl(ev(40,"hit")),[],"40 landings are not over 40");
+ assert.deepEqual(fl([...ev(99,"hit"),...ev(1,"miss")]),["precision"],"99 %");
+ assert.deepEqual(fl([...ev(49,"hit"),...ev(1,"miss")]),[],"98 % exactly is fine");
+ assert.deepEqual(fl([...ev(47,"hit"),...ev(3,"pass")]),[],"94 % is fine");
+ assert.deepEqual(fl([...ev(38,"hit"),...ev(3,"sleigh"),...ev(20,"parry")]),[],"the sleigh and the parries are not foe hits");
+ assert.deepEqual(fl([...Array.from({length:30},(_,i)=>({t:i*20,kind:"miss"})),...ev(41,"hit")]),["precision"],"misses before the first pop are ignored");
  assert.deepEqual(R.snowFlags([],{hits:0,thrown:0},[]),[]);
 });
 
@@ -392,7 +394,7 @@ function botTaps(seed){
  }
  return taps.filter(o=>o.t<=45000&&o.x>=0&&o.x<=466&&o.y>=0&&o.y<=466);
 }
-test("a fight over 160 points is flagged « plafond » (still paid); a naive full fight is flagged « precision »",()=>{
+test("a fight over 160 points is flagged « plafond » (still paid); a perfect full fight is « precision », one miss is not",()=>{
  assert.equal(R.MINI.snowball.suspect,161,"flagged over 160");
  const S=newS(),s=doIt(S,{type:"snowStart"},10),xp0=S.xp;
  const r=doIt(S,{type:"miniEnd",id:s.game.id,taps:botTaps(s.game.seed)},10,{ms:46000});
@@ -401,7 +403,14 @@ test("a fight over 160 points is flagged « plafond » (still paid); a naive ful
  const T=newS(),t=doIt(T,{type:"snowStart"},10);
  const n=doIt(T,{type:"miniEnd",id:t.game.id,taps:tapsFor(t.game.seed,80)},10,{ms:46000});
  assert.equal(n.ok,true);assert.ok(n.result.score<=160,`score ${n.result.score}`);
- assert.ok(!n.audit.flags.includes("plafond"));assert.ok(n.audit.flags.includes("precision"));
+ assert.ok(!n.audit.flags.includes("plafond"));
+ // every ball of the naive full fight (47 of 47) on a foe: still over 98 %
+ assert.ok(n.audit.flags.includes("precision"));
+ // the same fight with one ball thrown wide (47 of 48, 97.9 %): a fast honest player, not flagged
+ const U=newS(),u=doIt(U,{type:"snowStart"},10);
+ const wide=[...tapsFor(u.game.seed,80),{t:44000,x:20,y:460}];
+ const w=doIt(U,{type:"miniEnd",id:u.game.id,taps:wide},10,{ms:46000});
+ assert.equal(w.ok,true);assert.deepEqual(w.audit.flags,[]);
 });
 
 test("play reads each tap once: the taps validated are the taps replayed",()=>{

@@ -323,9 +323,10 @@ export const snowBonus=(score,x=1)=>score<MINI.snowball.minScore?0:Math.round(x*
 // taps: the browser's taps; result: the replay (its events); reactions: ms between a foe showing up and the tap that
 // hit him; firstPop: when the first foe shows. The precision is on the foes only: among the balls that land once the
 // first foe is up, those that hit one (the sleigh and the parries are left out, and so are balls thrown into the void
-// before the first pop to dilute it).
+// before the first pop to dilute it). Flagged over 98 % on more than 40 landings (Ruling 21: at 95 % over 25, fast
+// honest players were flagged; the Front's caps, 120 a fight and 400 a day, are the real defence).
 export const SNOW_FUTURE_MS=1500;
-export const SNOW_BOT={gapMs:80,gapTaps:20,precision:0.95,precisionThrows:25,reflexMs:180,reflexHits:4};
+export const SNOW_BOT={gapMs:80,gapTaps:20,precision:0.98,precisionThrows:40,reflexMs:180,reflexHits:4};
 export function snowFlags(taps,result,reactions,{firstPop=0}={}){
  const flags=[],ts=taps.map(p=>p.t).sort((a,b)=>a-b);
  if(ts.length>SNOW_BOT.gapTaps&&(ts[ts.length-1]-ts[0])/(ts.length-1)<SNOW_BOT.gapMs)flags.push("taps_rapides");
