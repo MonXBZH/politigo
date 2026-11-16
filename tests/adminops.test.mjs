@@ -146,7 +146,7 @@ test("event-set reaches the open screens' me payload",async()=>{
  const r=await ok({cmd:"event-set",mode:"halloween"});assert.deepEqual(r.event,{mode:"halloween",current:"halloween"});
  assert.ok(await until(()=>got(s,"me").some(m=>m.event==="halloween")),"pushed at once");
  assert.equal((await a.call("GET","/api/me")).json.event,"halloween");
- assert.equal((await adm({cmd:"event-set",mode:"noel"})).ok,false);
+ assert.equal((await adm({cmd:"event-set",mode:"christmas"})).ok,false);
  await ok({cmd:"event-set",mode:"auto"});s.close();
 });
 

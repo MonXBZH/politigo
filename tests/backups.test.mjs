@@ -287,10 +287,22 @@ test("N3: a copy in WAL mode is checked immutable: no -shm nor -wal next to the 
 });
 
 test("N4: several servers backed up at once (3 at most): a slow one no longer holds the list back",async()=>{
- const ids=["a","b","c","d","e","f"],r=rig({servers:ids.map(id=>({id,label:id.toUpperCase()}))}),base=r.make();let now=0,max=0;
- const b=createBackups({...base,take:async srv=>{now++;max=Math.max(max,now);try{await sleep(800);return await base.take(srv);}finally{now--;}}});
- const t0=Date.now(),out=await within(b.runNow(),20000,"a run of six servers");
- assert.deepEqual(out.map(x=>x.id),ids,"results in the servers' order");assert.ok(out.every(x=>x.ok),JSON.stringify(out));
- assert.equal(max,3,"three at once, no more");assert.ok(Date.now()-t0<4000,`${Date.now()-t0} ms (one after the other: 4.8 s at least)`);
- for(const id of ids)assert.equal(r.files(id).filter(f=>f.startsWith("manuelle-")).length,1);
+ // No stopwatch: each take waits on a gate the test opens, so the order of events is the proof whatever the load.
+ const ids=["a","b","c","d","e","f"],r=rig({servers:ids.map(id=>({id,label:id.toUpperCase()}))}),base=r.make();
+ const gate={},started=[];let now=0,max=0;
+ for(const id of ids)gate[id]=(()=>{let open;const p=new Promise(ok=>{open=ok;});return {p,open};})();
+ const b=createBackups({...base,take:async srv=>{started.push(srv.id);now++;max=Math.max(max,now);try{await gate[srv.id].p;return await base.take(srv);}finally{now--;}}});
+ const run=b.runNow();
+ try{
+  const waitFor=async(n,what)=>{const end=Date.now()+15000;while(started.length<n&&Date.now()<end)await sleep(10);assert.equal(started.length>=n,true,what);};
+  await waitFor(3,"three start at once");await sleep(100);
+  assert.deepEqual([...started].sort(),["a","b","c"],"three at once (their start order is up to the pool), the fourth waits");
+  gate.a.open();await waitFor(4,"a finished one frees a place");
+  assert.equal(started[3],"d","the next in line takes the free place while b and c are still held: the slow ones do not hold the list back");
+  for(const id of ids)gate[id].open();
+  const out=await within(run,20000,"a run of six servers");
+  assert.deepEqual(out.map(x=>x.id),ids,"results in the servers' order");assert.ok(out.every(x=>x.ok),JSON.stringify(out));
+  assert.equal(max,3,"three at once, no more");
+  for(const id of ids)assert.equal(r.files(id).filter(f=>f.startsWith("manuelle-")).length,1);
+ }finally{for(const id of ids)gate[id].open();}   // a failed assertion never leaves a take hanging
 });

@@ -31,10 +31,20 @@ test("what runs: within its hours, for its camp; two of a kind never add up, dif
   {id:3,type:"soldes",params:{off:50},starts:15,ends:20,who:"all"},{id:4,type:"courrier",params:{gap:15},starts:10,ends:20,who:"all"},{id:5,type:"courrier",params:{gap:10},starts:10,ends:20,who:"all"}];
  assert.equal(E.effectsOf(l,"left",9),E.NO_FX);assert.equal(E.effectsOf(l,"left",20),E.NO_FX,"the end is excluded");
  const a=E.effectsOf(l,"left",16),b=E.effectsOf(l,"right",16);
- assert.deepEqual(a.xp,{pong:3,debate:1,manif:3});assert.deepEqual(b.xp,{pong:2,debate:1,manif:1});
+ assert.deepEqual(a.xp,{pong:3,debate:1,manif:3,snowball:1});assert.deepEqual(b.xp,{pong:2,debate:1,manif:1,snowball:1});
  assert.equal(a.off,50);assert.equal(E.effectsOf(l,"left",12).off,0);assert.equal(a.mailGap,10,"the shortest gap");
  assert.deepEqual(E.activeEvents(l,null,16).map(e=>e.id),[1,2,3,4,5]);assert.deepEqual(E.activeEvents(l,"right",16).map(e=>e.id),[1,3,4,5]);
  assert.equal(E.NO_FX.xp.pong,1);
+});
+
+test("Double XP: the snowball fight can be chosen, and its multiplier applies",()=>{
+ assert.ok(E.EVENT_GAMES.some(g=>g[0]==="snowball"&&g[1]==="Bataille de neige"));
+ assert.equal(E.NO_FX.xp.snowball,1);
+ assert.deepEqual(E.cleanParams("xp",{mult:2,games:["snowball"]}),{mult:2,games:["snowball"]});
+ const fx=E.effectsOf([ev("xp",{mult:2,games:["snowball"]})],"left",at(10));
+ assert.equal(fx.xp.snowball,2);assert.equal(fx.xp.pong,1);
+ const S=game("left",10),xp0=S.xp,r=R.act(S,{type:"snowStart"},{now:at(10),random:never,event:"noel",boost:()=>fx});
+ assert.ok(r.ok,JSON.stringify(r));assert.equal(S.mini.x,2);assert.equal(S.xp-xp0,R.XP.visit+R.MINI.snowball.xp*2);
 });
 
 test("Double XP: the start and the bonus, kept by a game started during the event, even after it",()=>{

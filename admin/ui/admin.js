@@ -37,8 +37,9 @@ const campBadge=c=>c?h("span",{class:`badge ${c}`},CAMP[c]||c):null;
 const who=a=>typeof a==="string"?a:a?.name??"?";
 // Raw values from the API, in French.
 const DUEL_STATUS={c_play:"le lanceur joue",pending:"en attente du défié",d_play:"le défié joue",done:"terminé",refused:"refusé",expired:"expiré",void:"annulé",annulled:"annulé, gains rendus"};
+const SNOW_STATUS={open:"ouvert",playing:"en cours",done:"terminé",expired:"expiré",cancelled:"annulé"};
 const DUEL_RES={win:"victoire",loss:"défaite",tie:"égalité",chicken:"refusé ou sans réponse"};
-const EVENT={halloween:"Halloween"};
+const EVENT={halloween:"Halloween",noel:"Noël"};
 const VIA={cli:"console",web:"web",schedule:"planif."};
 const FEED_KIND={announce:"annonce",duel:"duel",mythic:"mythique",ultra:"ultra rare",transfuge:"transfuge",baton:"duel du Bâton"};
 const BATON_STATUS={invited:"invitation en direct",live:"en direct",c_play:"le lanceur joue",b_wait:"en attente du porteur",b_play:"le porteur joue",scheduled:"rediffusion prévue",
@@ -366,7 +367,7 @@ async function viewDashboard(){
   h("div",{class:"grid"},
    stat(s.players,"joueurs inscrits"),stat(s.online,"connectés maintenant"),stat(s.active24h,"actifs sur 24 h"),stat(s.active7d,"actifs sur 7 jours"),
    stat(s.suspended,"suspendus"),stat(s.pushSubs,"abonnements notifications"),stat(s.registrations?(s.registrations.open?"ouvertes":"fermées"):"—","inscriptions"),stat(chatState(s.chatRooms),"chat"),
-   stat(s.event?(s.event.current?tr(EVENT,s.event.current):"aucun"):"—",`événement (mode ${{auto:"automatique",off:"désactivé",halloween:"forcé"}[s.event?.mode]??"?"})`)),
+   stat(s.event?(s.event.current?tr(EVENT,s.event.current):"aucun"):"—",`événement (mode ${{auto:"automatique",off:"désactivé",halloween:"forcé",noel:"forcé"}[s.event?.mode]??"?"})`)),
   h("div",{class:"grid wide"},
    h("div",{class:"card"},h("h2",{},"Partie"),h("dl",{class:"kv"},
     h("dt",{},"Version"),h("dd",{title:s.version||""},ver(s.release||s.version)??"?"),
@@ -811,7 +812,7 @@ async function viewFeed(){
 
 // ===================================================================== Duels
 async function viewDuels(){
- const [{items},sus]=await Promise.all([call("duels-list"),call("duels-suspects").catch(e=>({error:e.message}))]);
+ const [{items},sus,snow]=await Promise.all([call("duels-list"),call("duels-suspects").catch(e=>({error:e.message})),call("snow-challenges").catch(e=>({error:e.message}))]);
  const susItems=Array.isArray(sus.items)?sus.items:Array.isArray(sus.suspects)?sus.suspects:[];
  const ids=x=>(Array.isArray(x.duels)?x.duels:[]).map(d=>typeof d==="object"?d:{id:d}).filter(d=>d.id!=null);
  return [head("Duels",refreshBtn()),
@@ -830,6 +831,13 @@ async function viewDuels(){
     Array.isArray(x.reasons)&&x.reasons.length?h("ul",{class:"reasons"},x.reasons.map(r=>h("li",{},String(r)))):null,
     ids(x).length?h("div",{class:"btn-row"},ids(x).map(d=>[h("span",{class:"muted small"},`#${d.id}${d.status?` ${tr(DUEL_STATUS,d.status)}`:""}`),d.status==null||d.status==="done"?annulBtn(d):null])):null))))
    :empty("Aucun duel suspect.")),
+ h("div",{class:"card"},h("h2",{},"Défis de neige"),
+  h("p",{class:"muted small"},"Les défis de la Bataille de neige (Trêve des confiseurs), en lecture seule : le score du lanceur, puis celui du défié, tous deux recalculés par la partie."),
+  snow.error?h("p",{class:"err"},snow.error):Array.isArray(snow.items)&&snow.items.length?h("div",{class:"table-wrap"},h("table",{},
+   h("thead",{},h("tr",{},["Date","Lanceur","Défié","Scores","Statut","Signaux"].map(t=>h("th",{},t)))),
+   h("tbody",{},snow.items.map(c=>h("tr",{},h("td",{class:"nowrap"},fmt(c.created)),h("td",{},who(c.challenger)),h("td",{},who(c.defender)),
+    h("td",{class:"nowrap"},`${num(c.score)} – ${num(c.dScore)}${c.winner?` (${c.winner})`:""}${Number.isFinite(c.rawScore)&&c.rawScore!==c.dScore?` · rejoué ${num(c.rawScore)}`:""}`),h("td",{},tr(SNOW_STATUS,c.status)),h("td",{},flagBadges(c.dFlags)||"—"))))))
+   :empty("Aucun défi de neige pour le moment.")),
  ];
 }
 
@@ -856,7 +864,7 @@ async function viewSettings(){
  const [inv,s]=await Promise.all([call("invite-get"),call("stats")]);
  const open=s.registrations?.open??inv.open,code=h("input",{type:"text",readOnly:true,value:inv.invite||"(aucun)",spellcheck:false,"aria-label":"Code d'invitation"});
  const SRC={env:"variable POLITIGO_INVITE",file:"généré au premier démarrage",admin:"régénéré depuis cette page"};
- const ev=h("select",{"aria-label":"Mode événement"},[["auto","Automatique (Halloween les 31 oct. et 1er nov.)"],["off","Désactivé"],["halloween","Halloween forcé"]].map(([v,t])=>h("option",{value:v,selected:s.event?.mode===v},t)));
+ const ev=h("select",{"aria-label":"Mode événement"},[["auto","Automatique (Halloween les 31 oct. et 1er nov., Noël du 1er déc. au 1er janv.)"],["off","Désactivé"],["halloween","Halloween forcé"],["noel","Noël forcé"]].map(([v,t])=>h("option",{value:v,selected:s.event?.mode===v},t)));
  return [head("Réglages",refreshBtn()),h("div",{class:"grid wide"},
   h("div",{class:"card"},h("h2",{},"Code d'invitation"),h("div",{class:"secret"},code,h("button",{class:"btn small",type:"button",onclick:()=>copy(code.value,code)},"Copier")),
    h("p",{class:"muted small"},`Source : ${SRC[inv.source]||inv.source||"?"}.`),

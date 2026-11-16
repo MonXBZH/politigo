@@ -69,7 +69,7 @@ test("POLITIGO_EVENT invalid: the server starts anyway, logs it and follows the 
   const me=await c.call("GET","/api/me");
   assert.equal(me.status,200);assert.equal(me.json.event,"auto");
  });
- assert.match(p.err,/POLITIGO_EVENT must be one of auto, off, halloween: using auto\./);
+ assert.match(p.err,/POLITIGO_EVENT must be one of auto, off, halloween, noel: using auto\./);
 });
 
 test("POLITIGO_EVENT empty (the compose default): auto, silently",async()=>{

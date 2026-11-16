@@ -134,10 +134,11 @@ test("a turn's state survives a restart: resumed, never replayed",async()=>{
  assert.deepEqual(again.json.q,shown,"the same question, not a new deal");
 });
 
+// On B (15 s turns): on A's 3 s turns a loaded machine could let the whole debate run out before the first answer lands (a 0-0 tie, not a win).
 test("defender's wins: past 3 a day a defence pays nothing at all",async()=>{
- const x=await player(A,"Rempart","right"),y=await player(A,"Assaillant");
- const xid=idOf(A,"Rempart"),filler=idOf(A,"Fouineur");
- const ins=A.db.prepare("INSERT INTO duels(game,challenger,defender,seed,status,created,c_score,d_score,resolved,winner,paid,rday) VALUES('debate',?,?,1,'done',1,0,3,1,?,0,?)");
+ const x=await player(B,"Rempart","right"),y=await player(B,"Assaillant");await player(B,"Figurant");   // its own filler: no reliance on an earlier test
+ const xid=idOf(B,"Rempart"),filler=idOf(B,"Figurant");
+ const ins=B.db.prepare("INSERT INTO duels(game,challenger,defender,seed,status,created,c_score,d_score,resolved,winner,paid,rday) VALUES('debate',?,?,1,'done',1,0,3,1,?,0,?)");
  for(let i=0;i<3;i++)ins.run(filler,xid,xid,dayNow());   // three wins as the defender today, none of them paid
  const ch=await duel(y,{op:"challenge",name:x.name}),id=ch.json.duel.id;
  assert.equal((await debateTurn(y,id,{wrong:[0,1,2]})).json.result.mine,0);
@@ -145,7 +146,7 @@ test("defender's wins: past 3 a day a defence pays nothing at all",async()=>{
  const before=await state(x);
  const end=await debateTurn(x,id);
  assert.equal(end.json.result.res,"win");
- const row=A.db.prepare("SELECT paid,winner FROM duels WHERE id=?").get(id);assert.equal(row.winner,xid);assert.equal(row.paid,0);
+ const row=B.db.prepare("SELECT paid,winner FROM duels WHERE id=?").get(id);assert.equal(row.winner,xid);assert.equal(row.paid,0);
  const after=await state(x);
  if(after.hourIdx===before.hourIdx){assert.equal(after.xp,before.xp);assert.equal(after.moral,before.moral);assert.equal(after.energy,before.energy);}
 });

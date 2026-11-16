@@ -25,7 +25,7 @@ function run(camp,ms,score){
 }
 
 test("the contract: one mini-game per camp plus the debate, with the agreed numbers",()=>{
- assert.deepEqual(Object.keys(MINI),["debate","cortege","epervier"]);
+ assert.deepEqual(Object.keys(MINI),["debate","cortege","epervier","snowball"]);
  assert.deepEqual(MINI_RULES,{minSeconds:3,graceSeconds:75,tolerance:0.5});
  assert.deepEqual([R.PONG_RULES.bonusCap,MINI.debate.bonusCap,MINI.cortege.bonusCap,MINI.epervier.bonusCap],[10,50,35,35]);
  assert.deepEqual([R.PONG_RULES.xp,MINI.debate.xp,MINI.cortege.xp,MINI.epervier.xp],[25,0,35,35],"what starting a game pays");

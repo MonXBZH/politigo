@@ -1,9 +1,12 @@
 // PolitiGo mini-games drawn on the 466x466 screen: the timed debate (both camps) and the "Manif", one game per
 // camp (Le Cortège on the left, L'Épervier on the right). The Manif is played in the browser from the server's seed;
 // the server charges the activity at the start and checks the score at the end (rules.mjs, MINI). The debate is
-// refereed by the server, question by question. Every function takes the game clock as "now", which
+// refereed by the server, question by question. During the Trêve des confiseurs, the snowball fight (snowball.mjs):
+// the browser records the taps, the server replays them. Every function takes the game clock as "now", which
 // app.js stops while a scene plays, so an evolution earned mid-game never eats the time.
 import * as R from "./rules.mjs";
+import {SNOW,SPOTS,COVER,ORIGIN,schedule,visible,popRect,sleighPos} from "./snowball.mjs";
+import {tapRecorder,liveView,foeOf} from "./snowui.mjs";
 
 const W=466,C=233,RAD=222;
 // Every random draw of a game comes from g.rand, seeded by the server (createMini): the same seed plays the same game.
@@ -459,32 +462,144 @@ function debate(g,K,drawCand){
  };
 }
 
+// ===================================================================== LA BATAILLE DE BOULES DE NEIGE (Trêve des confiseurs)
+// Two reindeer, the sleigh and its driver, (x, y) the first reindeer's top-left (also the room's window, app.js).
+export function sleigh(c,x,y,k=1){
+ for(const dx of [0,26]){rect(c,x+dx,y+6*k,18*k,8*k,"#8a5a32");rect(c,x+dx+14*k,y,6*k,8*k,"#8a5a32");rect(c,x+dx+15*k,y-4*k,2*k,4*k,"#d9c9a0");rect(c,x+dx+19*k,y+2*k,2*k,2*k,dx?"#8a5a32":"#ff3b3b");rect(c,x+dx+2*k,y+14*k,2*k,5*k,"#5a3a20");rect(c,x+dx+13*k,y+14*k,2*k,5*k,"#5a3a20");}
+ c.strokeStyle="#d9c9a0";c.lineWidth=1;c.beginPath();c.moveTo(x-4,y+10*k);c.lineTo(x+18,y+8*k);c.stroke();
+ rect(c,x-46*k,y+4*k,40*k,14*k,"#c8283a");rect(c,x-48*k,y+18*k,46*k,3*k,"#f4c84a");
+ rect(c,x-34*k,y-8*k,14*k,14*k,"#d23a3a");rect(c,x-32*k,y-12*k,10*k,6*k,"#f4f1ea");rect(c,x-30*k,y-4*k,6*k,6*k,"#f4f1ea");
+ rect(c,x-46*k,y-6*k,12*k,10*k,"#7a4a24");rect(c,x-44*k,y-8*k,4*k,4*k,"#2f7d4f");
+}
+// A snowball in the face, on the 64x64 sprite (drawn by app.js over the foe it hit).
+export function faceSplat(c){
+ c.fillStyle="#ffffff";c.beginPath();c.arc(32,24,9,0,Math.PI*2);c.fill();
+ for(let i=0;i<6;i++)rect(c,22+i*4,14+(i%3)*8,3,3,"#ffffff");
+}
+// The low covers: a snowbank, a wall of snow bricks, a snowy bench.
+function snowCover(c,s){
+ const k=s.k,x=s.x,y=s.base,h=COVER*k;
+ if(s.cover==="bank"){c.fillStyle="#f8fbff";c.beginPath();c.ellipse(x,y,46*k,h,0,Math.PI,0);c.fill();c.fillStyle="#dbe6f4";c.beginPath();c.ellipse(x+14*k,y,24*k,h*0.55,0,Math.PI,0);c.fill();}
+ else if(s.cover==="wall"){for(let r=0;r<3;r++)for(let i=-3;i<3;i++){const bx=x+i*15*k+(r%2)*7*k,by=y-(r+1)*8.6*k;c.fillStyle=(r+i)%2?"#f4f8ff":"#e3ecf8";c.fillRect(bx,by,14*k,8*k);}
+  c.fillStyle="#ffffff";c.fillRect(x-46*k,y-h-2*k,92*k,3*k);}
+ else if(s.cover==="bench"){rect(c,x-44*k,y-h,88*k,7*k,"#7a5434");rect(c,x-44*k,y-h+11*k,88*k,7*k,"#7a5434");rect(c,x-40*k,y-8*k,5*k,8*k,"#3a3f4a");rect(c,x+35*k,y-8*k,5*k,8*k,"#3a3f4a");
+  rect(c,x-46*k,y-h-4*k,92*k,4*k,"#f4f8ff");c.fillStyle="#f4f8ff";c.beginPath();c.ellipse(x,y,56*k,7*k,0,0,Math.PI*2);c.fill();}
+}
+// The decor between the covers (nobody hides there): snowmen in the other camp's scarf, fir trees.
+function snowman(c,x,y,k,scarf){
+ c.fillStyle="#f4f8ff";c.beginPath();c.arc(x,y-14*k,16*k,0,Math.PI*2);c.fill();c.beginPath();c.arc(x,y-36*k,10*k,0,Math.PI*2);c.fill();
+ rect(c,x-4*k,y-39*k,2*k,2*k,"#202330");rect(c,x+2*k,y-39*k,2*k,2*k,"#202330");rect(c,x,y-36*k,6*k,2*k,"#f2902a");
+ rect(c,x-9*k,y-28*k,18*k,3*k,scarf);rect(c,x-8*k,y-47*k,16*k,3*k,"#202330");rect(c,x-5*k,y-56*k,10*k,9*k,"#202330");
+}
+function fir(c,x,y,k){
+ for(const [w,yy,h] of [[44,0,26],[34,-18,24],[22,-34,20]]){c.fillStyle="#2f7d4f";c.beginPath();c.moveTo(x,y+yy*k-h*k);c.lineTo(x+w/2*k,y+yy*k);c.lineTo(x-w/2*k,y+yy*k);c.closePath();c.fill();
+  c.fillStyle="#f4f8ff";c.fillRect(x-w/2*k,y+yy*k-2,w*k,2);}
+}
+const SNOW_FLAKES=[...Array(70)].map((_,i)=>({x:(i*97)%W,y:(i*61)%W,s:1+i%3,v:12+(i*13)%22}));
+// The fight is the server's seed played by snowball.mjs: this only records the taps (in 466 space, on the game's own
+// clock, which is the engine's) and draws what play() makes of them. The score on screen is play()'s, as the server's.
+// drawFoe(p,{camp,hat,splat},size,cx,ground,t) draws a foe (an élu of the other camp in his hat, or a passer-by).
+function snowballGame(g,K,drawFoe){
+ const {ctx}=K,sched=schedule(Number.isInteger(g.seed)?g.seed:0,g.camp),rec=tapRecorder(),L=liveView(sched);
+ const bySpot=SPOTS.map((_,si)=>sched.pops.map((p,i)=>({p,i,F:foeOf(p,g.camp)})).filter(x=>x.p.spot===si));
+ const scarf=g.camp==="left"?"#2f5fb4":"#c8283a",mitten=g.camp==="left"?"#c8283a":"#2f5fb4";
+ let taps=[],shown=-1,view=L.view([],0);
+ const current=()=>{if(rec.size()!==shown){shown=rec.size();taps=rec.taps();}return taps;};
+ g.taps=()=>rec.taps();
+ g.score=()=>view.score;
+ g.step=now=>{if(!g.endT&&now-g.t0>=SNOW.ms){g.endT=now;g.why="time";}};
+ g.tapAt=(x,y,now)=>{const t=now-g.t0;if(g.endT||t<0||t>SNOW.ms)return;rec.add(t,x,y);};
+ g.draw=now=>{
+  const t=now-g.t0,T=clamp(t,0,SNOW.ms),a=g.reduced()?0:now,c=ctx;
+  view=L.view(current(),T);
+  c.fillStyle="#141b2a";c.fillRect(0,0,W,W);
+  c.save();c.beginPath();c.arc(C,C,C,0,Math.PI*2);c.clip();
+  const sky=c.createLinearGradient(0,0,0,240);sky.addColorStop(0,"#5f86b8");sky.addColorStop(1,"#c9dcf0");c.fillStyle=sky;c.fillRect(0,0,W,240);
+  for(const [x,w,h] of [[0,90,46],[80,70,64],[150,110,40],[255,80,70],[330,140,50]])rect(c,x,196-h,w,h,"#8ea6c4");
+  rect(c,0,196,W,8,"#dfe9f6");
+  c.fillStyle="#eef4fc";c.fillRect(0,200,W,W);c.fillStyle="#dde8f5";c.fillRect(0,290,W,8);
+  sched.sleighs.forEach((s,j)=>{
+   const pos=sleighPos(s,T);if(!pos)return;
+   c.save();if(s.dir<0){c.translate(pos.x*2,0);c.scale(-1,1);}sleigh(c,pos.x,pos.y,1);c.restore();
+   if(view.sleighHit.has(j)){c.fillStyle="#f4c84a66";c.beginPath();c.arc(pos.x-20,pos.y,30,0,Math.PI*2);c.fill();}
+  });
+  fir(c,172,232,0.9);fir(c,296,230,1);snowman(c,40,330,1.3,scarf);snowman(c,430,326,1.2,scarf);fir(c,233,300,0.7);
+  // The pops behind their covers, far ones first; one hit shows the snowball on his face, then ducks.
+  SPOTS.forEach((s,si)=>{
+   for(const {p,i,F} of bySpot[si]){
+    if(T<p.t||T>p.t+p.stay+700)continue;
+    const th=view.hitAt.get(i),vis=th===undefined?visible(p,T):visible(p,th)*clamp(1-(T-th-250)/200,0,1);
+    if(!(vis>0))continue;
+    const r=popRect(p,vis),size=64*s.k;
+    c.save();c.beginPath();c.rect(r.x-10,0,r.w+20,s.base-4*s.k);c.clip();
+    drawFoe(F.p,{camp:F.camp,hat:F.hat,splat:th!==undefined},size,s.x,s.base-size*vis+size,a);
+    c.restore();
+   }
+   snowCover(c,s);
+  });
+  // The player's snow wall, the balls in hand on their tray, the mitten holding the next one.
+  c.fillStyle="#f8fbff";c.beginPath();c.moveTo(0,420);for(let x=0;x<=W;x+=26)c.quadraticCurveTo(x+13,404,x+26,420);c.lineTo(W,W);c.lineTo(0,W);c.fill();
+  c.fillStyle="#7a5434";c.beginPath();c.roundRect(122,424,104,18,8);c.fill();   // inside the round screen
+  for(let i=0;i<SNOW.ammo;i++){c.fillStyle=i<view.ammo?"#ffffff":"#5a3e26";c.beginPath();c.arc(134+i*20,433,7,0,Math.PI*2);c.fill();}
+  c.fillStyle=mitten;c.beginPath();c.roundRect(C+22,424,40,40,14);c.fill();c.beginPath();c.roundRect(C+14,432,14,22,7);c.fill();
+  c.fillStyle="#f4f1ea";c.fillRect(C+22,452,40,10);
+  if(view.ammo>0){c.fillStyle="#ffffff";c.beginPath();c.arc(ORIGIN.x,ORIGIN.y,11,0,Math.PI*2);c.fill();c.strokeStyle="#b9c8de";c.lineWidth=1;c.stroke();}
+  for(const b of view.balls){
+   const k=clamp((T-b.t0)/(b.land-b.t0),0,1),x=ORIGIN.x+(b.x-ORIGIN.x)*k,y=ORIGIN.y+(b.y-ORIGIN.y)*k-Math.sin(k*Math.PI)*60;
+   c.fillStyle="#ffffff";c.beginPath();c.arc(x,y,9-5*k,0,Math.PI*2);c.fill();c.strokeStyle="#b9c8de";c.lineWidth=1;c.stroke();
+  }
+  for(const b of view.incoming){c.fillStyle="#ffffff";c.beginPath();c.arc(b.x,b.y,b.r,0,Math.PI*2);c.fill();c.strokeStyle=b.k>0.6?"#ff7a6a":"#9fb3d0";c.lineWidth=2+b.k*2;c.stroke();}
+  c.lineWidth=1;
+  // A snowball in the face: the screen covered for a moment (fading, still, with reduced motion).
+  const sp=(T-view.splat)/SNOW.splat;
+  if(sp>=0&&sp<1){c.globalAlpha=1-sp;c.fillStyle="#ffffff";for(let i=0;i<9;i++){c.beginPath();c.arc(C+Math.cos(i*2.1)*90*(0.4+i%3*0.3),C+Math.sin(i*1.7)*80*(0.4+i%2*0.4),40+(i%4)*14,0,Math.PI*2);c.fill();}c.globalAlpha=1;}
+  for(const f of view.floats){const k=(t-f.t)/900;if(k<0||k>1)continue;c.globalAlpha=1-k;K.outlined(f.text,f.x,f.y-k*30,17,f.color);c.globalAlpha=1;}
+  for(const f of SNOW_FLAKES){const y=(f.y+a*f.v/700)%W,x=((f.x+Math.sin(a/800+f.y)*10)%W+W)%W;rect(c,x,y,f.s+1,f.s+1,"#ffffffcc");}
+  c.restore();
+  // The score, the series and the time left.
+  c.fillStyle="#141b2ad9";c.beginPath();c.roundRect(108,40,250,28,12);c.fill();
+  K.text(`${view.score} pt${view.score>1?"s":""} · série ${view.combo}${view.mult>1?` ×${String(view.mult).replace(".",",")}`:""} · ${view.left} s`,C,59,"700 13px Inter, sans-serif","#fff6ea");
+  if(T<2600&&!g.endT){
+   K.outlined("Touche les élus de l'autre camp !",C,150,18,"#fff6ea");
+   K.outlined("Pare leurs boules, épargne les passants, vise le traîneau.",C,174,12,"#fff6ea");
+  }
+  if(g.endT){
+   c.fillStyle="#0b0f19aa";c.fillRect(0,0,W,W);
+   K.outlined("Fin de la bataille !",C,200,26,"#9fe3ff");
+   K.text("Le serveur recompte tes touches…",C,236,"600 14px Inter, system-ui, sans-serif","#fff6ea");
+  }
+ };
+}
+
 // ===================================================================== ENTRY POINT
-// key: "debate", "cortege" or "epervier"; p: the candidate to draw; drawCand(p,state,size,cx,ground,t) draws him.
+// key: "debate", "cortege", "epervier" or "snowball"; p: the candidate to draw; drawCand(p,state,size,cx,ground,t) draws him.
 // The game ends on its own, or with abort(); it is over (score ready to send) a moment after its result shows,
 // or sooner with a tap on the result.
 // seed (Manif games): the server's seed; every random draw of the game comes from it (Math.random without one).
 // ask, duel (debate only): the referee's line (see debate above), and whether it is a duel (its end screen).
 // season: "halloween" puts the games in costume (drawings and lines only). Same hitboxes, timings and scores.
-export function createMini(key,{p,camp,ctx,scale,drawCand,now,seed,season,ask,duel}){
+// snowball: the seed deals the fight; drawFoe draws a foe (see snowballGame), reduced() says whether motion is
+// reduced; g.taps() gives the taps recorded, for miniEnd. Its result shows for 1.5 s, then the battle sheet takes over.
+export function createMini(key,{p,camp,ctx,scale,drawCand,now,seed,season,ask,duel,drawFoe,reduced}){
  const K=makeKit(ctx,scale),g={key,p,camp,t0:now,now,endT:0,keys:{},target:null,skipT:0,seed:Number.isFinite(seed)?seed:null,season:season==="halloween"?"halloween":"",
-  ask:typeof ask==="function"?ask:null,duel:!!duel};
+  ask:typeof ask==="function"?ask:null,duel:!!duel,reduced:typeof reduced==="function"?reduced:()=>false};
  g.rand=g.seed===null?Math.random:R.seeded(g.seed);
- ({debate,cortege,epervier})[key](g,K,drawCand);
+ if(key==="snowball")snowballGame(g,K,typeof drawFoe==="function"?drawFoe:(fp,o,size,cx,ground,t)=>drawCand(fp,"idle",size,cx,ground,t));
+ else ({debate,cortege,epervier})[key](g,K,drawCand);
  const step0=g.step;
  g.step=(t,dt)=>{g.now=t;step0(t,dt);};
- g.over=t=>!!g.endT&&(t-g.endT>4000||(g.skipT&&g.skipT-g.endT>900));
+ g.over=t=>!!g.endT&&(t-g.endT>(key==="snowball"?1500:4000)||(g.skipT&&g.skipT-g.endT>900));
  g.abort=t=>{if(!g.endT){g.endT=t;g.why=g.why||(key==="cortege"?"down":"time");}};
  g.pointer=(x,y,t,down)=>{
   if(g.endT){if(down)g.skipT=t;return;}
-  if(key==="debate"){if(down)g.tapAt(x,y,t);return;}
+  if(key==="debate"||key==="snowball"){if(down)g.tapAt(x,y,t);return;}
   g.target=[x,y];
  };
  // Escape gives up; on the result, Enter, Space or Escape go on.
  g.keydown=(k,t)=>{
   if(g.endT){if(k==="Enter"||k===" "||k==="Escape"){g.skipT=t;return true;}return false;}
   if(k==="Escape"){g.abort(t);return true;}
-  if(k.startsWith("Arrow")&&key!=="debate"){g.keys[k]=true;return true;}
+  if(k.startsWith("Arrow")&&key!=="debate"&&key!=="snowball"){g.keys[k]=true;return true;}
   if(k===" "&&key==="cortege"){g.special(t);return true;}
   if(/^[1-3]$/.test(k)&&key==="debate"){g.answer(+k-1,t);return true;}
   return false;
