@@ -165,9 +165,33 @@ test("purge: decided offers and dead listings older than the cut go, trades and 
  const n=M.purge(CUT);
  assert.equal(M.listing(lw),null);assert.equal(M.listing(lc),null);
  assert.ok(M.listing(lo));assert.ok(M.listing(lt),"a traded listing stays (history)");
- assert.equal(M.offerOf(ox),null);assert.equal(M.offerOf(or),null);
+ assert.equal(M.offerOf(ox),null);assert.ok(M.offerOf(or),"a refusal on a listing still open stays (it blocks a re-offer)");
  assert.ok(M.offerOf(ot),"the accepted offer stays");assert.ok(M.offerOf(op),"pending stays");assert.ok(M.offerOf(fresh1),"recent stays");
  assert.equal(M.recent(10).length,1,"trades are never purged");
  assert.equal(M.today(1,dayKey(Math.floor(OLD/H))),0,"old daily counts go");
- assert.deepEqual(n,{listings:2,offers:2,daily:2});
+ assert.deepEqual(n,{listings:2,offers:1,daily:2});
+});
+
+test("purge: a new listing never reuses a purged id nor sees its offers",()=>{
+ const {M}=fresh();
+ const OLD=NOW-40*864e5,CUT=NOW-30*864e5;
+ M.list(1,{items:["a1"]},W,OLD);
+ const gone=M.list(1,{items:["a2"]},W,OLD);                          // the highest id, purged below
+ const late=M.offer(gone,7,W,NOW);M.setOffer(late,"refused");       // decided recently, on that old listing
+ const ol=M.offer(999999,8,W,OLD);M.setOffer(ol,"withdrawn");        // the highest offer id, purged too
+ M.withdraw(gone,1);
+ M.purge(CUT);
+ assert.equal(M.listing(gone),null);assert.equal(M.offerOf(late),null,"the offers of a purged listing go with it");
+ const next=M.list(2,{items:["a3"]},W,NOW);
+ assert.ok(next>gone,`listing id ${next} reused (purged ${gone})`);
+ assert.equal(M.offersOf(next,7).length,0);assert.equal(M.refusedOn(next,7),0);assert.equal(M.pendingOffersOn(next).length,0);
+ assert.ok(M.offer(next,9,W,NOW)>ol,"offer ids are never reused either");
+});
+
+test("purge: a refused offer on a listing still open survives, closed and withdrawn ones on it too",()=>{
+ const {M}=fresh();
+ const OLD=NOW-40*864e5;
+ const l=M.list(1,{items:["a1"]},W,OLD),r=M.offer(l,2,W,OLD),w=M.offer(l,3,W,OLD);M.setOffer(r,"refused");M.setOffer(w,"withdrawn");
+ M.purge(NOW-30*864e5);
+ assert.ok(M.offerOf(r));assert.ok(M.offerOf(w));assert.equal(M.refusedOn(l,2),1);
 });

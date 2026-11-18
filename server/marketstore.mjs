@@ -12,12 +12,14 @@ const O=r=>r?{...r,give:js(r.give)}:null;
 const T=r=>r?{...r,a_gave:js(r.a_gave),b_gave:js(r.b_gave)}:null;
 // The ids of an item list in a give/want value: matched on the id as a whole JSON string, not a substring of another.
 const ids=v=>{const out=new Set(),walk=x=>{if(typeof x==="string")out.add(x);else if(Array.isArray(x))x.forEach(walk);else if(x&&typeof x==="object")Object.values(x).forEach(walk);};walk(v);return out;};
+// A dead listing older than the cut (?): withdrawn or closed, never traded (a trade keeps its listing for the history).
+const DEAD="status IN ('withdrawn','closed') AND created<? AND id NOT IN (SELECT listing_id FROM market_trades)";
 const uses=(v,items)=>{const s=ids(v);return items.some(i=>s.has(i));};
 
 export function createMarket(db){
- db.exec(`CREATE TABLE IF NOT EXISTS market_listings(id INTEGER PRIMARY KEY,player_id INTEGER NOT NULL,give TEXT NOT NULL,want TEXT NOT NULL,
+ db.exec(`CREATE TABLE IF NOT EXISTS market_listings(id INTEGER PRIMARY KEY AUTOINCREMENT,player_id INTEGER NOT NULL,give TEXT NOT NULL,want TEXT NOT NULL,
  created INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'open');
-CREATE TABLE IF NOT EXISTS market_offers(id INTEGER PRIMARY KEY,listing_id INTEGER NOT NULL,player_id INTEGER NOT NULL,give TEXT NOT NULL,
+CREATE TABLE IF NOT EXISTS market_offers(id INTEGER PRIMARY KEY AUTOINCREMENT,listing_id INTEGER NOT NULL,player_id INTEGER NOT NULL,give TEXT NOT NULL,
  created INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'pending');
 CREATE TABLE IF NOT EXISTS market_trades(id INTEGER PRIMARY KEY,listing_id INTEGER NOT NULL,offer_id INTEGER,a_id INTEGER NOT NULL,b_id INTEGER NOT NULL,
  a_gave TEXT NOT NULL,b_gave TEXT NOT NULL,same_net INTEGER NOT NULL DEFAULT 0,created INTEGER NOT NULL);
@@ -52,8 +54,10 @@ CREATE INDEX IF NOT EXISTS market_offers_p ON market_offers(player_id,status);`)
   ofLP:db.prepare("SELECT * FROM market_offers WHERE listing_id=? AND player_id=? ORDER BY id DESC LIMIT 20"),
   refused:db.prepare("SELECT COUNT(*) AS n FROM market_offers WHERE listing_id=? AND player_id=? AND status='refused'"),
   since:db.prepare("SELECT created FROM market_offers WHERE player_id=? AND created>=? ORDER BY id DESC LIMIT 100"),
-  purgeO:db.prepare("DELETE FROM market_offers WHERE status IN ('withdrawn','refused','closed') AND created<?"),
-  purgeL:db.prepare("DELETE FROM market_listings WHERE status IN ('withdrawn','closed') AND created<? AND id NOT IN (SELECT listing_id FROM market_trades)"),
+  // Decided offers go once their listing is no longer open (a refusal on an open listing still blocks a re-offer).
+  purgeO:db.prepare("DELETE FROM market_offers WHERE status IN ('withdrawn','refused','closed') AND created<? AND listing_id NOT IN (SELECT id FROM market_listings WHERE status='open')"),
+  purgeOfL:db.prepare(`DELETE FROM market_offers WHERE listing_id IN (SELECT id FROM market_listings WHERE ${DEAD})`),
+  purgeL:db.prepare(`DELETE FROM market_listings WHERE ${DEAD}`),
   purgeD:db.prepare("DELETE FROM market_daily WHERE day<?"),
  };
  const closeO=id=>q.setO.run("closed",id).changes>0;
@@ -79,7 +83,9 @@ CREATE INDEX IF NOT EXISTS market_offers_p ON market_offers(player_id,status);`)
   // Decided rows older than `before` go (offers withdrawn, refused or closed; listings withdrawn or closed and never
   // traded) and the daily counts of older days. Trades, traded listings and accepted offers stay: the admin's history.
   purge(before){
-   const offers=Number(q.purgeO.run(before).changes),listings=Number(q.purgeL.run(before).changes),daily=Number(q.purgeD.run(dayOf(before)).changes);
+   // A purged listing takes all its offers along: no later row can ever hang on its id (ids are AUTOINCREMENT, never reused).
+   const offers=Number(q.purgeOfL.run(before).changes)+Number(q.purgeO.run(before).changes);
+   const listings=Number(q.purgeL.run(before).changes),daily=Number(q.purgeD.run(dayOf(before)).changes);
    return {listings,offers,daily};
   },
   setOffer:(id,status)=>q.setO.run(status,id).changes>0,

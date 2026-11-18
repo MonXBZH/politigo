@@ -14,7 +14,8 @@ const V13={
  sessions:["token_hash","player_id","expires"],
  feed:["id","t","player","kind","text"]
 };
-const tables=d=>d.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map(r=>r.name);
+// SQLite's own tables aside (sqlite_sequence, made by AUTOINCREMENT: it cannot be dropped).
+const tables=d=>d.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite%' ORDER BY name").all().map(r=>r.name);
 const cols=(d,t)=>d.prepare(`PRAGMA table_info(${t})`).all().map(c=>c.name);
 
 test("a v1.3.0 database (no duels, no push_subs) gains both tables; restarts are idempotent",async()=>{
