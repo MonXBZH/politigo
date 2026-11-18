@@ -451,6 +451,7 @@ export function sanitize(s,now){
  o.diedAt=num(s.diedAt??o.journal.find(j=>j.k==="death")?.t,-1,o.vclock,-1);
  // 1.6.0: missions, mail, goals, Flamme, wardrobe (absent from older states: fresh ones).
  ACT.sanitizeActivities(s,o);o.wardrobe=WR.sanitizeWardrobe(s.wardrobe);
+ if(Number.isFinite(s.marketSeen))o.marketSeen=num(s.marketSeen,0,8.64e15,0);   // 1.9.0: the last visit of the Brocante
  return o;
 }
 function gameKeys(o,s){

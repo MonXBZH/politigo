@@ -18,6 +18,8 @@ import * as W from "./wardrobe.mjs";
 import * as D from "./duel.mjs";
 import * as SF from "./snowfront.mjs";
 import {createChallenges} from "./snowchallenges.mjs";
+import * as MK from "./market.mjs";
+import {createMarket} from "./marketstore.mjs";
 
 const env=process.env;
 process.umask(0o077);
@@ -72,6 +74,9 @@ const knob=(v,def)=>{const n=Number(v);return v!==undefined&&v!==""&&Number.isFi
 const DUEL_MIN_LEVEL=knob(env.POLITIGO_DUEL_MIN_LEVEL,R.DUEL.minLevel),DUEL_MIN_AGE=knob(env.POLITIGO_DUEL_MIN_AGE_H,R.DUEL.minAgeMs/R.H)*R.H;
 // Said at every start: a test setting left on a real server opens duels to fresh accounts (and to alts).
 if(DUEL_MIN_LEVEL!==R.DUEL.minLevel||DUEL_MIN_AGE!==R.DUEL.minAgeMs)console.warn(`Duel test settings active: level ${DUEL_MIN_LEVEL}+, accounts ${DUEL_MIN_AGE/R.H} h old+ (normal: ${R.DUEL.minLevel}, ${R.DUEL.minAgeMs/R.H} h).`);
+// La Brocante: the duels' level, and an account age of its own (3 days), which the knob can only lower (tests).
+const MARKET_MIN_AGE=knob(env.POLITIGO_MARKET_MIN_AGE_H,MK.MARKET.minAgeMs/R.H)*R.H;
+if(MARKET_MIN_AGE!==MK.MARKET.minAgeMs)console.warn(`Brocante test setting active: accounts ${MARKET_MIN_AGE/R.H} h old+ (normal: ${MK.MARKET.minAgeMs/R.H} h).`);
 // The Duel du Bâton on a test server: its rounds' clock runs this many times faster, and a deferred duel is replayed this
 // long after the bearer's part instead of at the next 21:00. Never set on a real server (said at start).
 const BATON_K=Math.max(1,Math.min(20,Math.floor(Number(env.POLITIGO_BATON_SPEED))||1));
@@ -637,7 +642,7 @@ function flushBoard(){
 }
 // The debate's seed deals its answers: it never leaves the server (the other games' seeds only shape what is drawn).
 const publicState=S=>S.mini?.k==="debate"&&"seed" in S.mini?{...S,mini:Object.fromEntries(Object.entries(S.mini).filter(([k])=>k!=="seed"))}:S;
-function mePayload(p){return {name:p.name,state:publicState(p.state),speed:SPEED,tz:R.timeZone(),serverNow:Date.now(),event:EVENT_MODE,events:publicEvents(Date.now()),version:VERSION,release:RELEASE,seenVersion:p.seen??null,chat:chatRooms(),urnHint:urnHintOf(p),baton:batonWon?batonView(p):null,...noelView(p,Date.now())};}
+function mePayload(p){return {name:p.name,state:publicState(p.state),speed:SPEED,tz:R.timeZone(),serverNow:Date.now(),event:EVENT_MODE,events:publicEvents(Date.now()),version:VERSION,release:RELEASE,seenVersion:p.seen??null,chat:chatRooms(),urnHint:urnHintOf(p),baton:batonWon?batonView(p):null,marketNew:marketNewOf(p,Date.now()),...noelView(p,Date.now())};}
 
 // ===================================================================== TRÊVE: THE FRONT DE NEIGE AND THE NEW YEAR TOAST
 // Every snowball fight the server replayed adds its score to its player's camp (snowfront.mjs), unless flagged as a
@@ -1611,6 +1616,218 @@ async function batonRoute(req,res){
 // ===================================================================== CHAT (server/chat.mjs)
 const chat=createChat({db,dataDir:dirname(DB_PATH),players,clients,sse,auth,limited,HttpError,send,readJson,checkOrigin,clientIp,rooms:chatRooms});
 
+// ===================================================================== LA BROCANTE (market.mjs: the rules, marketstore.mjs: the rows)
+// The items stay in each wardrobe (the truth); listings and offers only describe them. A trade is checked in full, then
+// written in one transaction: both games, the listing traded, the offers closed, the day's counts, the history. Nothing
+// awaits between the checks and the COMMIT: of two requests for one listing, the second finds it gone.
+const M=createMarket(db);
+const MK_GONE="Cette annonce n'est plus disponible.",MK_GONE_O="Cette offre n'est plus disponible.",MK_OFFERS_SHOWN=20;
+// "" when this player may trade now. tradeBlock weighs the age against the rules' 3 days: a lowered knob shifts it.
+function marketBlock(p,now){
+ return MK.tradeBlock(p.state,{minLevel:DUEL_MIN_LEVEL,ageMs:now-p.created+MK.MARKET.minAgeMs-MARKET_MIN_AGE,today:M.today(p.id,dayNow(now))});
+}
+// "" when an author's listings are on the board; otherwise why not, as the taker reads it (MK_GONE: no author any more).
+// Hidden, never closed: they come back with the author.
+function authorWhy(o,now){
+ if(!o||o.suspended)return MK_GONE;
+ if((o.lastSeen??0)<now-MK.MARKET.awayMs)return "Son auteur est absent depuis longtemps : annonce en pause.";
+ if((o.state.lvl|0)<DUEL_MIN_LEVEL)return `Son auteur est repassé sous le niveau ${DUEL_MIN_LEVEL} : annonce en pause.`;
+ if(M.today(o.id,dayNow(now))>=MK.MARKET.perDay)return "Son auteur a fini ses échanges du jour : annonce en pause.";
+ return marketBlock(o,now)?"Son auteur ne peut pas échanger pour l'instant : annonce en pause.":"";
+}
+const mkWho=id=>{const o=players.get(id);return {name:o?.name??GONE,camp:o?.state.camp??null};};
+const itemName=id=>W.ITEMS[id]?.name??id,itemNames=ids=>ids.map(itemName).join(", ");
+// "Chasuble syndicale, Mégaphone et 4 bulletins".
+function giveText(g){
+ const parts=g.items.map(itemName);if(g.bulletins)parts.push(`${g.bulletins} bulletin${g.bulletins>1?"s":""}`);
+ return parts.length>1?`${parts.slice(0,-1).join(", ")} et ${parts.at(-1)}`:parts[0]??"rien";
+}
+const deName=n=>/^[aeiouyhàâäéèêëîïôöûüœ]/i.test(n)?`d'${n}`:`de ${n}`;
+// What a player gives (a listing, an offer, a take), with the reason a malformed one is refused. Never names what is excluded.
+function readGive(x,needItem){
+ const bad="Choisis ce que tu donnes.";
+ if(!x||typeof x!=="object"||Array.isArray(x)||(x.items!==undefined&&!Array.isArray(x.items)))throw new HttpError(422,bad);
+ const items=[...new Set(x.items??[])],b=x.bulletins??0,max=MK.MARKET.maxItems;
+ if(items.length>max||(needItem&&!items.length))throw new HttpError(422,`Choisis de 1 à ${max} objets.`);
+ if(items.some(i=>typeof i!=="string"||!Object.hasOwn(W.ITEMS,i)))throw new HttpError(422,"Objet inconnu.");
+ if(!items.every(MK.tradable))throw new HttpError(422,"Certains objets très rares ne s'échangent pas.");
+ if(!Number.isInteger(b)||b<0||b>MK.MARKET.maxBulletins)throw new HttpError(422,`Bulletins : de 0 à ${MK.MARKET.maxBulletins} par côté.`);
+ const g=MK.cleanGive({items,bulletins:b},{needItem});if(!g)throw new HttpError(422,bad);
+ return g;
+}
+// A listing is on the board when its author is, and still holds what it offers (else refused at the take).
+function listingShown(l,ok,now){
+ if(!ok.has(l.player_id))ok.set(l.player_id,!authorWhy(players.get(l.player_id),now));
+ return ok.get(l.player_id)&&!MK.missing(players.get(l.player_id).state,l.give);
+}
+const listingOut=(l,mine)=>({id:l.id,author:mkWho(l.player_id),give:l.give,want:l.want,created:l.created,mine});
+// The board (others' visible listings), mine with their pending offers, my offers (pending, and the latest decided).
+function marketView(p,now){
+ const seen=Number(p.state.marketSeen)||0,open=M.openListings(),ok=new Map();
+ const live=id=>{const o=players.get(id);return !!o&&!o.suspended;};
+ const board=open.filter(l=>l.player_id!==p.id&&listingShown(l,ok,now)).map(l=>listingOut(l,false));
+ const mine=open.filter(l=>l.player_id===p.id).map(l=>({...listingOut(l,true),
+  offers:M.offersOn(l.id).filter(o=>o.status==="pending"&&live(o.player_id)).map(o=>({id:o.id,from:mkWho(o.player_id),give:o.give,created:o.created}))}));
+ const offers=M.offersBy(p.id).filter((o,i)=>o.status==="pending"||i<MK_OFFERS_SHOWN).map(o=>{const l=M.listing(o.listing_id);
+  return {id:o.id,listingId:o.listing_id,give:o.give,status:o.status,created:o.created,listing:l?{author:mkWho(l.player_id),give:l.give,want:l.want}:null};});
+ return {board,mine,offers,block:marketBlock(p,now),today:M.today(p.id,dayNow(now)),newCount:board.filter(l=>l.created>seen).length};
+}
+// For /api/me: the visible listings by others since the last visit of the Brocante (0 rather than a broken payload).
+function marketNewOf(p,now){
+ try{
+  const seen=Number(p.state.marketSeen)||0,ok=new Map();
+  return M.openListings().filter(l=>l.player_id!==p.id&&l.created>seen&&listingShown(l,ok,now)).length;
+ }catch{return 0;}
+}
+// Live: "kind" to the players concerned, "board" to every other screen when the board itself changed.
+function marketCast(ids,kind,board=false){
+ const to=new Set(ids);
+ for(const c of clients){if(to.has(c.playerId))sse(c.res,"market",{kind});else if(board)sse(c.res,"market",{kind:"board"});}
+}
+const marketPush=(id,text)=>notify(id,{title:"PolitiGo",body:`🧺 Brocante : ${text}`,tag:"market",url:"/"});
+// The trade itself: the author gives the listing, the taker (or the offerer) gives tGives. Every condition is checked
+// again here, then both games and the rows move in one transaction; on any error nothing moved (both states restored).
+function doTrade(l,o,taker,tGives,now){
+ const author=players.get(l.player_id),cur=M.listing(l.id);
+ if(!author||author.suspended||!players.has(taker.id)||taker.suspended||cur?.status!=="open")throw new HttpError(409,MK_GONE);
+ if(author.id===taker.id)throw new HttpError(422,"C'est ta propre annonce.");
+ if(o&&(M.offerOf(o.id)?.status!=="pending"||o.listing_id!==l.id))throw new HttpError(409,MK_GONE_O);
+ if(marketBlock(author,now)||marketBlock(taker,now))throw new HttpError(422,"Échange impossible pour l'instant.");
+ const aGives=cur.give;
+ // The author no longer holds it (never through the game: a state reset on load): closed when an item is gone.
+ if(MK.missing(author.state,aGives)){
+  const lost=aGives.items.filter(i=>!author.state.wardrobe.own.includes(i));
+  if(lost.length){try{M.closeUsing(author.id,lost);}catch(e){console.error(`market: listing ${l.id} not closed`,e);}}
+  throw new HttpError(409,MK_GONE);
+ }
+ const miss=MK.missing(taker.state,tGives);if(miss)throw new HttpError(409,miss+".");
+ const dup=[...MK.dupes(taker.state,aGives.items),...MK.dupes(author.state,tGives.items)];
+ if(dup.length)throw new HttpError(409,`Déjà possédé : ${itemNames(dup)}.`);
+ const keep=[author.state,taker.state],same=sameNet(author.netFp,taker.netFp),aT=giveText(aGives),bT=giveText(tGives);
+ const closedLine=(S,n)=>{if(n)R.logEntry(S,"market",`Brocante : ${n>1?`${n} de tes annonces sont fermées`:"une de tes annonces est fermée"}, l'objet a changé de mains.`);};
+ db.exec("BEGIN");
+ try{
+  try{M.trade({listingId:l.id,offerId:o?.id??null,aId:author.id,bId:taker.id,aGave:aGives,bGave:tGives,sameNet:same,now});}
+  catch(e){const m=e?.message;throw m==="Offre indisponible."?new HttpError(409,MK_GONE_O):m==="Annonce indisponible."?new HttpError(409,MK_GONE):e;}   // a failed write stays a 500
+  const ca=M.closeUsing(author.id,aGives.items),cb=M.closeUsing(taker.id,tGives.items);
+  update(author,SA=>{
+   update(taker,SB=>{
+    try{MK.applyTrade(SA,aGives,SB,tGives);}catch(e){throw new HttpError(409,/\.$/.test(e.message)?e.message:e.message+".");}
+    closedLine(SB,cb.listings.length);R.logEntry(SB,"market",`Brocante : ${bT} contre ${aT} ${deName(author.name)}.`,{listing:l.id});
+   });
+   closedLine(SA,ca.listings.length);R.logEntry(SA,"market",`Brocante : ${aT} contre ${bT} ${deName(taker.name)}.`,{listing:l.id});
+  });
+  db.exec("COMMIT");
+ }catch(e){
+  try{db.exec("ROLLBACK");}catch{}author.state=keep[0];taker.state=keep[1];
+  try{pushMe(author);pushMe(taker);}catch{}   // an inner update may already have shown its side
+  throw e;
+ }
+ marketCast([author.id,taker.id],"trade",true);
+ if(o)marketPush(taker.id,`${author.name} a accepté ton offre : ${bT} contre ${aT}.`);
+ else marketPush(author.id,`ton annonce a trouvé preneur, ${aT} contre ${bT} ${deName(taker.name)}.`);
+ if(author.state.camp!==taker.state.camp)feedLine(author.name,"market",`🔄 ${author.name} a troqué ${aT} contre ${bT} ${deName(taker.name)}`);
+ audit("server","market-trade",author.name,`${aT} contre ${bT} ${deName(taker.name)} · même réseau : ${same?"oui":"non"}`);
+}
+// POST /api/market {op, …}: list {give, want}, withdraw {id}, take {id, give}, offer {id, give}, unoffer {id},
+// accept {id} and refuse {id} (an offer's id). Anyone signed in may look (GET); trading needs marketBlock to be "".
+async function marketRoute(req,res){
+ const p=auth(req);
+ if(limited("market:"+p.id,10,60e3))throw new HttpError(429,"Doucement : réessaie dans un instant.");
+ const b=await readJson(req);
+ if(!players.has(p.id))throw new HttpError(401,"Connexion requise.");   // deleted while the body was arriving
+ const now=Date.now(),op=typeof b.op==="string"?b.op:"?";
+ const idOf=v=>{if(!Number.isSafeInteger(v)||v<1)throw new HttpError(400,"Identifiant inconnu.");return v;};
+ const gate=()=>{const why=marketBlock(p,now);if(why)throw new HttpError(403,why);};
+ const openListing=id=>{const l=M.listing(id);if(!l||l.status!=="open")throw new HttpError(409,MK_GONE);return l;};
+ // Someone else's listing, its author still on the board.
+ const others=l=>{
+  if(l.player_id===p.id)throw new HttpError(422,"C'est ta propre annonce.");
+  const o=players.get(l.player_id),why=authorWhy(o,now);if(why)throw new HttpError(why===MK_GONE?409:422,why);return o;
+ };
+ // What p would receive and what the other would receive: never something already owned.
+ const noDupes=(o,give,l)=>{
+  let d=MK.dupes(p.state,l.give.items);if(d.length)throw new HttpError(422,`Tu as déjà : ${itemNames(d)}.`);
+  d=MK.dupes(o.state,give.items);if(d.length)throw new HttpError(422,`${o.name} a déjà : ${itemNames(d)}.`);
+ };
+ const holds=give=>{const m=MK.missing(p.state,give);if(m)throw new HttpError(422,m+".");};
+ if(op==="list"){
+  gate();
+  const give=readGive(b.give,true),want=MK.cleanWant(b.want);
+  if(!want)throw new HttpError(422,`Dis ce que tu cherches : des objets, une rareté, des bulletins (1 à ${MK.MARKET.maxBulletins}) ou une offre.`);
+  holds(give);
+  if(want.kind==="items"){const d=MK.dupes(p.state,want.items);if(d.length)throw new HttpError(422,`Tu as déjà : ${itemNames(d)}.`);}
+  const listed=new Set(M.mine(p.id).filter(l=>l.status==="open").flatMap(l=>l.give?.items??[])),twice=give.items.filter(i=>listed.has(i));
+  if(twice.length)throw new HttpError(422,`Déjà en vitrine dans une autre annonce : ${itemNames(twice)}.`);
+  if(M.openCount(p.id)>=MK.MARKET.maxListings)throw new HttpError(422,`${MK.MARKET.maxListings} annonces ouvertes au plus : retires-en une d'abord.`);
+  const id=M.list(p.id,give,want,now);
+  marketCast([p.id],"mine",true);
+  return send(res,200,{ok:true,id});
+ }
+ if(op==="withdraw"){
+  const l=M.listing(idOf(b.id));if(!l)throw new HttpError(409,MK_GONE);
+  if(l.player_id!==p.id)throw new HttpError(403,"Ce n'est pas ton annonce.");
+  const offerers=M.offersOn(l.id).filter(o=>o.status==="pending").map(o=>o.player_id);
+  if(!M.withdraw(l.id,p.id))throw new HttpError(409,MK_GONE);
+  marketCast([p.id,...offerers],"mine",true);
+  return send(res,200,{ok:true});
+ }
+ if(op==="take"){
+  gate();
+  const l=openListing(idOf(b.id)),o=others(l);
+  if(l.want?.kind==="offer")throw new HttpError(422,"Cette annonce attend des offres : fais une offre.");
+  const give=readGive(b.give,false);
+  if(!MK.satisfies(l.want,give))throw new HttpError(422,"Ce n'est pas ce que demande l'annonce.");
+  holds(give);noDupes(o,give,l);
+  doTrade(l,null,p,give,now);
+  return send(res,200,{ok:true});
+ }
+ if(op==="offer"){
+  gate();
+  const l=openListing(idOf(b.id)),o=others(l),give=readGive(b.give,true);
+  if(MK.missing(o.state,l.give))throw new HttpError(409,MK_GONE);
+  holds(give);noDupes(o,give,l);
+  if(M.pendingOn(l.id,p.id))throw new HttpError(409,"Tu as déjà une offre en attente sur cette annonce.");
+  if(M.pendingCount(p.id)>=MK.MARKET.maxOffers)throw new HttpError(422,`${MK.MARKET.maxOffers} offres en attente au plus.`);
+  const id=M.offer(l.id,p.id,give,now);
+  marketPush(o.id,`${p.name} te propose ${giveText(give)} pour ton annonce (${giveText(l.give)}).`);
+  marketCast([o.id,p.id],"offer");
+  return send(res,200,{ok:true,id});
+ }
+ if(op==="unoffer"){
+  const o=M.offerOf(idOf(b.id));if(!o)throw new HttpError(409,MK_GONE_O);
+  if(o.player_id!==p.id)throw new HttpError(403,"Ce n'est pas ton offre.");
+  if(!M.setOffer(o.id,"withdrawn"))throw new HttpError(409,MK_GONE_O);
+  const l=M.listing(o.listing_id);marketCast([p.id,...(l?[l.player_id]:[])],"offer");
+  return send(res,200,{ok:true});
+ }
+ if(op==="accept"||op==="refuse"){
+  const o=M.offerOf(idOf(b.id));if(!o)throw new HttpError(409,MK_GONE_O);
+  const l=M.listing(o.listing_id);
+  if(!l||l.player_id!==p.id)throw new HttpError(403,"Ce n'est pas ton annonce.");
+  if(l.status!=="open")throw new HttpError(409,MK_GONE);
+  if(o.status!=="pending")throw new HttpError(409,MK_GONE_O);
+  const from=players.get(o.player_id);
+  if(op==="refuse"){
+   if(!M.setOffer(o.id,"refused"))throw new HttpError(409,MK_GONE_O);
+   if(from){marketPush(from.id,`${p.name} a refusé ton offre (${giveText(o.give)}).`);marketCast([from.id,p.id],"offer");}
+   return send(res,200,{ok:true});
+  }
+  gate();
+  if(!from)throw new HttpError(409,MK_GONE_O);   // a deleted offerer's offers are closed with the account
+  // An offerer who cannot trade right now: refused, the offer stays pending.
+  if(from.suspended||marketBlock(from,now))throw new HttpError(422,`${from.name} ne peut pas échanger pour l'instant : son offre reste en attente.`);
+  // An offer that can never go through any more is closed.
+  const close=why=>{M.setOffer(o.id,"closed");marketCast([from.id,p.id],"offer");return new HttpError(409,`L'offre ne tient plus : ${why}.`);};
+  if(MK.missing(from.state,o.give))throw close(`${from.name} n'a plus ce qu'il proposait`);
+  let d=MK.dupes(from.state,l.give.items);if(d.length)throw close(`${from.name} a déjà ${itemNames(d)}`);
+  d=MK.dupes(p.state,o.give.items);if(d.length)throw close(`tu as déjà ${itemNames(d)}`);
+  doTrade(l,o,from,o.give,now);
+  return send(res,200,{ok:true});
+ }
+ throw new HttpError(400,"Opération inconnue.");
+}
+
 // ===================================================================== ROUTES
 async function route(req,res){
  // Only the path matters, and an odd request target ("//", "//host") is just not found, never a 500.
@@ -1733,6 +1950,13 @@ async function route(req,res){
   const p=auth(req);if(limited("snowchs:"+p.id,30,10e3))throw new HttpError(429,"Doucement : réessaie dans un instant.");
   return send(res,200,{ok:true,...snowChallengesView(p,Date.now())});
  }
+ if(path==="/api/market"&&method==="GET"){
+  const p=auth(req);if(limited("marketget:"+p.id,30,10e3))throw new HttpError(429,"Doucement : réessaie dans un instant.");
+  const now=Date.now(),v=marketView(p,now);
+  update(p,S=>{S.marketSeen=now;});   // the "new listings" count starts again from here (no journal line)
+  return send(res,200,{ok:true,...v});
+ }
+ if(path==="/api/market"&&method==="POST")return marketRoute(req,res).finally(()=>{if(deferred.size)flushDeferred();});
  if(path==="/api/debate"&&method==="POST")return debateRoute(req,res).finally(()=>{if(deferred.size)flushDeferred();});
  if(path==="/api/duels"&&method==="GET"){
   const p=auth(req),now=Date.now();
@@ -2389,12 +2613,14 @@ function removePlayer(p){
  }
  try{snowChCancelOf(p.id,now);}catch(e){console.error("snow challenges, deleting a player:",e);}
  db.exec("BEGIN");
- try{q.freeMythicsOf.run(p.id);q.deleteSchedulesTo.run(p.id);q.deletePlayer.run(p.id);q.tombstone.run(nameKey(p.name),p.created,now);q.deleteFeedOf.run(p.name);setSetting("playerFloor",String(Math.max(p.id,Number(getSetting("playerFloor"))||0)));db.exec("COMMIT");}catch(e){db.exec("ROLLBACK");throw e;}
+ // Their listings and pending offers close with the account (the rows stay for the trade history), both ways.
+ try{M.removePlayer(p.id);q.freeMythicsOf.run(p.id);q.deleteSchedulesTo.run(p.id);q.deletePlayer.run(p.id);q.tombstone.run(nameKey(p.name),p.created,now);q.deleteFeedOf.run(p.name);setSetting("playerFloor",String(Math.max(p.id,Number(getSetting("playerFloor"))||0)));db.exec("COMMIT");}catch(e){db.exec("ROLLBACK");throw e;}
  players.delete(p.id);deferred.delete(p.id);soloTurns.delete(p.id);cleanCache.delete(p.id);   // a staff they held is back in the urn
  try{broadcast("feedInit",q.recentFeed.all(40));}catch(e){console.error("feed after deleting a player:",e);}
  try{after?.();}catch(e){console.error("chat, after deleting a player:",e);}
  try{chat.playerDeleted(p.id);}catch(e){console.error("chat, deleted player:",e);}
  for(const c of [...clients])if(c.playerId===p.id)closeStream(c,true);
+ try{marketCast([],"board",true);}catch(e){console.error("market after deleting a player:",e);}
  publishBoard(true);   // gone from every board at once
 }
 function closeStreamsOf(id){for(const c of [...clients])if(c.playerId===id)closeStream(c);}
