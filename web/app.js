@@ -32,7 +32,7 @@ let batonV=null,bd=null;
 let snowFront=null,snowLast=null,snowData=null,snowErr="",snowSeq=0,snowAsked=false;
 // La Brocante: GET /api/market (only while its sheet is open), the tab, the flow under way (trade, offer, deposit, mine,
 // done), the listings new to this visit, the Dossier's count (me.marketNew) and whether it is stale.
-let mkData=null,mkErr="",mkSeq=0,mkTab="all",mkFlow=null,mkFresh=new Set(),mkNewCount=0,mkStale=false,mkMeT=0,mkLoadT=0,mkListedIds=new Set();
+let mkData=null,mkErr="",mkSeq=0,mkTab="all",mkFlow=null,mkFresh=new Set(),mkNewCount=0,mkStale=false,mkMeT=0,mkMeLast=0,mkLoadT=0,mkListedIds=new Set();
 const curIdx=()=>R.curIdx(S),hodOf=R.hodOf,isNight=()=>R.isNight(S),isAsleep=()=>R.isAsleep(S);
 // What the élu wears from the wardrobe (wardrobe.mjs): drawn over his own look by sprite().
 const worn=()=>S?.wardrobe?.worn||{outfit:null,object:null},dress=p=>({...p,outfit:worn().outfit,object:worn().object});
@@ -2351,17 +2351,23 @@ async function marketFetch(){
 function openMarket(){mkFresh=new Set();mkFlow=null;openSheet("market");clearTimeout(mkLoadT);mkLoadT=0;marketFetch();}
 const mkGo=flow=>{mkFlow=flow;openSheet("marketDo");};
 const mkBack=()=>{mkFlow=null;openSheet("market");};
-// Live: an open Brocante reloads (a board change, an offer, a trade); closed, only the count goes stale.
+// Live: an open Brocante reloads (a board change, an offer, a trade). Closed, a board change asks /api/me again for
+// me.marketNew (the Dossier's dot and row), never /api/market (it would mark the board seen).
 function marketEvent(v){
  if(mkOpen()){marketLoad();return;}
  if(v.kind!=="board")return;                         // mine, offer, trade: the journal and the push say it
- mkStale=true;
- if(sheetKind==="more"&&!$("#sheet").hidden)marketMe();
+ mkStale=true;marketMe();
 }
-// /api/me again for marketNew, a little later (not every screen at the same instant), once at a time.
+// /api/me again for marketNew: a little later (not every screen at the same instant), one pending at a time, and at
+// most one every MK_ME_MS (a change inside that window waits for its end: the last one is never lost).
+const MK_ME_MS=20e3;
 function marketMe(){
  mkStale=false;if(mkMeT)return;
- mkMeT=setTimeout(async()=>{const who=me,r=await api("GET","/api/me");mkMeT=0;if(r.ok&&S&&me===who)applyMe(r);},300+Math.random()*1700);
+ const wait=Math.max(300+Math.random()*1700,mkMeLast+MK_ME_MS-Date.now());
+ mkMeT=setTimeout(async()=>{
+  if(!S||document.hidden){mkMeT=0;mkStale=true;return;}   // a hidden page gets /api/me when shown again
+  mkMeLast=Date.now();const who=me,r=await api("GET","/api/me");mkMeT=0;if(r.ok&&S&&me===who)applyMe(r);
+ },wait);
 }
 // The Dossier's row, with the count of listings new since the last visit.
 function marketRow(){
