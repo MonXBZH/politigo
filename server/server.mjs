@@ -181,7 +181,7 @@ if(!db.prepare("PRAGMA table_info(admin_log)").all().some(c=>c.name==="actor")){
 }
 // Databases from before the changelog (or the suspensions) lack the column: NULL means "has read nothing yet".
 // Another process starting on the same file at the same moment may have added it first: that is fine too.
-for(const [col,type] of [["seen_version","TEXT"],["suspended","INTEGER NOT NULL DEFAULT 0"],["last_seen","INTEGER"],["protected","INTEGER NOT NULL DEFAULT 0"],["abandon_ignored","INTEGER NOT NULL DEFAULT 0"]]){
+for(const [col,type] of [["seen_version","TEXT"],["suspended","INTEGER NOT NULL DEFAULT 0"],["last_seen","INTEGER"],["protected","INTEGER NOT NULL DEFAULT 0"],["abandon_ignored","INTEGER NOT NULL DEFAULT 0"],["net_fp","TEXT"]]){
  if(db.prepare("PRAGMA table_info(players)").all().some(c=>c.name===col))continue;
  try{db.exec(`ALTER TABLE players ADD COLUMN ${col} ${type}`);}catch(e){if(!/duplicate column/i.test(e.message))throw e;}
 }
@@ -241,7 +241,8 @@ const q={
  savePlayer:db.prepare("UPDATE players SET state=?,score=?,updated=? WHERE id=?"),
  playerByKey:db.prepare("SELECT id,pass FROM players WHERE name_key=?"),
  deletePlayer:db.prepare("DELETE FROM players WHERE id=?"),
- allPlayers:db.prepare("SELECT id,name,created,state,seen_version,suspended,last_seen,protected,abandon_ignored FROM players"),
+ allPlayers:db.prepare("SELECT id,name,created,state,seen_version,suspended,last_seen,protected,abandon_ignored,net_fp FROM players"),
+ setNetFp:db.prepare("UPDATE players SET net_fp=? WHERE id=?"),
  setLastSeen:db.prepare("UPDATE players SET last_seen=?,abandon_ignored=0 WHERE id=?"),
  setProtected:db.prepare("UPDATE players SET protected=? WHERE id=?"),
  setIgnored:db.prepare("UPDATE players SET abandon_ignored=? WHERE id=?"),
@@ -394,7 +395,7 @@ const players=new Map();
    // Ahead of real time on a real-time server: left as is (no replay), but said, since it should not happen.
    if(SPEED===1&&state.vclock-now>10*60e3)console.error(`player ${row.id}: game clock ${Math.round((state.vclock-now)/60e3)} min ahead of real time`);
   }catch(e){console.error(`player ${row.id}: clock not resynced`,e);state.lastReal=now;}
-  players.set(row.id,{id:row.id,name:row.name,created:row.created,state,seen:row.seen_version??null,suspended:!!row.suspended,lastSeen:row.last_seen,protected:!!row.protected,ignored:!!row.abandon_ignored});
+  players.set(row.id,{id:row.id,name:row.name,created:row.created,state,seen:row.seen_version??null,suspended:!!row.suspended,lastSeen:row.last_seen,protected:!!row.protected,ignored:!!row.abandon_ignored,netFp:row.net_fp||""});
  }
  if(longest>=60000)console.log(`Clocks back on the real hour: ${resynced} player(s), up to ${Math.round(longest/60000)} min skipped, gauges untouched.`);
 }
@@ -550,13 +551,27 @@ function auth(req){
  const p=row&&players.get(row.player_id);
  if(!p)throw new HttpError(401,"Connexion requise.");
  if(p.suspended)throw new HttpError(403,SUSPENDED);   // sessions are deleted at suspension: this is the belt and braces
- touchSeen(p);
+ touchSeen(p,Date.now(),clientIp(req));
  return p;
 }
 // The last connection, for the console alone: at most one write an hour per player. Coming back clears an "ignored".
 const SEEN_EVERY=36e5;
-function touchSeen(p,now=Date.now()){
+// "Same network" (La Brocante): one HMAC-SHA256 of the player's last address under a key made once and kept in the
+// settings. Never the address itself, never a history, never sent to anyone; "" when the address is unknown.
+let NET_KEY=null;
+function netFp(ip){
+ if(!ip||ip==="?")return "";
+ if(!NET_KEY){let k=getSetting("netkey");if(!/^[0-9a-f]{64}$/.test(k||"")){k=crypto.randomBytes(32).toString("hex");setSetting("netkey",k);}NET_KEY=Buffer.from(k,"hex");}
+ return crypto.createHmac("sha256",NET_KEY).update(String(ip)).digest("hex");
+}
+const sameNet=(a,b)=>!!a&&!!b&&a===b;
+function noteNet(p,ip){
+ const f=netFp(ip);if(!f||p.netFp===f)return;
+ p.netFp=f;try{q.setNetFp.run(f,p.id);}catch(e){console.error(`player ${p.id}: network not saved`,e);}
+}
+function touchSeen(p,now=Date.now(),ip=null){
  if(now-(p.lastSeen??0)<SEEN_EVERY)return;
+ if(ip)noteNet(p,ip);
  p.lastSeen=now;p.ignored=false;
  try{q.setLastSeen.run(now,p.id);}catch(e){console.error(`player ${p.id}: last connection not saved`,e);}
 }
@@ -1639,7 +1654,7 @@ async function route(req,res){
   db.exec("BEGIN IMMEDIATE");
   try{seat();({lastInsertRowid}=q.insertPlayer.run(Number(getSetting("playerFloor"))||0,name,nameKey(name),pass,now,JSON.stringify(state),R.score(state),now,RELEASE));db.exec("COMMIT");}
   catch(e){db.exec("ROLLBACK");giveBack();throw e;}
-  const p={id:Number(lastInsertRowid),name,created:now,state,seen:RELEASE};players.set(p.id,p);touchSeen(p,now);   // a new player has nothing to catch up on
+  const p={id:Number(lastInsertRowid),name,created:now,state,seen:RELEASE,netFp:""};players.set(p.id,p);noteNet(p,ip);touchSeen(p,now);   // a new player has nothing to catch up on
   // The account exists from here on: a failed announcement must not turn the sign-up into an error.
   try{const feed=newFeedEntries(p,0);if(feed.length)broadcast("feed",feed);publishBoard();}catch(e){console.error("register: announce failed",e);}
   return send(res,201,mePayload(p),{"Set-Cookie":startSession(p.id)});
@@ -1657,7 +1672,7 @@ async function route(req,res){
   const p=row&&players.get(row.id);
   if(!p||!okPw||q.playerByKey.get(key)?.pass!==row.pass)throw new HttpError(401,"Pseudo ou mot de passe incorrect.");
   if(p.suspended)throw new HttpError(403,SUSPENDED);   // only said to whoever knows the password
-  touchSeen(p);
+  noteNet(p,ip);touchSeen(p);
   return send(res,200,mePayload(p),{"Set-Cookie":startSession(p.id)});
  }
  if(path==="/api/logout"&&method==="POST"){
