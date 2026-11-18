@@ -5,6 +5,20 @@
 import {cmpRelease} from "./rules.mjs";
 
 export const CHANGELOG=[
+ {version:"1.9.0",date:"2026-11-19",help:["brocante"],
+  added:[
+   "La Brocante : un tableau d'annonces où les joueurs échangent tenues et objets de leur Garde-robe. Dépose une annonce, troque tout de suite si tu as ce qu'elle demande, ou fais une offre que l'auteur accepte ou refuse.",
+   "Les échanges se font entre les deux camps : l'objet reçu se porte. Dès le niveau 5, avec un compte d'au moins 3 jours et 3 échanges par jour.",
+   "Tu es prévenu d'une offre reçue, d'un échange conclu ou d'une réponse à ton offre, et les échanges entre camps apparaissent dans le fil.",
+   "Les objets en vitrine sont marqués dans la Garde-robe."
+  ],
+  fixed:[],
+  admin:[
+   "La carte Brocante de la console liste les annonces ouvertes et l'historique des échanges, avec les paires qui reviennent sur 30 jours et un signal « même réseau : oui / non ».",
+   "Nouveau droit de modérateur : « Retirer une annonce de la Brocante », inclus dans « Modo complet ».",
+   "Le jeu garde une empreinte non réversible de la dernière connexion de chaque joueur pour ce signal, jamais l'adresse : sa clé est dans la base, donc dans les sauvegardes."
+  ]
+ },
  {version:"1.8.0",date:"2026-11-15",help:["treve"],
   added:[
    "La Trêve des confiseurs, du 1er décembre au 1er janvier : la République passe l'hiver dehors, avec un décor de neige, des tenues de saison et une Buvette rebaptisée.",

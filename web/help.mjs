@@ -67,6 +67,17 @@ export const HELP=[
    `Tirages garantis : ${RARITY_LABEL.epique.toLowerCase()} (ou mieux) au ${PITY.epique}ᵉ tirage sans en voir, ${RARITY_LABEL.legendaire.toLowerCase()} au ${PITY.legendaire}ᵉ, ${RARITY_LABEL.ultra.toLowerCase()} au ${PITY.ultra}ᵉ.`,
    `Un doublon devient des confettis (${rarities.map(r=>CONFETTI[r]).join(", ")} selon la rareté) ; ${EXCHANGE.cost.commun}, ${EXCHANGE.cost.rare} ou ${EXCHANGE.cost.epique} confettis s'échangent contre une pièce commune, rare ou épique de ton choix.`],
   "La Garde-robe range tes tenues et tes objets : touche-en un pour le porter, touche-le de nouveau pour l'enlever. Une tenue s'enfile par-dessus tous les personnages de la collection."]},
+ {id:"brocante",title:"La Brocante",parts:[
+  "Le tableau d'annonces où les joueurs s'échangent tenues et objets de leur Garde-robe. Les deux camps s'y croisent : l'objet reçu se porte, quel que soit son camp.",
+  ["Dépose une annonce : 1 à 3 objets que tu possèdes, et ce que tu cherches (des objets précis, une rareté, quelques bulletins, ou « faites-moi une offre »). Tu as 3 annonces ouvertes au plus.",
+   "Une offre refusée ne se renouvelle pas sur la même annonce. Une annonce n'expire pas : elle reste jusqu'à ce que tu la retires ou qu'un échange se fasse. L'objet en vitrine reste à toi, tu peux le porter.",
+   "« Troquer » : si tu as ce qui est demandé, l'échange se fait tout de suite. Sinon, « Faire une offre » : l'auteur accepte ou refuse. Tu as 5 offres en attente au plus, une par annonce, et 10 offres par jour.",
+   "Les bulletins n'accompagnent que des objets : jamais de bulletins seuls contre rien, et 20 au plus par côté.",
+   "Pour échanger : niveau 5, un compte d'au moins 3 jours, et 3 échanges par jour. Tout le monde peut regarder. Une annonce dont l'auteur est absent depuis plus de 14 jours, ou qui a atteint sa limite du jour, est masquée jusqu'à son retour.",
+   "Un objet que tu possèdes déjà ne s'échange pas. Certains objets très rares ne s'échangent pas non plus.",
+   "Un objet échangé quitte ta Garde-robe : si tu le retires plus tard, c'est un nouvel objet. Rien d'autre ne change : ni XP, ni jauges, ni confettis.",
+   "Tu es prévenu d'une offre reçue, d'un échange conclu ou d'une réponse à ton offre. Les échanges entre camps s'affichent dans le fil.",
+   "Vie privée : le jeu garde une empreinte non réversible de ta dernière adresse de connexion, pour repérer les échanges entre comptes d'une même personne ; jamais l'adresse elle-même."]]},
  {id:"events",title:"Les événements",parts:[
   "De temps en temps, l'organisation lance un événement pour quelques heures : XP doublée, missions sans limite, soldes à la Buvette, nuit des duels… Un bandeau l'annonce en haut de l'écran, avec le temps restant. Touche-le pour en lire le détail.",
   ["Dans le jeu, les récompenses et les prix modifiés ressortent, par exemple « ×2 ».",
@@ -100,4 +111,4 @@ export function signupProblem({name,password,invite}={}){
  return "";
 }
 // The section a sheet's « ? » opens.
-export const SHEET_HELP={food:"jauges",care:"jauges",play:"jeux",duels:"duels",more:"demarrer",wardrobe:"tombola",urn:"tombola",player:"social",chat:"social",advent:"treve",snow:"treve"};
+export const SHEET_HELP={food:"jauges",care:"jauges",play:"jeux",duels:"duels",more:"demarrer",wardrobe:"tombola",urn:"tombola",player:"social",chat:"social",advent:"treve",snow:"treve",market:"brocante",marketDo:"brocante"};

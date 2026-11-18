@@ -1640,7 +1640,7 @@ function renderSheet(kind,opener){
   const nrow=document.createElement("div");nrow.className="btn-row";nrow.append(news,smallButton("Aide","",()=>openHelp(null)));
   body.append(ver,nrow);
   const about=document.createElement("p");about.className="fine";
-  about.textContent="PolitiGo est une satire. Personnages caricaturés et répliques inventées ; les faits rappelés sont publics, avec le stade de chaque procédure, et la présomption d'innocence s'applique. Aucun achat réel : la seule monnaie est le frais de mandat, gagné en restant en vie. Seuls ton pseudo et ta partie sont enregistrés.";
+  about.textContent="PolitiGo est une satire. Personnages caricaturés et répliques inventées ; les faits rappelés sont publics, avec le stade de chaque procédure, et la présomption d'innocence s'applique. Aucun achat réel : la seule monnaie est le frais de mandat, gagné en restant en vie. Seuls ton pseudo, ta partie et une empreinte non réversible de ta dernière connexion sont enregistrés.";
   body.append(about);
  }
 }

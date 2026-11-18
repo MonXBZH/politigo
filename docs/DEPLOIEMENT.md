@@ -314,7 +314,15 @@ Une seule console peut gérer plusieurs parties, sur cette machine ou ailleurs (
   **Duels suspects** : paires de comptes créés ensemble qui se défient, rafales de comptes différents à quelques secondes
   d'intervalle, même perdant face au même gagnant, et joueur qui bat l'un après l'autre plusieurs rivaux qui ne jouent
   presque pas (une ferme de comptes). Chaque tour de duel compte aussi dans la détection de bots. Un duel terminé peut être **annulé** : XP, niveau, moral et énergie des deux
-  joueurs reviennent à leur valeur d'avant le duel. Aucune adresse IP n'est enregistrée.
+  joueurs reviennent à leur valeur d'avant le duel. Aucune adresse IP n'est enregistrée en clair.
+- **Brocante** (carte Brocante de la console) : les annonces ouvertes, avec leur auteur et ce qu'elles proposent et cherchent, et l'historique des
+  échanges (date, les deux joueurs, ce qui a changé de mains). La carte montre aussi les paires qui échangent à répétition sur
+  30 jours et « même réseau : oui / non ». Ce signal vient d'une empreinte HMAC-SHA256 de la dernière adresse de connexion de chaque
+  joueur (une seule valeur par joueur, écrasée à chaque connexion, effacée avec le compte, jamais l'adresse elle-même ni un historique) :
+  il n'interdit rien, l'administrateur tranche (suspendre existe déjà). La clé secrète de l'empreinte est la ligne `netkey` de la table
+  des réglages, générée au premier démarrage : elle voyage avec la base, donc avec les sauvegardes, qui sont à garder en lieu sûr.
+  Le droit « Retirer une annonce de la Brocante » (inclus dans « Modo complet ») retire une annonce ; elle n'est jamais supprimée
+  d'elle-même, seulement masquée quand son auteur est absent depuis plus de 14 jours, suspendu, sous le niveau 5 ou à sa limite du jour.
 - **À traiter** : sur toutes les parties, vérifiées toutes les 20 s, les messages signalés du chat, les duels signalés par
   l'anti-triche, les joueurs au score de bot de 50/100 ou plus et les groupes de duels suspects. Le nombre s'affiche dans
   le menu et dans le titre de l'onglet, un son marque chaque nouvelle alerte, et une notification système s'affiche quand
@@ -566,6 +574,7 @@ Le panneau **Events** de l'administration crée et gère des événements à dur
   défaut ; le défié a toujours 24 h) ; elle ne peut que le réduire.
 - **Réglages de test** (jamais en production) : `POLITIGO_DUEL_MIN_LEVEL` et `POLITIGO_DUEL_MIN_AGE_H` abaissent le niveau
   et l'ancienneté du compte exigés pour les duels (ils ne peuvent que les baisser), pour tester avec des comptes neufs.
+  `POLITIGO_MARKET_MIN_AGE_H` fait de même pour l'ancienneté exigée à la Brocante (3 jours par défaut ; elle ne peut que la baisser).
 
 ## 4. Sécurité en bref
 
