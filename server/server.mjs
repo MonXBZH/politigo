@@ -561,13 +561,14 @@ const SEEN_EVERY=36e5;
 let NET_KEY=null;
 function netFp(ip){
  if(!ip||ip==="?")return "";
- if(!NET_KEY){let k=getSetting("netkey");if(!/^[0-9a-f]{64}$/.test(k||"")){k=crypto.randomBytes(32).toString("hex");setSetting("netkey",k);}NET_KEY=Buffer.from(k,"hex");}
+ if(!NET_KEY){let k=getSetting("netkey");if(!/^[0-9a-f]{64}$/.test(k||"")){db.prepare("INSERT OR IGNORE INTO settings(key,value) VALUES('netkey',?)").run(crypto.randomBytes(32).toString("hex"));k=getSetting("netkey");}   // another process may have made it first: the stored one wins
+  if(!/^[0-9a-f]{64}$/.test(k||""))throw new Error("netkey unusable");NET_KEY=Buffer.from(k,"hex");}
  return crypto.createHmac("sha256",NET_KEY).update(String(ip)).digest("hex");
 }
 const sameNet=(a,b)=>!!a&&!!b&&a===b;
 function noteNet(p,ip){
- const f=netFp(ip);if(!f||p.netFp===f)return;
- p.netFp=f;try{q.setNetFp.run(f,p.id);}catch(e){console.error(`player ${p.id}: network not saved`,e);}
+ try{const f=netFp(ip);if(!f||p.netFp===f)return;q.setNetFp.run(f,p.id);p.netFp=f;}
+ catch(e){console.error(`player ${p.id}: network not saved (${e?.code||e?.name})`);}   // neither the address nor the fingerprint is logged
 }
 function touchSeen(p,now=Date.now(),ip=null){
  if(now-(p.lastSeen??0)<SEEN_EVERY)return;

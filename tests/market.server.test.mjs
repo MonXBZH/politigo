@@ -43,3 +43,19 @@ it("net fingerprint: never the raw IP, same network detected",async()=>{
   db2.close();
  }finally{await stop(srv);}
 });
+
+it("net fingerprint: a legacy NULL row loads as empty and is filled at the next login",async()=>{
+ const dir=mkdtempSync(join(tmpdir(),"market-")),port=18932;
+ let srv=await boot(port,dir);
+ try{
+  await signup(port,"Old Timer","10.9.1.1");await stop(srv);
+  const db=new DatabaseSync(join(dir,"t.db"));db.prepare("UPDATE players SET net_fp=NULL WHERE name=?").run("Old Timer");
+  const key=db.prepare("SELECT value FROM settings WHERE key='netkey'").get().value;db.close();
+  srv=await boot(port,dir);
+  const l=from(port,"10.9.1.1");assert.equal((await l.call("POST","/api/login",{name:"Old Timer",password:PW})).status,200);
+  const db2=new DatabaseSync(join(dir,"t.db"));
+  assert.match(db2.prepare("SELECT net_fp FROM players WHERE name=?").get("Old Timer").net_fp,/^[0-9a-f]{64}$/);
+  assert.equal(db2.prepare("SELECT value FROM settings WHERE key='netkey'").get().value,key,"the key is not remade");
+  db2.close();
+ }finally{await stop(srv);}
+});
