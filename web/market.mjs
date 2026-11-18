@@ -52,11 +52,12 @@ export function missing(S,give){
 }
 export const dupes=(S,list)=>list.filter(i=>S.wardrobe.own.includes(i));
 
-// Both sides are checked before anything moves; an item received that the player keeps is a dupe.
+// The referee: everything is validated before anything moves (well-formed gives, two states, holdings, no dupe received).
 export function applyTrade(Sa,aGives,Sb,bGives){
+ const same=(g,c)=>!!g&&!!c&&g.items.length===c.items.length&&g.items.every((x,i)=>x===c.items[i])&&g.bulletins===c.bulletins;
+ if(Sa===Sb||!same(aGives,cleanGive(aGives,{needItem:false}))||!same(bGives,cleanGive(bGives,{needItem:false})))throw new Error("Échange invalide.");
  const ma=missing(Sa,aGives)||missing(Sb,bGives);if(ma)throw new Error(ma);
- const dup=(S,got,gave)=>got.some(i=>S.wardrobe.own.includes(i)&&!gave.includes(i));
- if(dup(Sb,aGives.items,bGives.items)||dup(Sa,bGives.items,aGives.items))throw new Error("Objet déjà possédé");
+ if(dupes(Sb,aGives.items).length||dupes(Sa,bGives.items).length)throw new Error("Objet déjà possédé");
  const move=(S,out,inn,bOut,bIn)=>{
   const W=S.wardrobe;W.own=W.own.filter(i=>!out.includes(i));
   for(const k of ["outfit","object"])if(out.includes(W.worn[k]))W.worn[k]=null;
@@ -69,7 +70,7 @@ export function applyTrade(Sa,aGives,Sb,bGives){
 // "" when the player may trade now, else the French reason (account age and today's count come from the caller).
 export function tradeBlock(S,{minLevel,ageMs,today}){
  if((S.lvl|0)<minLevel)return `Échanges à partir du niveau ${minLevel}.`;
- if(ageMs<MARKET.minAgeMs)return "Ton compte est trop récent pour la Brocante.";
- if(today>=MARKET.perDay)return `${MARKET.perDay} échanges aujourd'hui : reviens demain.`;
+ if(!(typeof ageMs==="number"&&ageMs>=MARKET.minAgeMs))return "Ton compte est trop récent pour la Brocante.";
+ if(!(typeof today==="number"&&today<MARKET.perDay))return `${MARKET.perDay} échanges aujourd'hui : reviens demain.`;
  return "";
 }

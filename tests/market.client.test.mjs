@@ -103,3 +103,37 @@ test("tradeBlock",()=>{
  assert.equal(M.tradeBlock(st(),{...o,today:3}),"3 échanges aujourd'hui : reviens demain.");
  assert.equal(M.tradeBlock(st(),{...o,today:2}),"");
 });
+
+test("applyTrade refuses malformed gives and a same-state trade, before any mutation",()=>{
+ const mk=()=>[st(["megaphone","camarade","cocarde"],{bulletins:5}),st(["bleutravail"],{bulletins:5})];
+ const e=(a,b)=>({items:[],bulletins:0,...a}),ok={items:[],bulletins:0};
+ const bad=[
+  [{items:["camarade"],bulletins:0},ok],            // owned ultra
+  [{items:["megaphone","megaphone"],bulletins:0},ok], // duplicated id
+  [{items:[],bulletins:-5},ok],[{items:[],bulletins:1.5},ok],[{items:[],bulletins:NaN},ok],[{items:[],bulletins:21},ok],
+  [{items:["nope"],bulletins:0},ok],[{items:["megaphone","cocarde","camarade","x"],bulletins:0},ok],
+  [ok,{items:["bleutravail","bleutravail"],bulletins:0}],
+ ];
+ for(const [ga,gb] of bad){
+  const [A,B]=mk(),a0=structuredClone(A),b0=structuredClone(B);
+  assert.throws(()=>M.applyTrade(A,ga,B,gb),{message:"Échange invalide."});
+  assert.deepEqual(A,a0);assert.deepEqual(B,b0);
+ }
+ const [A]=mk(),a0=structuredClone(A);
+ assert.throws(()=>M.applyTrade(A,{items:["megaphone"],bulletins:0},A,{items:["cocarde"],bulletins:0}),{message:"Échange invalide."});
+ assert.deepEqual(A,a0);
+});
+
+test("applyTrade: an item a side both gives and receives is a dupe",()=>{
+ const A=st(["megaphone"]),B=st(["megaphone"]),a0=structuredClone(A),b0=structuredClone(B);
+ assert.throws(()=>M.applyTrade(A,{items:["megaphone"],bulletins:0},B,{items:["megaphone"],bulletins:0}),Error);
+ assert.deepEqual(A,a0);assert.deepEqual(B,b0);
+});
+
+test("tradeBlock fails closed on non-numeric age or count",()=>{
+ const o={minLevel:5,ageMs:10*864e5,today:0};
+ for(const v of [NaN,undefined,null,"9999999999",Infinity*0])
+  assert.equal(M.tradeBlock(st(),{...o,ageMs:v}),"Ton compte est trop récent pour la Brocante.");
+ for(const v of [NaN,undefined,null,"0"])
+  assert.equal(M.tradeBlock(st(),{...o,today:v}),"3 échanges aujourd'hui : reviens demain.");
+});
