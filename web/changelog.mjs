@@ -14,7 +14,9 @@ export const CHANGELOG=[
    "À minuit pile, la nuit du Nouvel An, tout le monde lève son verre : un toast pour tous.",
    "Quelque chose passe parfois devant la lune… ouvre l'œil."
   ],
-  fixed:[],
+  fixed:[
+   "L'Épervier rapporte plus : 3 XP de bonus par point au lieu de 2 (35 au plus), pour faire jeu égal avec le Cortège."
+  ],
   admin:[
    "Le mode événement de la console propose Noël (forcé), et l'automatique couvre aussi la Trêve, du 1er décembre au 1er janvier.",
    "La Bataille de neige se choisit parmi les mini-jeux des événements Double XP.",

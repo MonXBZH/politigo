@@ -310,7 +310,7 @@ export const PONG_RULES={xp:25,ms:20000,intro:0,maxScore:25,suspect:22,minSecond
 export const MINI={
  debate:{label:"Débat chrono",camp:null,xp:0,ms:15000,intro:1300,maxScore:30,perSecond:2.5,bonusRate:2.5,bonusCap:50,great:24,suspect:31},
  cortege:{label:"Le Cortège",camp:"left",xp:35,ms:30000,intro:0,maxScore:250,perSecond:8,bonusRate:0.25,bonusCap:35,great:140,suspect:220},
- epervier:{label:"L'Épervier",camp:"right",xp:35,ms:35000,intro:0,maxScore:60,perSecond:2,bonusRate:2,bonusCap:35,great:18,suspect:40},
+ epervier:{label:"L'Épervier",camp:"right",xp:35,ms:35000,intro:0,maxScore:60,perSecond:2,bonusRate:3,bonusCap:35,great:18,suspect:40},
  // Trêve des confiseurs. The score is never taken from the browser: the server replays the taps (snowball.mjs), so the
  // replay is the referee and judge() only checks the id and the time. Its caps (maxScore, perSecond) are set far above
  // any real fight so that they never refuse a legitimate replayed score; over 160 (suspect) the fight is flagged
