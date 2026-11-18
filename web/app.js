@@ -1452,17 +1452,20 @@ function openSheet(kind,opener){
 }
 // Redraws the open sheet without losing the scroll position or the focused row.
 // force: what changed is not in the state (the duels list, the push subscription).
-function liveSheet(force=false){
+// picked: a redraw asked by the player's own choice in a <select> (focus comes back to it); others wait for the blur.
+function liveSheet(force=false,picked=false){
  if(!S||!sheetKind||$("#sheet").hidden||(!force&&sheetSig()===shownSig))return;
  if(sheetKind==="test")return;                       // a test under way owes nothing to the state: never redrawn under the finger
  if(sheetKind==="chat")return;                       // built once and updated in place (chat.mjs): the composer keeps focus and text
  if(sheetKind==="help"||sheetKind==="history")return;   // text only: a redraw would fold back what the player unfolded
  // Never under the player's fingers: an armed "tap again" button or a half-typed password survives updates.
  if($("#sheet-body .armed, #sheet-body form"))return;
- if(document.activeElement?.tagName==="SELECT"&&$("#sheet-body").contains(document.activeElement))return;   // an open list of choices (the Brocante)
+ if(!picked&&document.activeElement?.tagName==="SELECT"&&$("#sheet-body").contains(document.activeElement))return;   // an open list of choices (the Brocante)
  const card=$(".sheet-card"),top=card.scrollTop,f=[...card.querySelectorAll("button,select,input")],i=f.indexOf(document.activeElement);
+ const n=picked?[...card.querySelectorAll("select")].indexOf(document.activeElement):-1;   // the n-th select: buttons around it may come and go
  renderSheet(sheetKind);card.scrollTop=top;
- if(i>=0){const g=[...card.querySelectorAll("button,select,input")];(g[i]&&!g[i].disabled?g[i]:card).focus();}
+ if(n>=0){const sel=card.querySelectorAll("select")[n];(sel&&!sel.disabled?sel:card).focus();}
+ else if(i>=0){const g=[...card.querySelectorAll("button,select,input")];(g[i]&&!g[i].disabled?g[i]:card).focus();}
 }
 function renderSheet(kind,opener){
  sheetKind=kind;if(opener)sheetOpener=opener;shownSig=sheetSig();
@@ -2560,7 +2563,7 @@ function mkDeposit(body,set,f){
   const sel=mkEl("select");sel.setAttribute("aria-label","Ajouter un objet du catalogue");sel.disabled=f.wantItems.length>=MARKET.maxItems;
   sel.append(Object.assign(mkEl("option","",sel.disabled?`${MARKET.maxItems} objets au plus`:"+ Ajouter un objet du catalogue…"),{value:""}));
   for(const g of catalogue(S,[...f.items,...f.wantItems])){const og=mkEl("optgroup");og.label=g.label;og.append(...g.items.map(x=>Object.assign(mkEl("option","",x.label),{value:x.id})));sel.append(og);}
-  sel.addEventListener("change",()=>{const id=sel.value;sel.blur();if(id&&tradable(id)&&f.wantItems.length<MARKET.maxItems&&!f.wantItems.includes(id)){f.wantItems=[...f.wantItems,id];liveSheet(true);}});
+  sel.addEventListener("change",()=>{const id=sel.value;if(id&&tradable(id)&&f.wantItems.length<MARKET.maxItems&&!f.wantItems.includes(id)){f.wantItems=[...f.wantItems,id];liveSheet(true,true);}});
   const chosen=mkEl("div","mk-side");
   for(const id of f.wantItems){const s=mkEl("span","mk-want-item"),x=smallButton("✕","mk-x",()=>{f.wantItems=f.wantItems.filter(i=>i!==id);liveSheet(true);});x.setAttribute("aria-label",`Enlever ${W.ITEMS[id]?.name??id}`);s.append(mkChip(id),x);chosen.append(s);}
   body.append(sel,chosen);
@@ -2569,7 +2572,7 @@ function mkDeposit(body,set,f){
   const ks=mkEl("select"),rs=mkEl("select");ks.setAttribute("aria-label","Type");rs.setAttribute("aria-label","Rareté");
   for(const [k,t] of [["outfit","une tenue"],["object","un objet"],["any","les deux"]])ks.append(Object.assign(mkEl("option","",t),{value:k,selected:f.slot===k}));
   for(const r of W.RARITIES.filter(r=>!MARKET.excluded.includes(r)))rs.append(Object.assign(mkEl("option","",W.RARITY_LABEL[r]),{value:r,selected:f.rarity===r}));
-  ks.addEventListener("change",()=>{f.slot=ks.value;ks.blur();liveSheet(true);});rs.addEventListener("change",()=>{f.rarity=rs.value;rs.blur();liveSheet(true);});
+  ks.addEventListener("change",()=>{f.slot=ks.value;liveSheet(true,true);});rs.addEventListener("change",()=>{f.rarity=rs.value;liveSheet(true,true);});
   const two=mkEl("div","mk-two");two.append(ks,rs);
   body.append(two,fine(`Affiché : « ${kindWord(f.slot,f.rarity)} »`));
  }
