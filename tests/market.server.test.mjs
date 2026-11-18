@@ -405,3 +405,58 @@ it("same network flag stored on the trade",async()=>{
  }finally{db.close();}
  const r=await b.call("GET","/api/market");assert.equal(r.status,200);assert.ok(!/same_?net|net_?fp|10\.9\.5/i.test(r.text),"never in an answer");
 });
+
+// ===================================================================== THE CONSOLE'S BROCANTE (market-list, market-withdraw)
+it("market-list: trades, open listings with their offers, repeated pairs; never an address nor a fingerprint",async()=>{
+ const a=from(MP,"10.9.6.1"),b=from(MP,"10.9.6.1"),c=from(MP,"10.9.6.2");
+ for(const [cl,n,camp] of [[a,"Paire Alpha","left"],[b,"Paire Beta","right"],[c,"Paire Gamma","right"]]){const r=await cl.call("POST","/api/register",{name:n,password:PW,invite:INVITE,camp});assert.equal(r.status,201,r.text);}
+ await stock(SOCK,"Paire Alpha",["megaphone","cocarde","baguette"]);await stock(SOCK,"Paire Beta",["loden"],3);await stock(SOCK,"Paire Gamma",["kway"],3);
+ const L=async(it)=>(await mk(a,"list",{give:{items:[it]},want:{kind:"bulletins",bulletins:1}})).json.id;
+ const l1=await L("megaphone"),l2=await L("cocarde"),l3=await L("baguette");
+ assert.equal((await mk(b,"take",{id:l1,give:{items:[],bulletins:1}})).status,200);
+ assert.equal((await mk(b,"take",{id:l2,give:{items:[],bulletins:1}})).status,200);
+ assert.equal((await mk(c,"take",{id:l3,give:{items:[],bulletins:1}})).status,200);
+ const open=await listOk(b,{items:["loden"]},{kind:"offer"});
+ assert.equal((await mk(c,"offer",{id:open,give:{items:["kway"],bulletins:2}})).status,200);
+ const r=await adm({cmd:"market-list"});assert.equal(r.ok,true,JSON.stringify(r));
+ const t=r.trades.find(x=>x.id&&x.a.name==="Paire Alpha"&&x.b.name==="Paire Gamma");
+ assert.ok(t,JSON.stringify(r.trades));
+ assert.deepEqual(Object.keys(t).sort(),["a","aGave","b","bGave","created","id","sameNet"]);
+ assert.deepEqual(t.a,{name:"Paire Alpha",camp:"left"});assert.deepEqual(t.b,{name:"Paire Gamma",camp:"right"});
+ assert.equal(t.sameNet,false);assert.deepEqual(t.aGave.items,["baguette"]);assert.equal(t.bGave.bulletins,1);
+ assert.ok(r.trades.filter(x=>x.a.name==="Paire Alpha"&&x.b.name==="Paire Beta"&&x.sameNet===true).length===2);
+ const li=r.listings.find(x=>x.id===open);
+ assert.deepEqual(Object.keys(li).sort(),["author","created","give","id","offers","want"]);
+ assert.deepEqual(li.author,{name:"Paire Beta",camp:"right"});assert.equal(li.offers,1);assert.equal(li.give.items[0],"loden");
+ assert.ok(!r.listings.some(x=>x.id===l1),"a traded listing is no longer open");
+ const pairs=r.pairs.filter(x=>[x.a.name,x.b.name].includes("Paire Alpha"));
+ assert.equal(pairs.length,1,"only the pair with two trades");
+ assert.deepEqual([pairs[0].a.name,pairs[0].b.name].sort(),["Paire Alpha","Paire Beta"]);assert.equal(pairs[0].n,2);assert.equal(pairs[0].sameNet,true);
+ assert.deepEqual(Object.keys(pairs[0]).sort(),["a","b","n","sameNet"]);
+ assert.ok(r.pairs.length<=20&&r.pairs.every((x,i,s)=>!i||s[i-1].n>=x.n));
+ const text=JSON.stringify(r);assert.ok(!/net_?fp|netFp|10\.9\.6|"ip"|"net"|[0-9a-f]{64}/i.test(text),"no address, no fingerprint");
+});
+
+it("market-withdraw: closes the listing and its pending offers, tells the author, is audited; refuses a traded or unknown one",async()=>{
+ const a=await mp("Retrait Auteur","left",["blazer"]),o=await mp("Retrait Offrant","right",["cheminot"],5);
+ const id=await listOk(a,{items:["blazer"]},{kind:"offer"});
+ assert.equal((await mk(o,"offer",{id,give:{items:["cheminot"],bulletins:2}})).status,200);
+ assert.equal((await adm({cmd:"market-withdraw"})).ok,false);
+ assert.equal((await adm({cmd:"market-withdraw",id:999999})).ok,false);
+ const r=await adm({cmd:"market-withdraw",id,via:"web"});assert.equal(r.ok,true,JSON.stringify(r));
+ assert.ok(!(await view(o)).board.some(l=>l.id===id),"off the board");
+ assert.ok(!(await view(a)).mine.some(l=>l.id===id),"gone from the author's own listings");
+ assert.equal((await view(o)).offers.find(x=>x.listingId===id).status,"closed","the pending offer is closed");
+ assert.equal((await meOf(a)).state.journal[0].text,"Ton annonce a été retirée par l'organisation.");
+ assert.equal((await meOf(a)).state.journal[0].k,"market");
+ const row=(await adm({cmd:"audit"})).items.find(x=>x.cmd==="market-withdraw");assert.ok(row&&row.target==="Retrait Auteur",JSON.stringify(row));
+ assert.equal((await adm({cmd:"market-withdraw",id})).ok,false,"already withdrawn");
+ const l2=await listOk(a,{items:["blazer"]},{kind:"bulletins",bulletins:1});
+ assert.equal((await mk(o,"take",{id:l2,give:{items:[],bulletins:1}})).status,200);
+ assert.equal((await adm({cmd:"market-withdraw",id:l2})).ok,false,"a traded listing stays as it is");
+ // a moderator may not act on a protected account's listing
+ const p=await mp("Retrait Protege","left",["kway"]);const lp=await listOk(p,{items:["kway"]},{kind:"offer"});
+ assert.equal((await adm({cmd:"player-protect",name:"Retrait Protege",on:true})).ok,true);
+ assert.match((await adm({cmd:"market-withdraw",id:lp,by:"Modo"})).error,/protégé/);
+ assert.equal((await adm({cmd:"market-withdraw",id:lp})).ok,true,"the owner may");
+});

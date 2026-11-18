@@ -2067,7 +2067,7 @@ const adminActor=new AsyncLocalStorage();
 // The weighty commands keep a quota of their own: a flood of small ones (a chat-mute sent a thousand times) cannot
 // push the evidence out. The same command repeated (same author, target and detail, within AUDIT_SAME) is one row "×N".
 const AUDIT_KEY=["player-delete","player-protect","suspend","rename","reset-password","signout","invite-regenerate","registrations-set","chat-set","event-set",
- "mythic-reset","mythic-release","duel-annul","baton-judge","backup","backup-note"];
+ "mythic-reset","mythic-release","duel-annul","baton-judge","backup","backup-note","market-withdraw"];
 const AUDIT_KEEP=1000,AUDIT_KEEP_KEY=2000,AUDIT_SAME=10*6e4,AUDIT_IN=`cmd IN (${AUDIT_KEY.map(c=>`'${c}'`).join(",")})`;
 const auditQ={
  trimRest:db.prepare(`DELETE FROM admin_log WHERE NOT ${AUDIT_IN} AND id<=(SELECT id FROM admin_log WHERE NOT ${AUDIT_IN} ORDER BY id DESC LIMIT 1 OFFSET ${AUDIT_KEEP})`),
@@ -2928,6 +2928,36 @@ async function adminCommand(b){
  // Read-only: the recent snowball challenges, the defender's score and the flags of their fight (counted 0 when a bot's).
  if(cmd==="snow-challenges")return {items:snowCh.recent(limitOf(b.limit,50,200)).map(r=>({id:r.id,challenger:nameOf(r.challenger),defender:nameOf(r.defender),
   score:r.score,dScore:r.dScore,rawScore:r.dRaw,status:r.status,created:r.created,expires:r.expires,closed:r.closed,winner:r.status==="done"&&r.winner!==null?nameOf(r.winner):null,dFlags:r.dFlags??[]}))};
+ // The Brocante, read-only: the latest trades, the open listings (with their pending offers) and the pairs of players who
+ // traded at least twice in 30 days. Same network is a yes/no: never an address nor a fingerprint.
+ if(cmd==="market-list"){
+  const who=id=>({name:nameOf(id),camp:players.get(id)?.state.camp??null});
+  const named=g=>g&&Array.isArray(g.items)?{...g,names:g.items.map(i=>W.ITEMS[i]?.name??i)}:g;   // the console shows names, not ids
+  const trades=M.recent(limitOf(b.limit,50,200)).map(t=>({id:t.id,created:t.created,a:who(t.a_id),b:who(t.b_id),aGave:named(t.a_gave),bGave:named(t.b_gave),sameNet:!!t.same_net}));
+  const listings=M.openListings().map(l=>({id:l.id,created:l.created,author:who(l.player_id),give:named(l.give),want:named(l.want),offers:M.pendingOffersOn(l.id).length}));
+  const byPair=new Map();
+  for(const t of M.tradesSince(now-30*864e5)){
+   const k=t.a_id<t.b_id?`${t.a_id}:${t.b_id}`:`${t.b_id}:${t.a_id}`,e=byPair.get(k)??{a:who(Math.min(t.a_id,t.b_id)),b:who(Math.max(t.a_id,t.b_id)),n:0,sameNet:false};
+   e.n++;if(t.same_net)e.sameNet=true;byPair.set(k,e);
+  }
+  const pairs=[...byPair.values()].filter(e=>e.n>=2).sort((x,y)=>y.n-x.n).slice(0,20);
+  return {trades,listings,pairs};
+ }
+ if(cmd==="market-withdraw"){
+  const l=Number.isSafeInteger(b.id)&&M.listing(b.id);
+  if(!l||l.status!=="open")throw new HttpError(404,"Annonce introuvable ou déjà fermée.");
+  guard(l.player_id);
+  const offerers=M.pendingOffersOn(l.id).map(o=>o.player_id);
+  if(!M.adminWithdraw(l.id))throw new HttpError(404,"Annonce introuvable ou déjà fermée.");
+  const author=players.get(l.player_id);
+  if(author){
+   try{update(author,S=>{R.logEntry(S,"market","Ton annonce a été retirée par l'organisation.",{listing:l.id});});}catch(e){console.error(`market: journal line not written for ${author.id}`,e);}
+   marketCast([author.id,...offerers],"mine");
+  }
+  marketBoardChanged();
+  audit(via,cmd,nameOf(l.player_id),`Annonce #${l.id} retirée (${giveText(l.give)})`);
+  return {};
+ }
  if(cmd==="duel-cancel"){
   const d=Number.isSafeInteger(b.id)&&q.duel.get(b.id);
   if(d){guard(d.challenger);guard(d.defender);}

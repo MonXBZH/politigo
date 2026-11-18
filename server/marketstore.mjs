@@ -47,6 +47,8 @@ CREATE INDEX IF NOT EXISTS market_offers_p ON market_offers(player_id,status);`)
   pendOn:db.prepare("SELECT COUNT(*) AS n FROM market_offers WHERE listing_id=? AND player_id=? AND status='pending'"),
   insT:db.prepare("INSERT INTO market_trades(listing_id,offer_id,a_id,b_id,a_gave,b_gave,same_net,created) VALUES(?,?,?,?,?,?,?,?)"),
   recent:db.prepare("SELECT * FROM market_trades ORDER BY id DESC LIMIT ?"),
+  tradesSince:db.prepare("SELECT * FROM market_trades WHERE created>=? ORDER BY id DESC"),
+  adminW:db.prepare("UPDATE market_listings SET status='withdrawn' WHERE id=? AND status='open'"),
   bump:db.prepare("INSERT INTO market_daily(day,player_id,n) VALUES(?,?,1) ON CONFLICT(day,player_id) DO UPDATE SET n=n+1"),
   today:db.prepare("SELECT n FROM market_daily WHERE day=? AND player_id=?"),
   pendOnL:db.prepare("SELECT * FROM market_offers WHERE listing_id=? AND status='pending' ORDER BY id"),
@@ -68,6 +70,11 @@ CREATE INDEX IF NOT EXISTS market_offers_p ON market_offers(player_id,status);`)
   mine:playerId=>q.mineL.all(playerId).map(L),
   withdraw(id,playerId){
    if(!q.withdraw.run(id,playerId).changes)return false;
+   q.closeOn.run(id);return true;
+  },
+  // The organisation's withdrawal: any open listing, whoever owns it; its pending offers close with it.
+  adminWithdraw(id){
+   if(!q.adminW.run(id).changes)return false;
    q.closeOn.run(id);return true;
   },
   offer:(listingId,playerId,give,now=Date.now())=>Number(q.insO.run(listingId,playerId,JSON.stringify(give),now).lastInsertRowid),
@@ -116,6 +123,7 @@ CREATE INDEX IF NOT EXISTS market_offers_p ON market_offers(player_id,status);`)
    for(const o of q.pendO.all(playerId))closeO(o.id);
   },
   recent:(limit=50)=>q.recent.all(Math.max(1,Math.min(500,limit|0))).map(T),
+  tradesSince:since=>q.tradesSince.all(since).map(T),
   openCount:playerId=>q.openCount.get(playerId).n,
   pendingCount:playerId=>q.pendCount.get(playerId).n,
   pendingOn:(listingId,playerId)=>q.pendOn.get(listingId,playerId).n,
