@@ -132,3 +132,42 @@ test("withdraw and closeUsing close the pending offers on the listings they clos
  assert.equal(M.offerOf(o2).status,"closed");
  assert.equal(M.withdraw(l1,2),false);
 });
+
+test("bounded reads: open listings of a player, pending offers on a listing, offers by a player capped",()=>{
+ const {M}=fresh();
+ const l1=M.list(1,{items:["a1"]},W,NOW),l2=M.list(1,{items:["a2"]},W,NOW);M.withdraw(l2,1);
+ assert.deepEqual(M.openOf(1).map(l=>l.id),[l1]);assert.deepEqual(M.openOf(1)[0].give,{items:["a1"]});
+ const p=M.offer(l1,2,W,NOW),r=M.offer(l1,3,W,NOW);M.setOffer(r,"refused");
+ assert.deepEqual(M.pendingOffersOn(l1).map(o=>o.id),[p]);
+ // 30 decided offers and one old pending one: the pending one always, then the latest decided, newest first
+ const old=M.offer(l1,9,W,NOW);
+ const ids=[];for(let i=0;i<30;i++){const o=M.offer(l1,9,W,NOW+i);M.setOffer(o,"withdrawn");ids.push(o);}
+ const by=M.offersBy(9,20);
+ assert.equal(by.length,21);assert.ok(by.some(o=>o.id===old));
+ assert.deepEqual(by.filter(o=>o.id!==old).map(o=>o.id),ids.slice(-20).reverse());
+ assert.equal(M.offersBy(9).length,21,"20 by default");
+ // a player's offers on one listing (newest first), refused count, created times since a moment
+ assert.equal(M.offersOf(l1,9).length,20,"bounded");assert.equal(M.offersOf(l1,9)[0].id,ids.at(-1));
+ assert.equal(M.refusedOn(l1,3),1);assert.equal(M.refusedOn(l1,2),0);
+ assert.equal(M.createdSince(9,NOW+25).length,5);
+});
+
+test("purge: decided offers and dead listings older than the cut go, trades and traded listings stay",()=>{
+ const {db,M}=fresh();
+ const OLD=NOW-40*864e5,CUT=NOW-30*864e5;
+ const lw=M.list(1,{items:["a1"]},W,OLD);M.withdraw(lw,1);
+ const lc=M.list(1,{items:["a2"]},W,OLD);M.closeUsing(1,["a2"]);
+ const lo=M.list(1,{items:["a3"]},W,OLD);                       // open: stays
+ const lt=M.list(1,{items:["a4"]},W,OLD),ot=M.offer(lt,2,W,OLD),ox=M.offer(lt,3,W,OLD);
+ db.exec("BEGIN");M.trade({listingId:lt,offerId:ot,aId:1,bId:2,aGave:{items:["a4"]},bGave:W,now:OLD});db.exec("COMMIT");   // ox closed
+ const op=M.offer(lo,4,W,OLD),or=M.offer(lo,5,W,OLD);M.setOffer(or,"refused");
+ const fresh1=M.offer(lo,6,W,NOW);M.setOffer(fresh1,"withdrawn");   // recent: stays
+ const n=M.purge(CUT);
+ assert.equal(M.listing(lw),null);assert.equal(M.listing(lc),null);
+ assert.ok(M.listing(lo));assert.ok(M.listing(lt),"a traded listing stays (history)");
+ assert.equal(M.offerOf(ox),null);assert.equal(M.offerOf(or),null);
+ assert.ok(M.offerOf(ot),"the accepted offer stays");assert.ok(M.offerOf(op),"pending stays");assert.ok(M.offerOf(fresh1),"recent stays");
+ assert.equal(M.recent(10).length,1,"trades are never purged");
+ assert.equal(M.today(1,dayKey(Math.floor(OLD/H))),0,"old daily counts go");
+ assert.deepEqual(n,{listings:2,offers:2,daily:2});
+});

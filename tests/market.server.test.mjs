@@ -143,9 +143,10 @@ it("list, take: the trade moves items and bulletins, both journals, cross-camp f
 });
 
 it("same camp: no feed line",async()=>{
- const a=await mp("Gauche Un","left",["cheminot"]),b=await mp("Gauche Deux","left",["kway"]);
+ const a=await mp("Gauche Un","left",["cheminot","bleutravail"]),b=await mp("Gauche Deux","left",["kway","bleutravail"]);
  const id=await listOk(a,{items:["cheminot"]},{kind:"rarity",rarity:"commun",slot:"outfit",bulletins:0});
  refused(await mk(b,"take",{id,give:{items:["megaphone"]}}),422);   // not what it asks for
+ refused(await mk(b,"take",{id,give:{items:["bleutravail"]}}),422,"Échange impossible : objet déjà possédé.");   // the author has it: not said which
  const r=await mk(b,"take",{id,give:{items:["kway"],bulletins:0}});assert.equal(r.status,200,JSON.stringify(r.json));
  assert.ok((await wr(b)).own.includes("cheminot"));
  assert.ok(!(await feedOf(a)).some(e=>e.kind==="market"&&(e.player==="Gauche Un"||e.text.includes("Gauche Deux"))));
@@ -188,7 +189,7 @@ it("gates: level, account age, 3 trades a day, suspended",async()=>{
  assert.equal((await mk(x,"take",{id:lo,give:{items:[],bulletins:1}})).status,200);
  const vx=await view(x);assert.equal(vx.today,3);assert.equal(vx.block,"3 échanges aujourd'hui : reviens demain.");
  assert.ok(!(await view(t3)).board.some(l=>l.id===l3),"hidden while its author is at the day's limit");
- refused(await mk(t3,"take",{id:l3,give:{items:[],bulletins:1}}),422,"Son auteur a fini ses échanges du jour : annonce en pause.");
+ refused(await mk(t3,"take",{id:l3,give:{items:[],bulletins:1}}),409,GONE_L);   // hidden: the same answer as a gone one
  refused(await mk(x,"list",{give:{items:["croissant"]},want:{kind:"offer"}}),403,"3 échanges aujourd'hui : reviens demain.");
  // a suspended player may not even look
  const s=await mp("Suspendu Bro");assert.equal((await adm({cmd:"suspend",name:"Suspendu Bro",on:true})).ok,true);
@@ -228,7 +229,7 @@ it("author below the level: listing hidden, take refused",async()=>{
   srv=await boot(port,dir,env);
   assert.ok(!(await view(b)).board.some(l=>l.id===id),"hidden");
   assert.ok((await view(a)).mine.some(l=>l.id===id),"not closed: still the author's");
-  refused(await mk(b,"take",{id,give:{items:[],bulletins:2}}),422,"Son auteur est repassé sous le niveau 5 : annonce en pause.");
+  refused(await mk(b,"take",{id,give:{items:[],bulletins:2}}),409,GONE_L);   // hidden: never says why (no state oracle)
   assert.ok(!(await wr(b)).own.includes("chasuble"));
   assert.equal((await admAt(sock,{cmd:"give",name:"Auteur Mort",lvl:5})).ok,true);
   assert.ok((await view(b)).board.some(l=>l.id===id),"back at level 5");
@@ -253,14 +254,14 @@ it("offer, accept / refuse, push sent",async()=>{
   const mine=(await view(a)).mine.find(l=>l.id===id);
   assert.deepEqual(mine.offers.map(o=>o.from),[{name:"Offrant Bon",camp:"right"},{name:"Offrant Refus",camp:"right"}]);
   assert.deepEqual(mine.offers[1].give,{items:["doudoune"],bulletins:2});
-  refused(await mk(b,"refuse",{id:oc.json.id}),403,"Ce n'est pas ton annonce.");   // only the author decides
-  refused(await mk(b,"accept",{id:oc.json.id}),403,"Ce n'est pas ton annonce.");
+  refused(await mk(b,"refuse",{id:oc.json.id}),409,GONE_O);   // only the author decides; same answer as a missing one
+  refused(await mk(b,"accept",{id:oc.json.id}),409,GONE_O);
+  refused(await mk(b,"accept",{id:99999999}),409,GONE_O);
   const pc=pushes(c);assert.equal((await mk(a,"refuse",{id:oc.json.id})).status,200);
   assert.ok(await until(()=>pushes(c)>pc),"the offerer is pushed on a refusal");
   assert.equal((await view(c)).offers.find(o=>o.id===oc.json.id).status,"refused");
-  const oc2=await mk(c,"offer",{id,give:{items:["doudoune"]}});assert.equal(oc2.status,200);
-  refused(await mk(b,"unoffer",{id:oc2.json.id}),403,"Ce n'est pas ton offre.");
-  assert.equal((await mk(c,"unoffer",{id:oc2.json.id})).status,200);
+  refused(await mk(c,"offer",{id,give:{items:["doudoune"]}}),422,"Ton offre sur cette annonce a déjà été refusée.");
+  refused(await mk(c,"unoffer",{id:ob.json.id}),409,GONE_O);   // someone else's offer
   const pb=pushes(b),acc=await mk(a,"accept",{id:ob.json.id});assert.equal(acc.status,200,JSON.stringify(acc.json));
   assert.ok(await until(()=>pushes(b)>pb),"the offerer is pushed on an acceptance");
   assert.ok((await wr(a)).own.includes("loden"));assert.ok((await wr(b)).own.includes("chasuble"));
@@ -302,6 +303,35 @@ it("a listing its author can no longer honour is hidden and refused",async()=>{
  assert.ok((await wr(b)).own.includes("loden"),"nothing moved");
 });
 
+it("offer limits: one push a day per listing, 5 pending, 10 a day; someone else's listing",async()=>{
+ const a1=await mp("Lot Un","left",["megaphone","cocarde","baguette"]),a2=await mp("Lot Deux","left",["parapluie","tract","sifflet"]),o=await mp("Offrant Zele","right",["loden"]);
+ await subscribe(a1);const pushes=()=>pushLog(mdir).filter(u=>u===FCM+epOf(a1)).length;
+ const ls=[];for(const [c,it] of [[a1,"megaphone"],[a1,"cocarde"],[a1,"baguette"],[a2,"parapluie"],[a2,"tract"],[a2,"sifflet"]])ls.push(await listOk(c,{items:[it]},{kind:"offer"}));
+ const p0=pushes(),o1=await mk(o,"offer",{id:ls[0],give:{items:["loden"]}});assert.equal(o1.status,200);
+ assert.ok(await until(()=>pushes()>p0),"the first offer is pushed");
+ assert.equal((await mk(o,"unoffer",{id:o1.json.id})).status,200);
+ assert.equal((await mk(o,"offer",{id:ls[0],give:{items:["loden"]}})).status,200);
+ await sleep(500);assert.equal(pushes(),p0+1,"offer, withdraw, offer again: pushed once");
+ for(let i=1;i<5;i++)assert.equal((await mk(o,"offer",{id:ls[i],give:{items:["loden"]}})).status,200);
+ refused(await mk(o,"offer",{id:ls[5],give:{items:["loden"]}}),422,"5 offres en attente au plus.");
+ refused(await mk(o,"withdraw",{id:ls[5]}),409,GONE_L);   // someone else's listing: the same answer as a missing one
+ // 6 offers made today; 4 more (withdrawn) and the next one is refused, whatever the pending count
+ editDb(mdir,db=>{const id=db.prepare("SELECT id FROM players WHERE name=?").get("Offrant Zele").id;
+  for(let i=0;i<4;i++)db.prepare("INSERT INTO market_offers(listing_id,player_id,give,created,status) VALUES(999999,?,?,?,'withdrawn')").run(id,JSON.stringify({items:["loden"],bulletins:0}),Date.now());});
+ refused(await mk(o,"offer",{id:ls[5],give:{items:["loden"]}}),422,"10 offres par jour au plus : reviens demain.");
+});
+
+it("board refresh: one trailing live event for a burst of changes",async()=>{
+ const w=await mp("Guetteur Bro"),x=await mp("Rafale Bro","left",["megaphone","cocarde"]);
+ await sleep(3300);   // what earlier scenarios changed has been told
+ const s=stream(MP,w),boards=()=>s.events.filter(e=>e.ev==="market"&&e.data?.kind==="board").length;await sleep(300);
+ try{
+  await listOk(x,{items:["megaphone"]},{kind:"offer"});await listOk(x,{items:["cocarde"]},{kind:"offer"});
+  await sleep(300);assert.equal(boards(),0,"not at once");
+  assert.ok(await until(()=>boards()>=1,4000));await sleep(500);assert.equal(boards(),1,"two listings, one event");
+ }finally{s.close();}
+});
+
 it("deleted author and offerer",async()=>{
  const a=await mp("Partant Bro","left",["chasuble","megaphone"]),b=await mp("Restant Bro","right",["loden","croissant"]),c=await mp("Temoin Bro","right",["doudoune"]),d=await mp("Fuyard Bro","right",["blazer"]);
  const la=await listOk(a,{items:["chasuble"]},{kind:"offer"}),lb=await listOk(b,{items:["loden"]},{kind:"offer"});
@@ -332,7 +362,7 @@ it("away 14 days: hidden, back when seen",async()=>{
   editDb(dir,db=>db.prepare("UPDATE players SET last_seen=? WHERE name=?").run(Date.now()-15*864e5,"Absent Bro"));
   srv=await boot(port,dir,menv(dir));
   assert.ok(!(await view(b)).board.some(l=>l.id===id),"hidden");
-  refused(await mk(b,"take",{id,give:{items:[],bulletins:2}}),422,"Son auteur est absent depuis longtemps : annonce en pause.");
+  refused(await mk(b,"take",{id,give:{items:[],bulletins:2}}),409,GONE_L);
   await meOf(a);   // back
   assert.ok((await view(b)).board.some(l=>l.id===id),"back when seen");
  }finally{await stop(srv);}
@@ -347,6 +377,8 @@ it("marketNew counts only others' visible listings since the last visit",async()
   await listOk(b,{items:["loden"]},{kind:"offer"});
   assert.equal((await meOf(a)).marketNew,1,"never visited: everything is new");
   assert.equal((await view(a)).newCount,1);
+  const upd=()=>{let u;editDb(dir,db=>{u=db.prepare("SELECT updated FROM players WHERE name=?").get("Visiteur Bro").updated;});return u;};
+  const u1=upd();await sleep(20);await view(a);assert.equal(upd(),u1,"a visit within 30 s is not written again");
   assert.equal((await meOf(a)).marketNew,0,"seen");
   await view(b);await sleep(5);
   await listOk(b,{items:["doudoune"]},{kind:"offer"});await listOk(a,{items:["megaphone"]},{kind:"offer"});await listOk(s,{items:["blazer"]},{kind:"offer"});
@@ -354,6 +386,7 @@ it("marketNew counts only others' visible listings since the last visit",async()
   assert.equal((await meOf(a)).marketNew,1,"one new by another, visible");
   assert.equal((await meOf(b)).marketNew,1,"b sees a's, not its own");
   await view(a);await stop(srv);srv=await boot(port,dir,menv(dir));
+  // the last visit (kept in memory, written by the clean stop's saveAll) survives the restart
   assert.equal((await meOf(a)).marketNew,0,"the last visit survives a restart");
  }finally{await stop(srv);}
 });

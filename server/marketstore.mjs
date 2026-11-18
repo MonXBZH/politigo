@@ -38,7 +38,6 @@ CREATE INDEX IF NOT EXISTS market_offers_p ON market_offers(player_id,status);`)
   insO:db.prepare("INSERT INTO market_offers(listing_id,player_id,give,created) VALUES(?,?,?,?)"),
   getO:db.prepare("SELECT * FROM market_offers WHERE id=?"),
   onO:db.prepare("SELECT * FROM market_offers WHERE listing_id=? ORDER BY id"),
-  byO:db.prepare("SELECT * FROM market_offers WHERE player_id=? ORDER BY id DESC"),
   pendO:db.prepare("SELECT * FROM market_offers WHERE player_id=? AND status='pending' ORDER BY id"),
   setO:db.prepare("UPDATE market_offers SET status=? WHERE id=? AND status='pending'"),
   closeOn:db.prepare("UPDATE market_offers SET status='closed' WHERE listing_id=? AND status='pending'"),
@@ -48,6 +47,14 @@ CREATE INDEX IF NOT EXISTS market_offers_p ON market_offers(player_id,status);`)
   recent:db.prepare("SELECT * FROM market_trades ORDER BY id DESC LIMIT ?"),
   bump:db.prepare("INSERT INTO market_daily(day,player_id,n) VALUES(?,?,1) ON CONFLICT(day,player_id) DO UPDATE SET n=n+1"),
   today:db.prepare("SELECT n FROM market_daily WHERE day=? AND player_id=?"),
+  pendOnL:db.prepare("SELECT * FROM market_offers WHERE listing_id=? AND status='pending' ORDER BY id"),
+  byLim:db.prepare("SELECT * FROM market_offers WHERE player_id=? AND (status='pending' OR id IN (SELECT id FROM market_offers WHERE player_id=? ORDER BY id DESC LIMIT ?)) ORDER BY id DESC"),
+  ofLP:db.prepare("SELECT * FROM market_offers WHERE listing_id=? AND player_id=? ORDER BY id DESC LIMIT 20"),
+  refused:db.prepare("SELECT COUNT(*) AS n FROM market_offers WHERE listing_id=? AND player_id=? AND status='refused'"),
+  since:db.prepare("SELECT created FROM market_offers WHERE player_id=? AND created>=? ORDER BY id DESC LIMIT 100"),
+  purgeO:db.prepare("DELETE FROM market_offers WHERE status IN ('withdrawn','refused','closed') AND created<?"),
+  purgeL:db.prepare("DELETE FROM market_listings WHERE status IN ('withdrawn','closed') AND created<? AND id NOT IN (SELECT listing_id FROM market_trades)"),
+  purgeD:db.prepare("DELETE FROM market_daily WHERE day<?"),
  };
  const closeO=id=>q.setO.run("closed",id).changes>0;
  return {
@@ -62,7 +69,19 @@ CREATE INDEX IF NOT EXISTS market_offers_p ON market_offers(player_id,status);`)
   offer:(listingId,playerId,give,now=Date.now())=>Number(q.insO.run(listingId,playerId,JSON.stringify(give),now).lastInsertRowid),
   offerOf:id=>O(q.getO.get(id)),
   offersOn:listingId=>q.onO.all(listingId).map(O),
-  offersBy:playerId=>q.byO.all(playerId).map(O),
+  // The player's pending offers and the `limit` latest ones, newest first.
+  offersBy:(playerId,limit=20)=>q.byLim.all(playerId,playerId,Math.max(0,limit|0)).map(O),
+  openOf:playerId=>q.openOfL.all(playerId).map(L),
+  pendingOffersOn:listingId=>q.pendOnL.all(listingId).map(O),
+  offersOf:(listingId,playerId)=>q.ofLP.all(listingId,playerId).map(O),   // the latest 20, newest first
+  refusedOn:(listingId,playerId)=>q.refused.get(listingId,playerId).n,
+  createdSince:(playerId,since)=>q.since.all(playerId,since).map(r=>r.created),
+  // Decided rows older than `before` go (offers withdrawn, refused or closed; listings withdrawn or closed and never
+  // traded) and the daily counts of older days. Trades, traded listings and accepted offers stay: the admin's history.
+  purge(before){
+   const offers=Number(q.purgeO.run(before).changes),listings=Number(q.purgeL.run(before).changes),daily=Number(q.purgeD.run(dayOf(before)).changes);
+   return {listings,offers,daily};
+  },
   setOffer:(id,status)=>q.setO.run(status,id).changes>0,
   // One trade: the listing is traded, the chosen offer accepted, the other pending ones closed, both players counted for the day.
   trade({listingId,offerId=null,aId,bId,aGave,bGave,sameNet=false,now=Date.now()}){
