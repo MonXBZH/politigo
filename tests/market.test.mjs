@@ -74,7 +74,7 @@ test("closeUsing closes only that player's matching rows",()=>{
  const r=M.closeUsing(1,["a1"]);
  assert.deepEqual(r,{listings:[l1],offers:[o1]});
  assert.equal(M.listing(l1).status,"closed");assert.equal(M.listing(l2).status,"open");assert.equal(M.listing(l3).status,"open");
- assert.equal(M.offerOf(o1).status,"closed");assert.equal(M.offerOf(o2).status,"pending");assert.equal(M.offerOf(o3).status,"pending");
+ assert.equal(M.offerOf(o1).status,"closed");assert.equal(M.offerOf(o2).status,"pending");assert.equal(M.offerOf(o3).status,"closed");// pending offer on the closed listing l1
  assert.deepEqual(M.closeUsing(1,[]),{listings:[],offers:[]});
 });
 
@@ -92,4 +92,43 @@ test("creating the module twice on one database is idempotent",()=>{
  const db=new DatabaseSync(":memory:");
  const a=MK.createMarket(db),id=a.list(1,G,W,NOW),b=MK.createMarket(db);
  assert.equal(b.listing(id).status,"open");
+});
+
+const rows=(db,t)=>db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get().n;
+const tr=(l,o)=>({listingId:l,offerId:o,aId:1,bId:2,aGave:G,bGave:W,sameNet:false,now:NOW});
+const refuses=(db,M,l,o)=>{
+ assert.throws(()=>M.trade(tr(l,o)),Error);
+ assert.equal(rows(db,"market_trades"),0);assert.equal(rows(db,"market_daily"),0);
+};
+
+test("trade refuses a withdrawn, closed or already traded listing, writing nothing",()=>{
+ const {db,M}=fresh();
+ const w=M.list(1,G,W,NOW);M.withdraw(w,1);refuses(db,M,w,null);
+ const c=M.list(1,G,W,NOW);M.closeUsing(1,["a1"]);refuses(db,M,c,null);
+ const t=M.list(1,{items:["z"]},W,NOW);
+ M.trade(tr(t,null));
+ const n=rows(db,"market_trades");
+ assert.throws(()=>M.trade(tr(t,null)),Error);
+ assert.equal(rows(db,"market_trades"),n);assert.equal(M.today(1,dayKey(Math.floor(NOW/H))),1);
+});
+
+test("trade refuses a non-pending offer or one of another listing, leaving the listing open",()=>{
+ const {db,M}=fresh();
+ const l=M.list(1,G,W,NOW),l2=M.list(1,G,W,NOW);
+ const o=M.offer(l,2,W,NOW);M.setOffer(o,"refused");
+ refuses(db,M,l,o);
+ const o2=M.offer(l2,2,W,NOW);
+ refuses(db,M,l,o2);
+ assert.equal(M.listing(l).status,"open");assert.equal(M.offerOf(o2).status,"pending");
+});
+
+test("withdraw and closeUsing close the pending offers on the listings they close",()=>{
+ const {M}=fresh();
+ const l1=M.list(1,{items:["a1"]},W,NOW),l2=M.list(1,{items:["a2"]},W,NOW);
+ const o1=M.offer(l1,2,W,NOW),o2=M.offer(l2,2,W,NOW);
+ assert.equal(M.withdraw(l1,1),true);
+ assert.equal(M.offerOf(o1).status,"closed");assert.equal(M.offerOf(o2).status,"pending");
+ M.closeUsing(1,["a2"]);
+ assert.equal(M.offerOf(o2).status,"closed");
+ assert.equal(M.withdraw(l1,2),false);
 });

@@ -1,7 +1,7 @@
 // La Brocante, player trading: the rows only. A listing (what its owner gives, what he wants), offers on it, the trades
 // done, and a daily count per player. give/want are already-clean JSON (web/market.mjs cleans, the server checks); who may
 // do what is the server's business. Plain node:sqlite; the tables are created here. Never BEGINs: trade() runs inside the
-// caller's transaction. In the image this file is /app/marketstore.mjs (web/market.mjs, the rules, is /app/market.mjs).
+// caller's transaction. In the image it sits next to web/market.mjs (the rules, /app/market.mjs) under its own name.
 // Statuses: listing "open"|"traded"|"withdrawn"|"closed"; offer "pending"|"accepted"|"refused"|"closed"|"withdrawn".
 import * as R from "./rules.mjs";
 
@@ -55,7 +55,10 @@ CREATE INDEX IF NOT EXISTS market_offers_p ON market_offers(player_id,status);`)
   listing:id=>L(q.getL.get(id)),
   openListings:()=>q.openL.all().map(L),
   mine:playerId=>q.mineL.all(playerId).map(L),
-  withdraw:(id,playerId)=>q.withdraw.run(id,playerId).changes>0,
+  withdraw(id,playerId){
+   if(!q.withdraw.run(id,playerId).changes)return false;
+   q.closeOn.run(id);return true;
+  },
   offer:(listingId,playerId,give,now=Date.now())=>Number(q.insO.run(listingId,playerId,JSON.stringify(give),now).lastInsertRowid),
   offerOf:id=>O(q.getO.get(id)),
   offersOn:listingId=>q.onO.all(listingId).map(O),
@@ -63,8 +66,12 @@ CREATE INDEX IF NOT EXISTS market_offers_p ON market_offers(player_id,status);`)
   setOffer:(id,status)=>q.setO.run(status,id).changes>0,
   // One trade: the listing is traded, the chosen offer accepted, the other pending ones closed, both players counted for the day.
   trade({listingId,offerId=null,aId,bId,aGave,bGave,sameNet=false,now=Date.now()}){
-   q.setL.run("traded",listingId);
-   if(offerId!=null)q.setO.run("accepted",offerId);
+   // Checked before any write: the caller's transaction rolls back on the throw.
+   const o=offerId==null?null:q.getO.get(offerId);
+   if(q.getL.get(listingId)?.status!=="open")throw new Error("Annonce indisponible.");
+   if(offerId!=null&&(o?.listing_id!==listingId||o.status!=="pending"))throw new Error("Offre indisponible.");
+   if(q.setL.run("traded",listingId).changes!==1)throw new Error("Annonce indisponible.");
+   if(offerId!=null&&q.setO.run("accepted",offerId).changes!==1)throw new Error("Offre indisponible.");
    q.closeOn.run(listingId);
    const day=dayOf(now);q.bump.run(day,aId);q.bump.run(day,bId);
    return Number(q.insT.run(listingId,offerId,aId,bId,JSON.stringify(aGave),JSON.stringify(bGave),sameNet?1:0,now).lastInsertRowid);
@@ -74,7 +81,7 @@ CREATE INDEX IF NOT EXISTS market_offers_p ON market_offers(player_id,status);`)
   closeUsing(playerId,itemIds){
    const out={listings:[],offers:[]};
    if(!Array.isArray(itemIds)||!itemIds.length)return out;
-   for(const l of q.openOfL.all(playerId))if(uses(js(l.give),itemIds)&&q.setL.run("closed",l.id).changes)out.listings.push(l.id);
+   for(const l of q.openOfL.all(playerId))if(uses(js(l.give),itemIds)&&q.setL.run("closed",l.id).changes){q.closeOn.run(l.id);out.listings.push(l.id);}
    for(const o of q.pendO.all(playerId))if(uses(js(o.give),itemIds)&&closeO(o.id))out.offers.push(o.id);
    return out;
   },

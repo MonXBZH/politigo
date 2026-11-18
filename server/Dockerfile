@@ -6,7 +6,7 @@ RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack 
 ENV NODE_ENV=production NODE_NO_WARNINGS=1 TZ=Europe/Paris PORT=3000 DB_PATH=/data/politigo.db
 WORKDIR /app
 COPY web/rules.mjs web/activities.mjs web/wardrobe.mjs web/duel.mjs web/events.mjs web/snowball.mjs web/market.mjs server/server.mjs server/admin.mjs server/push.mjs server/chat.mjs server/adminlink.mjs server/snowfront.mjs server/snowchallenges.mjs ./
-COPY server/market.mjs ./marketstore.mjs
+COPY server/marketstore.mjs ./
 # The volumes inherit this ownership the first time they are created (/run/politigo: the admin socket, shared with
 # the optional admin container).
 RUN mkdir -p /data /run/politigo && chown node:node /data /run/politigo
