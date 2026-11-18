@@ -642,7 +642,7 @@ function flushBoard(){
 }
 // The debate's seed deals its answers: it never leaves the server (the other games' seeds only shape what is drawn).
 const publicState=S=>S.mini?.k==="debate"&&"seed" in S.mini?{...S,mini:Object.fromEntries(Object.entries(S.mini).filter(([k])=>k!=="seed"))}:S;
-function mePayload(p){return {name:p.name,state:publicState(p.state),speed:SPEED,tz:R.timeZone(),serverNow:Date.now(),event:EVENT_MODE,events:publicEvents(Date.now()),version:VERSION,release:RELEASE,seenVersion:p.seen??null,chat:chatRooms(),urnHint:urnHintOf(p),baton:batonWon?batonView(p):null,marketNew:marketNewOf(p,Date.now()),...noelView(p,Date.now())};}
+function mePayload(p){return {name:p.name,state:publicState(p.state),speed:SPEED,tz:R.timeZone(),serverNow:Date.now(),event:EVENT_MODE,events:publicEvents(Date.now()),version:VERSION,release:RELEASE,seenVersion:p.seen??null,chat:chatRooms(),urnHint:urnHintOf(p),baton:batonWon?batonView(p):null,marketNew:marketNewOf(p,Date.now()),marketListed:marketListedOf(p),...noelView(p,Date.now())};}
 
 // ===================================================================== TRÊVE: THE FRONT DE NEIGE AND THE NEW YEAR TOAST
 // Every snowball fight the server replayed adds its score to its player's camp (snowfront.mjs), unless flagged as a
@@ -1680,6 +1680,8 @@ function marketNewOf(p,now){
   mkNew.set(p.id,{t:now,n});return n;
  }catch{return 0;}
 }
+// For /api/me: my items in my open listings (the Garde-robe's « En vitrine »); [] rather than a broken payload.
+function marketListedOf(p){try{return [...new Set(M.openOf(p.id).flatMap(l=>l.give?.items??[]))];}catch{return [];}}
 // Live: "kind" to the players concerned, at once.
 function marketCast(ids,kind){const to=new Set(ids);for(const c of clients)if(to.has(c.playerId))sse(c.res,"market",{kind});}
 // The board changed: every screen hears it once, MK_BOARD_MS after the first change (the ones in between ride along).

@@ -571,7 +571,8 @@ body[data-season=noel],body[data-camp][data-season=noel]{--accent-2:#f4c84a;--bg
 .price.count{background:var(--danger);color:#fff;min-width:24px;text-align:center}
 .pill.new{color:#2a1c05;background:var(--accent-2);border-color:transparent;font-weight:700}
 .mk-top{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;margin:14px 0 4px}
-.mk-top .tabs.small{margin:0;flex:1 1 260px}
+.mk-top .tabs.small{margin:0;flex:1 1 100%;min-width:0}
+.mk-tabs button{white-space:nowrap;padding:7px 4px;min-width:0}
 .mk-board{display:grid;gap:8px;margin-top:8px}
 .mk-lst{overflow-wrap:anywhere;display:grid;gap:6px;padding:10px 12px;border-radius:18px;border:1px solid var(--line);background:var(--glass);margin-top:8px}
 .mk-board .mk-lst{margin-top:0}

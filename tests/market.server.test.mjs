@@ -391,6 +391,18 @@ it("marketNew counts only others' visible listings since the last visit",async()
  }finally{await stop(srv);}
 });
 
+it("marketListed: my items in my open listings, in /api/me; gone when withdrawn or traded",async()=>{
+ const a=await mp("Vitrine Bro","left",["cocarde","tract","sifflet"]),b=await mp("Chineur Bro","right",["loden"]);
+ assert.deepEqual((await meOf(a)).marketListed,[],"nothing listed yet");
+ const l1=await listOk(a,{items:["cocarde","tract"]},{kind:"offer"}),l2=await listOk(a,{items:["sifflet"]},{kind:"items",items:["loden"],bulletins:0});
+ assert.deepEqual([...(await meOf(a)).marketListed].sort(),["cocarde","sifflet","tract"]);
+ assert.deepEqual((await meOf(b)).marketListed,[],"never someone else's");
+ assert.equal((await mk(a,"withdraw",{id:l1})).status,200);
+ assert.deepEqual((await meOf(a)).marketListed,["sifflet"]);
+ assert.equal((await mk(b,"take",{id:l2,give:{items:["loden"],bulletins:0}})).status,200);
+ assert.deepEqual((await meOf(a)).marketListed,[],"traded: out of the window");
+});
+
 it("same network flag stored on the trade",async()=>{
  const a=from(MP,"10.9.5.1"),b=from(MP,"10.9.5.1"),c=from(MP,"10.9.5.2");
  for(const [cl,n] of [[a,"Meme Box A"],[b,"Meme Box B"],[c,"Autre Box C"]]){const r=await cl.call("POST","/api/register",{name:n,password:PW,invite:INVITE,camp:"left"});assert.equal(r.status,201,r.text);}

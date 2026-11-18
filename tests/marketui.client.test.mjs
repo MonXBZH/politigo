@@ -168,3 +168,13 @@ test("catalogue: every tradable item not owned, grouped by kind and rarity; neve
  assert.equal(g.flatMap(x=>x.items).find(i=>i.id==="cocarde").label,"Cocarde");
  for(const x of g)assert.ok(!/ultra|mythique/i.test(x.label));
 });
+
+test("listingView, tradeRecap: a listing whose want is null or missing never throws",()=>{
+ for(const want of [null,undefined]){
+  const l=lst(["golf"],want);
+  const v=U.listingView(l,st(["baguette"]),"");
+  assert.equal(v.takeOk,false);assert.equal(v.takeWhy,"Cette annonce n'est plus disponible.");assert.equal(v.wantText,"");assert.equal(v.offerOnly,false);
+  assert.equal(U.tradeRecap(l,st(),null,[]).ready,false);
+  assert.deepEqual(U.forMe([l],st(),""),[]);
+ }
+});

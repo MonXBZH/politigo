@@ -43,7 +43,8 @@ function takeWhy(l,S,block){
  if(block)return block;
  const has=own(S),dup=(l.give?.items??[]).filter(id=>has.includes(id));
  if(dup.length)return `Déjà dans ta garde-robe : ${dup.map(nm).join(", ")}`;
- const w=l.want,lack=[];
+ const w=l.want??{},lack=[];
+ if(!["items","rarity","bulletins"].includes(w.kind))return "Cette annonce n'est plus disponible.";   // unreadable: never taken
  if(w.kind==="items")lack.push(...(w.items??[]).filter(id=>!has.includes(id)).map(nm));
  if(w.kind==="rarity"&&!candidates(S,w).length)lack.push(kindWord(w.slot,w.rarity));
  const bal=S?.wardrobe?.bulletins??0;
