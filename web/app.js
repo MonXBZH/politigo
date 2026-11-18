@@ -15,6 +15,8 @@ import {createBatonDuel,screenOf,feedParts} from "./batonduel.mjs";
 import {noelMoment,noelYear,voeuxText,adventCells,adventGiftText,etProgress,
  cheersPhase,cheersClock,cheersNamesLine,cheersAnnounce,frontLine,newYearYear,newYearScreen,CHEERS_MS,CHEERS_REPLAY_MS,nyFrameDue} from "./noelui.mjs";
 import {endSummary,frontBar,challengeText,sentText,challengeLists,dareView,sendsOnDeath} from "./snowui.mjs";
+import {MARKET,tradable} from "./market.mjs";
+import {listingView,forMe,pickable,tradeRecap,offerCheck,freshIds,catalogue,candidates,kindWord} from "./marketui.mjs";
 const {people,personalItems,stresses,shop,fxNames,XP,xpCost,xpFloor,stage}=R;
 const $=s=>document.querySelector(s);
 const motionQuery=matchMedia("(prefers-reduced-motion: reduce)");
@@ -28,6 +30,9 @@ let board=[],feed=[],journalShown=-1,journalRendered=-1,boardTab="score",urnHint
 let batonV=null,bd=null;
 // The snowball fight (Trêve des confiseurs): me.snowFront, the last fight's end screen, the challenges (GET /api/snow/challenges).
 let snowFront=null,snowLast=null,snowData=null,snowErr="",snowSeq=0,snowAsked=false;
+// La Brocante: GET /api/market (only while its sheet is open), the tab, the flow under way (trade, offer, deposit, mine,
+// done), the listings new to this visit, the Dossier's count (me.marketNew) and whether it is stale.
+let mkData=null,mkErr="",mkSeq=0,mkTab="all",mkFlow=null,mkFresh=new Set(),mkNewCount=0,mkStale=false,mkMeT=0;
 const curIdx=()=>R.curIdx(S),hodOf=R.hodOf,isNight=()=>R.isNight(S),isAsleep=()=>R.isAsleep(S);
 // What the élu wears from the wardrobe (wardrobe.mjs): drawn over his own look by sprite().
 const worn=()=>S?.wardrobe?.worn||{outfit:null,object:null},dress=p=>({...p,outfit:worn().outfit,object:worn().object});
@@ -73,6 +78,8 @@ function applyMe(m,{replay=false}={}){
  const first=!S||me!==m.name;
  // The action answer and the live stream race each other: an older copy of the state never replaces a newer one.
  if(!first&&m.state.lastReal<S.lastReal)return;
+ if(me!==m.name){mkData=null;mkErr="";mkFlow=null;}                  // another player: nothing of the last one's Brocante
+ if(Number.isFinite(m.marketNew))mkNewCount=mkOpen()?0:Math.max(0,m.marketNew);   // the Dossier's count (the open sheet has seen them)
  chatFlags(m.chat);
  me=m.name;SPEED=m.speed||1;VERSION=m.version||"dev";R.setTimeZone(m.tz||"Europe/Paris");
  if("release" in m){RELEASE=m.release||null;SEEN=m.seenVersion||null;}
@@ -133,6 +140,7 @@ function playJournal(onlyMajor){
   // Reached on their own (a visit, a purchase…): said once. Missions, letters and draws answer the player's tap instead.
   else if(act.k==="goal"){playAnim("win",1500);toast(act.text);}
   else if(act.k==="flame")toast(`🔥 ${act.text}`);
+  else if(act.k==="market"){toast(`🧺 ${act.text}`);if(mkOpen())marketLoad();}   // a trade, a listing closed or withdrawn
   else if(level)toast(level.text);
  }else if(level)toast(level.text);
 }
@@ -1297,6 +1305,7 @@ function connectLive(){
  on("duel",v=>{if(v&&typeof v==="object")duelEvent(v);});
  on("snowChallenge",v=>{if(v&&typeof v==="object")snowEvent(v);});
  on("snowFront",v=>snowFrontEvent(v));
+ on("market",v=>{if(v&&typeof v==="object")marketEvent(v);});
  on("announce",v=>{if(typeof v?.text!=="string"||!v.text.trim())return;announceQ.push({text:v.text.slice(0,240)});if(announceQ.length>3)announceQ.shift();showAnnounce();});
  // The Bâton de feu found its bearer: a banner for everyone else (the bearer has the legend).
  on("mythic",v=>{
@@ -1411,7 +1420,7 @@ function armedButton(label,armedLabel,cls,onConfirm){
 // 1.6.0: the missions (a report ready), the letter, the goals' progress, the wardrobe and the urn.
 const sheetSig=()=>[S.fm,curIdx(),R.actsToday(S),R.actsThisVisit(S),S.energy<20,S.coffees,S.breadIdx,S.lvl,S.best,S.equipped[person().name]||0,isAsleep(),S.camp,!rematchBlock(),season(),S.treatDay,
  S.missions?.cur?.id,A.missionReady(S),A.missionsToday(S),S.energy<A.MISSION_RULES.minEnergy,S.mail?.letter?.id,A.lettersWaiting(S),A.lettersToday(S),S.mail?.b,S.goals?.list?.map(x=>`${x.n}${x.done?"d":""}`).join(),
- running().map(e=>e.id).join(),S.wardrobe?.own?.length,worn().outfit,worn().object,S.wardrobe?.bulletins,S.wardrobe?.confetti,W.freeDrawToday(S),A.flameOf(S),urnHint,batonSig(),S.advent?.y,S.advent?.opened?.join("-")].join("|");
+ running().map(e=>e.id).join(),S.wardrobe?.own?.length,worn().outfit,worn().object,S.wardrobe?.bulletins,S.wardrobe?.confetti,W.freeDrawToday(S),A.flameOf(S),urnHint,batonSig(),S.advent?.y,S.advent?.opened?.join("-"),mkNewCount].join("|");
 let shownSig="";
 function setBackgroundInert(on){for(const el of document.querySelectorAll(".topbar,.app,footer"))el.inert=on;lockScroll(on);}
 // The page behind an open sheet does not move: a swipe that reaches the end of a list (the chat) no longer scrolls the
@@ -1504,6 +1513,8 @@ function renderSheet(kind,opener){
  if(kind==="duels")renderDuels(body,set);
  if(kind==="snow")renderSnow(body,set);
  if(kind==="snowdare")renderSnowDare(body,set);
+ if(kind==="market")renderMarket(body,set);
+ if(kind==="marketDo")renderMarketDo(body,set);
  if(kind==="test"){
   set("Test politique","Cinq questions pour les indécis. Sans effet sur la partie : le dernier mot reste le tien.");
   const box=document.createElement("div");box.className="quiz";box.id="sheet-quiz";body.append(box);
@@ -1553,7 +1564,9 @@ function renderSheet(kind,opener){
   const wearing=[wo.outfit,wo.object].filter(id=>id&&W.ITEMS[id]).map(id=>W.ITEMS[id].name).join(" et ");
   body.append(blockTitle("Garde-robe"),list(
    itemButton("Garde-robe",`${got} sur ${vis.length} tenues et objets${wearing?` · porte ${wearing}`:""}. Purement cosmétique.`,"Ouvrir",false,()=>openSheet("wardrobe")),
-   itemButton(urnName(S.camp),W.freeDrawToday(S)?"Ton tirage gratuit du jour t'attend.":`Tirage gratuit déjà pris aujourd'hui · ${plural(w.bulletins,"bulletin")} en poche.`,`🎟️ ${w.bulletins}`,false,()=>openSheet("urn"))));
+   itemButton(urnName(S.camp),W.freeDrawToday(S)?"Ton tirage gratuit du jour t'attend.":`Tirage gratuit déjà pris aujourd'hui · ${plural(w.bulletins,"bulletin")} en poche.`,`🎟️ ${w.bulletins}`,false,()=>openSheet("urn")),
+   marketRow()));
+  if(mkStale)marketMe();                              // the board changed since me.marketNew was read
   body.append(blockTitle("Objets personnels"),list(...personalItems[p.name].map((it,i)=>{
    const on=(S.equipped[p.name]||0)===i,held=on&&!wo.object;
    return itemButton(it.name,held?"Dans sa main":on?"Équipé, mais rangé : un objet de la garde-robe est dans sa main. Toucher pour le reprendre.":"Toucher pour équiper",on?"équipé":"",false,()=>equip(i),held);
@@ -1751,7 +1764,9 @@ function wardCard(id,it,i){
  const idle=on?"Porté":own?(it.kind==="outfit"?"Porter":"Brandir"):swap?`Échanger · ${cost} 🎊`:"À gagner";
  st.className="st";st.textContent=idle;
  b.append(cv,rk,nm,st);
- b.setAttribute("aria-label",own?`${it.name}, ${label}. ${on?"Porté : toucher pour l'enlever.":"Toucher pour le porter."}`:swap?`${it.name}, ${label} : échanger ${cost} confettis contre lui.`:`${label}, pas encore gagné.`);
+ const vit=own&&mkListed().has(id);                  // in one of my open listings (known once the Brocante was opened)
+ if(vit){const v=document.createElement("span");v.className="mk-badge";v.textContent="En vitrine";b.append(v);}
+ b.setAttribute("aria-label",own?`${it.name}, ${label}${vit?", en vitrine à la Brocante":""}. ${on?"Porté : toucher pour l'enlever.":"Toucher pour le porter."}`:swap?`${it.name}, ${label} : échanger ${cost} confettis contre lui.`:`${label}, pas encore gagné.`);
  if(own)b.title=it.desc;
  if(!own&&!swap)b.setAttribute("aria-disabled","true");
  const p=ownLook(),off=i*331;
@@ -2301,6 +2316,323 @@ function snowFrontEvent(v){
  if(!v||typeof v!=="object")return;
  snowFront=v;
  if(sheetKind==="snow")liveSheet(true);
+}
+// ---------- La Brocante (market.mjs: the rules, marketui.mjs: what the cards say) ----------
+// Two sheets: "market" (the board, its tabs, the deposit button) and "marketDo" (the flow: trade, offer, deposit in two
+// steps, my listings and offers, the trade done). GET /api/market only while one of them is open: it marks the board
+// as seen. Closed, the live "board" notice only marks the Dossier's count stale (me.marketNew, asked again by /api/me
+// when the Dossier shows it). Every player's or item's text goes in through textContent.
+const MK_SHEETS=["market","marketDo"];
+const mkOpen=()=>MK_SHEETS.includes(sheetKind)&&!$("#sheet").hidden;
+const mkArr=v=>Array.isArray(v)?v.filter(x=>x&&typeof x==="object"):[];
+const mkBoard=()=>mkArr(mkData?.board),mkMine=()=>mkArr(mkData?.mine),mkOffers=()=>mkArr(mkData?.offers);
+const mkBlock=()=>typeof mkData?.block==="string"?mkData.block:"";
+const mkListed=()=>new Set(mkMine().flatMap(l=>Array.isArray(l.give?.items)?l.give.items:[]));
+const mkCampWord=c=>c==="left"?"gauche":c==="right"?"droite":"";
+const mkEl=(tag,cls,text)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e;};
+async function marketLoad(){
+ if(!S)return;
+ const seq=++mkSeq,who=me,r=await api("GET","/api/market");
+ if(seq!==mkSeq||!S||me!==who)return;
+ if(r.ok){mkData=r;mkErr="";for(const id of freshIds(mkArr(r.board),r.newCount))mkFresh.add(id);mkNewCount=0;}else mkErr=r.error;
+ if(mkOpen())liveSheet(true);
+}
+function openMarket(){mkFresh=new Set();mkFlow=null;openSheet("market");marketLoad();}
+const mkGo=flow=>{mkFlow=flow;openSheet("marketDo");};
+const mkBack=()=>{mkFlow=null;openSheet("market");};
+// Live: an open Brocante reloads (a board change, an offer, a trade); closed, only the count goes stale.
+function marketEvent(v){
+ if(mkOpen()){marketLoad();return;}
+ if(v.kind!=="board")return;                         // mine, offer, trade: the journal and the push say it
+ mkStale=true;
+ if(sheetKind==="more"&&!$("#sheet").hidden)marketMe();
+}
+// /api/me again for marketNew, a little later (not every screen at the same instant), once at a time.
+function marketMe(){
+ mkStale=false;if(mkMeT)return;
+ mkMeT=setTimeout(async()=>{const who=me,r=await api("GET","/api/me");mkMeT=0;if(r.ok&&S&&me===who)applyMe(r);},300+Math.random()*1700);
+}
+// The Dossier's row, with the count of listings new since the last visit.
+function marketRow(){
+ const n=mkNewCount,b=itemButton("🧺 La Brocante",n?`${n} nouvelle${n>1?"s":""} annonce${n>1?"s":""} depuis ta dernière visite.`:"Troquer avec les autres joueurs, des deux camps.",n?String(Math.min(n,99)):"Ouvrir",false,openMarket);
+ if(n){b.querySelector(".price").classList.add("count");b.setAttribute("aria-label",`La Brocante, ${n} nouvelle${n>1?"s":""} annonce${n>1?"s":""}`);}
+ return b;
+}
+// An item as a chip: its picture (objects drawn, outfits a tile), name, kind and rarity (never the rarity of what
+// does not trade).
+function mkThumb(id){
+ const it=W.ITEMS[id];
+ if(it?.kind==="object"){
+  const cv=mkEl("canvas","mk-thumb");cv.width=cv.height=32;cv.setAttribute("aria-hidden","true");
+  try{if(drawObject(cv.getContext("2d"),id,14,26,0))return cv;}catch{}
+ }
+ const t=mkEl("span","mk-thumb tile",it?.kind==="outfit"?"👔":"✦");t.setAttribute("aria-hidden","true");return t;
+}
+function mkChip(id){
+ const it=W.ITEMS[id],ok=tradable(id),c=mkEl("span","mk-chip"),n=mkEl("span","nm",it?.name??id);
+ c.style.setProperty("--r",ok?W.RARITY_COLOR[it.rarity]:"#8d84a0");   // CSSOM
+ n.append(mkEl("small","",`${it?.kind==="outfit"?"Tenue":"Objet"}${ok?` · ${W.RARITY_LABEL[it.rarity]}`:""}`));
+ c.append(mkThumb(id),n);return c;
+}
+const mkBul=(n,plus=true)=>mkEl("span","mk-bul",`${plus?"+ ":""}${n} 🗳️`);
+const mkCamp=c=>mkEl("span",`mk-camp ${c==="right"?"right":"left"}`,mkCampWord(c));
+const mkSide=(items,bul)=>{const s=mkEl("span","mk-side");s.append(...items.map(mkChip));if(bul)s.append(mkBul(bul,items.length>0));return s;};
+function mkRow(k,...kids){const r=mkEl("div","mk-row");r.append(mkEl("span","k",k),...kids);return r;}
+function mkWho(name,camp,...rest){const s=mkEl("span","mk-who");s.append(mkEl("b",camp==="right"?"right":camp==="left"?"left":"",name));if(camp)s.append(mkCamp(camp));s.append(...rest);return s;}
+// What a listing asks for, as chips: the items, a rarity, bulletins, or « Faites-moi une offre ».
+function mkWant(w){
+ const s=mkEl("span","mk-side");
+ if(w?.kind==="offer")s.append(mkEl("i","","Faites-moi une offre"));
+ else if(w?.kind==="bulletins")s.append(mkBul(w.bulletins,false));
+ else if(w?.kind==="rarity"){s.append(mkEl("b","",kindWord(w.slot,w.rarity)));if(w.bulletins)s.append(mkBul(w.bulletins));}
+ else if(w?.kind==="items"){s.append(...mkArrIds(w.items).map(mkChip));if(w.bulletins)s.append(mkBul(w.bulletins));}
+ return s;
+}
+const mkArrIds=v=>Array.isArray(v)?v.filter(x=>typeof x==="string"):[];
+const mkGive=g=>({items:mkArrIds(g?.items),bulletins:Number.isInteger(g?.bulletins)?g.bulletins:0});
+function mkCard(l){
+ const block=mkBlock(),v=listingView(l,S,block),oc=offerCheck(l,S,mkOffers(),block),d=mkEl("div","mk-lst");
+ const head=mkEl("div","mk-head"),side=mkEl("span","mk-when");
+ if(mkFresh.has(l.id))side.append(pill("nouveau","new"));
+ if(Number.isFinite(l.created))side.append(mkEl("small","",when(l.created)));
+ head.append(mkWho(v.who,v.camp),side);
+ d.append(head,mkRow("Propose",mkSide(v.gives.map(x=>x.id),v.giveBulletins)),mkRow("Cherche",mkWant(l.want)));
+ const row=mkEl("div","btn-row");
+ if(!v.offerOnly)row.append(smallButton("Troquer","go",()=>mkGo({type:"trade",id:l.id,pick:candidates(S,l.want)[0]??null}),!v.takeOk));
+ row.append(smallButton(oc.sent?"Offre envoyée ✓":"Faire une offre","",()=>mkGo({type:"offer",id:l.id,items:[],bul:0}),!oc.ok));
+ d.append(row);
+ if(!v.offerOnly)d.append(v.takeOk?mkEl("span","mk-ok","Tu as ce qu'il faut : l'échange se fait tout de suite."):mkEl("span","mk-why",v.takeWhy));
+ if(!oc.ok&&oc.why!==v.takeWhy)d.append(mkEl("span",oc.sent?"mk-ok":"mk-why",oc.why));
+ return d;
+}
+const MK_TABS=[["all","Toutes"],["outfit","Tenues"],["object","Objets"],["me","Pour moi"]];
+function renderMarket(body,set){
+ set("🧺 La Brocante",`Tout le monde regarde ; on échange dès le niveau ${R.DUEL.minLevel}.`);
+ if(!mkData){
+  body.append(fine(mkErr||"Chargement de la Brocante…"));
+  if(mkErr){const r=mkEl("div","btn-row");r.append(smallButton("Réessayer","",()=>{mkErr="";liveSheet(true);marketLoad();}));body.append(r);}
+  return;
+ }
+ if(mkErr)body.append(Object.assign(fine(mkErr),{className:"fine warn"}));
+ const block=mkBlock(),mine=mkMine(),sent=mkOffers().filter(o=>o.status==="pending").length,got=mine.reduce((n,l)=>n+mkArr(l.offers).length,0);
+ body.append(list(boosted(itemButton("Mes annonces et mes offres",`Annonces ${mine.length}/${MARKET.maxListings} · offres envoyées ${sent}/${MARKET.maxOffers}`,
+  got?`${got} reçue${got>1?"s":""}`:"Voir",false,()=>mkGo({type:"mine"})),got>0)));
+ const top=mkEl("div","mk-top"),tabs=mkEl("div","tabs small mk-tabs");tabs.setAttribute("role","group");tabs.setAttribute("aria-label","Annonces à afficher");
+ for(const [k,t] of MK_TABS){const b=mkEl("button","",t);b.type="button";b.setAttribute("aria-pressed",String(mkTab===k));b.addEventListener("click",()=>{mkTab=k;renderSheet("market");$("#sheet-body .mk-tabs [aria-pressed=true]")?.focus();});tabs.append(b);}
+ top.append(tabs);
+ if(mkFresh.size)top.append(pill(`${mkFresh.size} nouvelle${mkFresh.size>1?"s":""} annonce${mkFresh.size>1?"s":""}`,"new"));
+ body.append(top);
+ if(block)body.append(Object.assign(fine(`${block} Tu peux tout de même regarder les annonces.`),{className:"fine warn"}));
+ const kindOf=l=>mkArrIds(l.give?.items).map(id=>W.ITEMS[id]?.kind);
+ let shown=mkBoard();
+ if(mkTab==="outfit"||mkTab==="object")shown=shown.filter(l=>kindOf(l).includes(mkTab));
+ if(mkTab==="me")shown=forMe(shown,S,block);
+ const box=mkEl("div","mk-board");
+ if(shown.length)box.append(...shown.map(mkCard));
+ else box.append(mkEl("p","mk-hint",mkTab==="me"?(block?`Rien pour l'instant : ${block}`:"Rien que tu puisses troquer tout de suite. Essaie « Faire une offre » !"):
+  mkBoard().length?"Aucune annonce ici.":"Aucune annonce pour l'instant : dépose la première !"));
+ body.append(box);
+ const dep=block||(mine.length>=MARKET.maxListings?`${MARKET.maxListings} annonces ouvertes au plus : retires-en une d'abord.`:"");
+ const row=mkEl("div","btn-row");
+ row.append(smallButton("+ Déposer une annonce","go",()=>mkGo({type:"deposit",step:1,items:[],mode:"items",wantItems:[],rarity:"rare",slot:"outfit",bul:0}),!!dep));
+ body.append(row);
+ if(dep&&dep!==block)body.append(Object.assign(fine(dep),{className:"fine warn"}));
+ body.append(blockTitle("Règles"),fine(`Échanges aujourd'hui : ${Number(mkData.today)||0}/${MARKET.perDay}. Dès le niveau ${R.DUEL.minLevel} et un compte d'au moins 3 jours. `+
+  `Une annonce propose 1 à ${MARKET.maxItems} objets, sans durée limite ; bulletins de 0 à ${MARKET.maxBulletins}, jamais seuls contre rien. Aucun texte libre : que des choix. Certains objets très rares ne s'échangent pas.`));
+}
+
+// ---------- the Brocante's flow sheet ----------
+function renderMarketDo(body,set){
+ const f=mkFlow,back=(label="‹ La Brocante")=>{const r=mkEl("div","btn-row");r.append(smallButton(label,"",mkBack));return r;};
+ if(!f){set("🧺 La Brocante","");body.append(back());return;}
+ if(f.type==="done")return mkDone(body,set,f,back);
+ if(f.type==="mine")return mkMineSheet(body,set,back);
+ if(f.type==="deposit")return mkDeposit(body,set,f);
+ if(!mkData){set("🧺 La Brocante","");body.append(fine(mkErr||"Chargement de la Brocante…"),back());return;}
+ const l=mkBoard().find(x=>x.id===f.id);
+ if(!l){set("🧺 La Brocante","");body.append(Object.assign(fine("Cette annonce n'est plus disponible."),{className:"fine warn"}),back());return;}
+ if(f.type==="trade")return mkTrade(body,set,f,l);
+ if(f.type==="offer")return mkOffer(body,set,f,l);
+}
+function mkRecap(give,get){
+ const r=mkEl("div","mk-recap");
+ r.append(mkEl("span","block-title","Tu donnes"),give.items.length||give.bulletins?mkSide(give.items,give.bulletins):mkEl("i","fine","(à choisir)"),
+  mkEl("span","block-title","Tu reçois"),mkSide(get.items,get.bulletins));
+ return r;
+}
+// A grid of my items to tap: chosen (aria-pressed), unavailable with the reason, or badged « En vitrine ».
+function mkPicker(rows,chosen,full,onTap){
+ const g=mkEl("div","mk-pick");
+ for(const x of rows){
+  const on=chosen.includes(x.id),off=!x.ok||(!on&&full),b=mkEl("button");b.type="button";
+  b.setAttribute("aria-pressed",String(on));if(off)b.setAttribute("aria-disabled","true");
+  b.append(mkChip(x.id));
+  if(!x.ok)b.append(mkEl("span","mk-why",x.why));else if(x.why)b.append(mkEl("span","mk-badge",x.why));
+  b.addEventListener("click",()=>{if(!off)onTap(x.id);});g.append(b);
+ }
+ return g;
+}
+const mkToggle=(arr,id)=>arr.includes(id)?arr.filter(x=>x!==id):[...arr,id];
+function mkStepper(val,min,max,onSet){
+ const s=mkEl("div","mk-stepper"),v=mkEl("b","",`${val} 🗳️`);v.setAttribute("aria-live","polite");
+ const dn=smallButton("−","",()=>onSet(val-1),val<=min),up=smallButton("+","",()=>onSet(val+1),val>=max);
+ dn.setAttribute("aria-label","Un bulletin de moins");up.setAttribute("aria-label","Un bulletin de plus");
+ s.append(dn,v,up);return s;
+}
+const mkLine=(text,...kids)=>{const r=mkEl("div","mk-line");r.append(mkEl("span","fine",text),...kids);return r;};
+// « Troquer »: the pick (a rarity), the recap, what leaves the élu or closes a listing, then one tap to confirm.
+function mkTrade(body,set,f,l){
+ const v=listingView(l,S,mkBlock()),w=l.want??{};
+ set("Troquer",`Avec ${v.who}${v.campTag?` (${v.campTag})`:""}. L'échange est immédiat : l'annonce dit déjà ce qu'elle veut.`);
+ if(v.needsPick){
+  const listed=mkListed(),c=candidates(S,w);
+  body.append(fine(`L'annonce demande ${kindWord(w.slot,w.rarity)} : choisis laquelle tu donnes.`),
+   mkPicker(c.map(id=>({id,ok:true,why:listed.has(id)?"En vitrine":""})),f.pick?[f.pick]:[],false,id=>{f.pick=id;liveSheet(true);}));
+ }
+ const r=tradeRecap(l,S,f.pick,[...mkListed()]);
+ body.append(mkRecap(r.give,r.get));
+ if(r.worn.length)body.append(fine(`${r.worn.length>1?"Pièces portées":"Pièce portée"} : ${r.worn.join(", ")}. ${r.worn.length>1?"Elles quittent":"Elle quitte"} ton personnage (emplacement vide).`));
+ if(r.closes.length)body.append(Object.assign(fine(`${r.closes.join(", ")} : dans une de tes annonces, qui sera fermée.`),{className:"fine warn"}));
+ const row=mkEl("div","btn-row");
+ row.append(smallButton("Confirmer l'échange","go",()=>mkTake(l,r,v.who),!v.takeOk||!r.ready),smallButton("Annuler","",mkBack));
+ body.append(row);
+ if(!v.takeOk)body.append(Object.assign(fine(v.takeWhy),{className:"fine warn"}));
+}
+async function mkTake(l,r,who){
+ const res=await send({op:"take",id:l.id,give:r.give},"/api/market");
+ if(res?.ok&&mkOpen()){mkFlow={type:"done",who,give:r.give,get:r.get};liveSheet(true);}
+ if(mkOpen())marketLoad();
+}
+function mkDone(body,set,f,back){
+ set("Échange conclu",`${f.who} est prévenu·e : une notification et une ligne dans son journal.`);
+ const ok=mkEl("div","mk-done");ok.setAttribute("role","status");
+ ok.append(mkEl("b","","✅ C'est fait : chacun a reçu sa part."),mkRecap(f.give,f.get));
+ body.append(ok,fine("Ce que tu as reçu t'attend dans la Garde-robe."),back("Retour à la Brocante"));
+}
+// « Faire une offre »: 1 to 3 of my items, 0 to 20 bulletins with them; the author accepts or refuses.
+function mkOffer(body,set,f,l){
+ const v=listingView(l,S,mkBlock()),oc=offerCheck(l,S,mkOffers(),mkBlock()),max=Math.min(MARKET.maxBulletins,S.wardrobe.bulletins);
+ set("Faire une offre",`À ${v.who}${v.campTag?` (${v.campTag})`:""}, qui acceptera ou refusera.`);
+ f.bul=Math.max(0,Math.min(f.bul,max));
+ const pour=mkEl("div","mk-recap");pour.append(mkEl("span","block-title","Pour"),mkSide(v.gives.map(x=>x.id),v.giveBulletins),mkEl("span","fine",`Cherche : ${v.wantText}`));
+ body.append(pour,blockTitle(`Tu offres · ${f.items.length} / ${MARKET.maxItems} objets`),
+  mkPicker(pickable(S,"offer",[...mkListed()]),f.items,f.items.length>=MARKET.maxItems,id=>{f.items=mkToggle(f.items,id);liveSheet(true);}),
+  mkLine(`En plus (0 à ${MARKET.maxBulletins}, jamais seuls)`,mkStepper(f.bul,0,max,n=>{f.bul=n;liveSheet(true);})),
+  fine("Tes objets ne sont pas bloqués : ils seront revérifiés si l'offre est acceptée."));
+ const row=mkEl("div","btn-row");
+ row.append(smallButton("Envoyer l'offre","go",()=>mkSendOffer(l,f,v.who),!f.items.length||!oc.ok),smallButton("Annuler","",mkBack));
+ body.append(row);
+ if(!oc.ok)body.append(Object.assign(fine(oc.why),{className:"fine warn"}));
+ else if(!f.items.length)body.append(Object.assign(fine("Choisis au moins un objet."),{className:"fine warn"}));
+}
+async function mkSendOffer(l,f,who){
+ const r=await send({op:"offer",id:l.id,give:{items:f.items,bulletins:f.bul}},"/api/market");
+ if(r?.ok){toast(`🧺 Offre envoyée à ${who}.`,true);if(mkOpen())mkBack();}
+ if(mkOpen())marketLoad();
+}
+// « Déposer une annonce », in two steps: what I put in the window, then what I want (no text: only choices).
+const MK_MODES=[["items","Des objets précis"],["rarity","Une rareté"],["bulletins","Des bulletins"],["offer","Une offre"]];
+function mkDeposit(body,set,f){
+ const cancel=smallButton("Annuler","",mkBack);
+ if(f.step===1){
+  set("Déposer une annonce · 1/2",`Ce que tu mets en vitrine (1 à ${MARKET.maxItems}). Tu peux continuer à le porter.`);
+  const row=mkEl("div","btn-row");
+  row.append(smallButton("Suivant : ce que je cherche","go",()=>{f.step=2;liveSheet(true);},!f.items.length),cancel);
+  body.append(blockTitle(`Tu proposes · ${f.items.length} / ${MARKET.maxItems}`),
+   mkPicker(pickable(S,"list",[...mkListed()]),f.items,f.items.length>=MARKET.maxItems,id=>{f.items=mkToggle(f.items,id);liveSheet(true);}),row);
+  return;
+ }
+ set("Déposer une annonce · 2/2","Ce que tu cherches. Pas de texte : que des choix.");
+ const pro=mkEl("div","mk-recap");pro.append(mkEl("span","block-title","Tu proposes"),mkSide(f.items,0));
+ const modes=mkEl("div","mk-modes");modes.setAttribute("role","group");modes.setAttribute("aria-label","Ce que tu cherches");
+ for(const [k,t] of MK_MODES){const b=smallButton(t,"",()=>{f.mode=k;if(k==="bulletins"&&f.bul<1)f.bul=1;liveSheet(true);});b.setAttribute("aria-pressed",String(f.mode===k));modes.append(b);}
+ body.append(pro,modes);
+ const setBul=n=>{f.bul=n;liveSheet(true);};
+ if(f.mode==="items"){
+  const sel=mkEl("select");sel.setAttribute("aria-label","Ajouter un objet du catalogue");sel.disabled=f.wantItems.length>=MARKET.maxItems;
+  sel.append(Object.assign(mkEl("option","",sel.disabled?`${MARKET.maxItems} objets au plus`:"+ Ajouter un objet du catalogue…"),{value:""}));
+  for(const g of catalogue(S,[...f.items,...f.wantItems])){const og=mkEl("optgroup");og.label=g.label;og.append(...g.items.map(x=>Object.assign(mkEl("option","",x.label),{value:x.id})));sel.append(og);}
+  sel.addEventListener("change",()=>{const id=sel.value;if(id&&tradable(id)&&f.wantItems.length<MARKET.maxItems&&!f.wantItems.includes(id)){f.wantItems=[...f.wantItems,id];liveSheet(true);}});
+  const chosen=mkEl("div","mk-side");
+  for(const id of f.wantItems){const s=mkEl("span","mk-want-item"),x=smallButton("✕","mk-x",()=>{f.wantItems=f.wantItems.filter(i=>i!==id);liveSheet(true);});x.setAttribute("aria-label",`Enlever ${W.ITEMS[id]?.name??id}`);s.append(mkChip(id),x);chosen.append(s);}
+  body.append(sel,chosen);
+ }
+ if(f.mode==="rarity"){
+  const ks=mkEl("select"),rs=mkEl("select");ks.setAttribute("aria-label","Type");rs.setAttribute("aria-label","Rareté");
+  for(const [k,t] of [["outfit","une tenue"],["object","un objet"],["any","les deux"]])ks.append(Object.assign(mkEl("option","",t),{value:k,selected:f.slot===k}));
+  for(const r of W.RARITIES.filter(r=>!MARKET.excluded.includes(r)))rs.append(Object.assign(mkEl("option","",W.RARITY_LABEL[r]),{value:r,selected:f.rarity===r}));
+  ks.addEventListener("change",()=>{f.slot=ks.value;liveSheet(true);});rs.addEventListener("change",()=>{f.rarity=rs.value;liveSheet(true);});
+  const two=mkEl("div","mk-two");two.append(ks,rs);
+  body.append(two,fine(`Affiché : « ${kindWord(f.slot,f.rarity)} »`));
+ }
+ if(f.mode==="items"||f.mode==="rarity")body.append(mkLine(`+ bulletins (0 à ${MARKET.maxBulletins})`,mkStepper(f.bul,0,MARKET.maxBulletins,setBul)));
+ if(f.mode==="bulletins")body.append(mkLine(`Prix en bulletins (1 à ${MARKET.maxBulletins})`,mkStepper(Math.max(1,f.bul),1,MARKET.maxBulletins,setBul)));
+ if(f.mode==="offer")body.append(fine("Pas de « Troquer » sur ton annonce : les joueurs t'envoient des offres, tu acceptes ou refuses."));
+ const want=f.mode==="items"?{kind:"items",items:f.wantItems,bulletins:f.bul}:f.mode==="rarity"?{kind:"rarity",rarity:f.rarity,slot:f.slot,bulletins:f.bul}:
+  f.mode==="bulletins"?{kind:"bulletins",bulletins:Math.max(1,f.bul)}:{kind:"offer"};
+ const bad=f.mode==="items"&&!f.wantItems.length?"Choisis au moins un objet (ou passe en « Des bulletins »).":"";
+ const row=mkEl("div","btn-row");
+ row.append(smallButton("Déposer l'annonce","go",()=>mkList(f,want),!!bad),smallButton("‹ Retour","",()=>{f.step=1;liveSheet(true);}),cancel);
+ body.append(fine("Les bulletins accompagnent un objet ou en sont le prix ; jamais d'objets contre rien. Pas de durée limite."),row);
+ if(bad)body.append(Object.assign(fine(bad),{className:"fine warn"}));
+}
+async function mkList(f,want){
+ const r=await send({op:"list",give:{items:f.items,bulletins:0},want},"/api/market");
+ if(r?.ok){toast("🧺 Annonce déposée : elle est en vitrine à la Brocante.",true);if(mkOpen())mkBack();}
+ if(mkOpen())marketLoad();
+}
+// My listings (their offers: Accepter, Refuser; Retirer l'annonce) and my offers (Retirer), from the last GET.
+const MK_STATUS={accepted:"acceptée",refused:"refusée",closed:"fermée",withdrawn:"retirée"};
+function mkMineSheet(body,set,back){
+ set("Mes annonces",`${MARKET.maxListings} annonces ouvertes au plus, sans durée limite.`);
+ if(!mkData){body.append(fine(mkErr||"Chargement de la Brocante…"),back());return;}
+ const block=mkBlock(),mine=mkMine();
+ if(!mine.length)body.append(mkEl("p","mk-hint","Aucune annonce ouverte."));
+ for(const l of mine){
+  const d=mkEl("div","mk-lst"),head=mkEl("div","mk-head");
+  head.append(mkEl("span","fine",Number.isFinite(l.created)?`Déposée ${when(l.created)}`:"Annonce ouverte"),
+   armedButton("Retirer l'annonce","Confirmer le retrait","danger",()=>mkPost({op:"withdraw",id:l.id},"Annonce retirée.")));
+  d.append(head,mkRow("Propose",mkSide(mkGive(l.give).items,mkGive(l.give).bulletins)),mkRow("Cherche",mkWant(l.want)));
+  const offers=mkArr(l.offers);
+  d.append(offers.length?mkEl("span","block-title",`Offres reçues · ${offers.length}`):mkEl("span","fine","Pas encore d'offre."));
+  for(const o of offers){
+   const g=mkGive(o.give),dup=g.items.filter(id=>S.wardrobe.own.includes(id)),why=block||(dup.length?`Déjà dans ta garde-robe : ${dup.map(id=>W.ITEMS[id]?.name??id).join(", ")}`:"");
+   const who=typeof o.from?.name==="string"?o.from.name:"?",r=mkEl("div","mk-recap"),btns=mkEl("div","btn-row");
+   btns.append(why?smallButton("Accepter","go",()=>{},true):armedButton("Accepter","Confirmer l'échange","go",()=>mkAccept(o,l,who)),
+    armedButton("Refuser","Confirmer le refus","",()=>mkPost({op:"refuse",id:o.id},`Offre ${/^[aeiouyhàâéèêîôûœ]/i.test(who)?"d'":"de "}${who} refusée.`)));
+   r.append(mkWho(who,o.from?.camp,mkEl("span","fine"," propose :")),mkSide(g.items,g.bulletins),btns);
+   if(why)r.append(mkEl("span","mk-why",why));
+   d.append(r);
+  }
+  body.append(d);
+ }
+ body.append(blockTitle("Mes offres"),fine(`${MARKET.maxOffers} offres en attente au plus ; elles ne bloquent pas tes objets.`));
+ const all=mkOffers(),pend=all.filter(o=>o.status==="pending"),past=all.filter(o=>o.status!=="pending"&&MK_STATUS[o.status]).slice(0,5);
+ if(!pend.length)body.append(fine("Aucune offre en attente."));
+ for(const o of pend){
+  const d=mkEl("div","mk-lst"),head=mkEl("div","mk-head"),a=o.listing?.author,g=mkGive(o.give);
+  const to=mkEl("span","mk-who");to.append("À ",mkWho(typeof a?.name==="string"?a.name:"?",a?.camp),mkEl("span","fine"," · en attente"));
+  head.append(to,smallButton("Retirer","danger",()=>mkPost({op:"unoffer",id:o.id},"Offre retirée.")));
+  d.append(head,mkRow("J'offre",mkSide(g.items,g.bulletins)));
+  if(o.listing)d.append(mkRow("Pour",mkSide(mkGive(o.listing.give).items,mkGive(o.listing.give).bulletins)));
+  body.append(d);
+ }
+ if(past.length){
+  const ul=mkEl("ul","journal duel-log");
+  for(const o of past){const a=o.listing?.author?.name,li=mkEl("li",o.status==="accepted"?"win":o.status==="refused"?"loss":"",`Offre ${MK_STATUS[o.status]}${typeof a==="string"?` · annonce de ${a}`:""}`);ul.append(li);}
+  body.append(blockTitle("Dernières offres"),ul);
+ }
+ body.append(back());
+}
+async function mkPost(body,said){
+ const r=await send(body,"/api/market");
+ if(r?.ok)toast(`🧺 ${said}`,true);
+ if(mkOpen())marketLoad();
+}
+async function mkAccept(o,l,who){
+ const r=await send({op:"accept",id:o.id},"/api/market");
+ if(r?.ok&&mkOpen()){mkFlow={type:"done",who,give:mkGive(l.give),get:mkGive(o.give)};liveSheet(true);}
+ if(mkOpen())marketLoad();
 }
 // Live duel events. A result's journal entry (scores, XP) says more than the short notice: it is not overwritten.
 function duelEvent(v){
