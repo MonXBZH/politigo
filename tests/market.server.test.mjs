@@ -430,6 +430,70 @@ it("same network flag stored on the trade",async()=>{
  const r=await b.call("GET","/api/market");assert.equal(r.status,200);assert.ok(!/same_?net|net_?fp|10\.9\.5/i.test(r.text),"never in an answer");
 });
 
+it("a listing asking by name for what its author now owns: closed after a trade, hidden after a gift",async()=>{
+ const a=await mp("Chercheur Bro","left",["megaphone","cocarde"],1),s=await mp("Fournisseur Bro","right",["loden"]),c=await mp("Passant Bro","right",["kway","blazer"]);
+ const la=await listOk(a,{items:["megaphone"]},{kind:"items",items:["loden"],bulletins:0});
+ const oc=await mk(c,"offer",{id:la,give:{items:["kway"]}});assert.equal(oc.status,200,JSON.stringify(oc.json));
+ const ls=await listOk(s,{items:["loden"]},{kind:"bulletins",bulletins:1});
+ assert.equal((await mk(a,"take",{id:ls,give:{items:[],bulletins:1}})).status,200);   // a now owns loden: la can never be taken
+ assert.ok(!(await view(a)).mine.some(l=>l.id===la),"closed");
+ assert.equal((await view(c)).offers.find(o=>o.id===oc.json.id).status,"closed","its pending offer too");
+ assert.ok((await meOf(a)).state.journal.some(e=>e.k==="market"&&e.text==="Brocante : une de tes annonces est fermée, l'objet a changé de mains."));
+ // a gift (the admin, a draw): no trade to close it, hidden and refused instead
+ const lb=await listOk(a,{items:["cocarde"]},{kind:"items",items:["doudoune"],bulletins:0});
+ assert.ok((await view(c)).board.some(l=>l.id===lb));
+ await stock(SOCK,"Chercheur Bro",["doudoune"]);
+ assert.ok(!(await view(c)).board.some(l=>l.id===lb),"hidden");
+ refused(await mk(c,"take",{id:lb,give:{items:["doudoune"]}}),409,GONE_L);
+ refused(await mk(c,"offer",{id:lb,give:{items:["blazer"]}}),409,GONE_L);
+ assert.ok((await view(a)).mine.some(l=>l.id===lb),"not closed: the author still sees it");
+});
+
+it("a listing offering an item that no longer trades is closed, never traded",async()=>{
+ const u=await mp("Vitrine Interdite","left",["camarade"]),b=await mp("Curieux Bro","right",["kway"],3);
+ let id1,id2,ob;const now=Date.now();
+ editDb(mdir,db=>{
+  const uid=db.prepare("SELECT id FROM players WHERE name=?").get("Vitrine Interdite").id,bid=db.prepare("SELECT id FROM players WHERE name=?").get("Curieux Bro").id;
+  const ins=db.prepare("INSERT INTO market_listings(player_id,give,want,created) VALUES(?,?,?,?)"),g=JSON.stringify({items:["camarade"],bulletins:0});
+  id1=Number(ins.run(uid,g,JSON.stringify({kind:"bulletins",bulletins:1}),now).lastInsertRowid);
+  id2=Number(ins.run(uid,g,JSON.stringify({kind:"offer"}),now).lastInsertRowid);
+  ob=Number(db.prepare("INSERT INTO market_offers(listing_id,player_id,give,created) VALUES(?,?,?,?)").run(id2,bid,JSON.stringify({items:["kway"],bulletins:0}),now).lastInsertRowid);
+ });
+ refused(await mk(u,"accept",{id:ob}),409,GONE_L);
+ const st=()=>{let r;editDb(mdir,db=>{r=[id1,id2].map(id=>db.prepare("SELECT status FROM market_listings WHERE id=?").get(id).status);r.push(db.prepare("SELECT status FROM market_offers WHERE id=?").get(ob).status);
+  r.push(db.prepare("SELECT count(*) n FROM market_trades WHERE listing_id IN (?,?)").get(id1,id2).n);});return r;};
+ assert.deepEqual(st().slice(1),["closed","closed",0]);
+ assert.ok(!(await view(b)).board.some(l=>l.id===id1),"never shown");
+ assert.deepEqual(st(),["closed","closed","closed",0]);
+ refused(await mk(b,"take",{id:id1,give:{items:[],bulletins:1}}),409,GONE_L);
+ assert.ok((await wr(u)).own.includes("camarade"));assert.ok((await wr(b)).own.includes("kway"));
+});
+
+it("offers closed along the way are told live: an item that changed hands, a deleted account",async()=>{
+ const b=await mp("Double Vitrine","right",["loden"]),x=await mp("Demandeur Loden","left",["blazer"]),c=await mp("Offrant Lointain","left",["kway"]);
+ const e=await mp("Partant Live","left",["cheminot"]),d=await mp("Offrant Orphelin","right",["doudoune"]);
+ const lb=await listOk(b,{items:["loden"]},{kind:"offer"}),le=await listOk(e,{items:["cheminot"]},{kind:"offer"});
+ assert.equal((await mk(c,"offer",{id:lb,give:{items:["kway"]}})).status,200);assert.equal((await mk(d,"offer",{id:le,give:{items:["doudoune"]}})).status,200);
+ const lx=await listOk(x,{items:["blazer"]},{kind:"items",items:["loden"],bulletins:0});
+ const sc=stream(MP,c),sd=stream(MP,d);await sleep(300);
+ const told=s=>s.events.some(v=>v.ev==="market"&&v.data?.kind!=="board");
+ try{
+  assert.equal((await mk(b,"take",{id:lx,give:{items:["loden"]}})).status,200);   // loden leaves b: lb closes, c's offer with it
+  assert.ok(await until(()=>told(sc),2000),"the offerer hears it at once");
+  assert.equal((await view(c)).offers.find(o=>o.listingId===lb).status,"closed");
+  assert.equal((await e.call("DELETE","/api/account",{password:PW})).status,200);
+  assert.ok(await until(()=>told(sd),2000),"so does an offerer on a deleted author's listing");
+ }finally{sc.close();sd.close();}
+});
+
+it("10 listings a server day, whatever became of them",async()=>{
+ const z=await mp("Deposant Zele","left",["megaphone","cocarde"]);
+ editDb(mdir,db=>{const id=db.prepare("SELECT id FROM players WHERE name=?").get("Deposant Zele").id;
+  for(let i=0;i<9;i++)db.prepare("INSERT INTO market_listings(player_id,give,want,created,status) VALUES(?,?,?,?,'withdrawn')").run(id,JSON.stringify({items:["megaphone"],bulletins:0}),JSON.stringify({kind:"offer"}),Date.now());});
+ await listOk(z,{items:["megaphone"]},{kind:"offer"});   // the 10th
+ refused(await mk(z,"list",{give:{items:["cocarde"]},want:{kind:"offer"}}),422,"10 annonces par jour : reviens demain.");
+});
+
 // ===================================================================== THE CONSOLE'S BROCANTE (market-list, market-withdraw)
 it("market-list: trades, open listings with their offers, repeated pairs; never an address nor a fingerprint",async()=>{
  const a=from(MP,"10.9.6.1"),b=from(MP,"10.9.6.1"),c=from(MP,"10.9.6.2");

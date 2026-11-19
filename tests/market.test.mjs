@@ -72,20 +72,45 @@ test("closeUsing closes only that player's matching rows",()=>{
  const l1=M.list(1,{items:["a1"]},W,NOW),l2=M.list(1,{items:["a2"]},W,NOW),l3=M.list(2,{items:["a1"]},W,NOW);
  const o1=M.offer(l3,1,{items:["a1","a3"]},NOW),o2=M.offer(l3,1,{items:["a4"]},NOW),o3=M.offer(l1,2,{items:["a1"]},NOW);
  const r=M.closeUsing(1,["a1"]);
- assert.deepEqual(r,{listings:[l1],offers:[o1]});
+ assert.deepEqual(r,{listings:[l1],offers:[o1],told:[2]});   // 2: author of l3 (o1 closed) and offerer on l1 (o3 closed)
  assert.equal(M.listing(l1).status,"closed");assert.equal(M.listing(l2).status,"open");assert.equal(M.listing(l3).status,"open");
  assert.equal(M.offerOf(o1).status,"closed");assert.equal(M.offerOf(o2).status,"pending");assert.equal(M.offerOf(o3).status,"closed");// pending offer on the closed listing l1
- assert.deepEqual(M.closeUsing(1,[]),{listings:[],offers:[]});
+ assert.deepEqual(M.closeUsing(1,[]),{listings:[],offers:[],told:[]});
 });
 
 test("removePlayer closes their listings and offers, and offers on their listings",()=>{
  const {M}=fresh();
  const l1=M.list(1,G,W,NOW),l2=M.list(2,G,W,NOW);
  const o1=M.offer(l2,1,W,NOW),o2=M.offer(l1,2,W,NOW),o3=M.offer(l2,3,W,NOW);
- M.removePlayer(1);
+ assert.deepEqual(M.removePlayer(1),[2],"the other players whose rows closed");
  assert.equal(M.listing(l1).status,"closed");assert.equal(M.listing(l2).status,"open");
  assert.equal(M.offerOf(o1).status,"closed");assert.equal(M.offerOf(o2).status,"closed");assert.equal(M.offerOf(o3).status,"pending");
  assert.equal(M.openCount(1),0);
+});
+
+test("closeWanting closes that player's open listings asking by name for an item received",()=>{
+ const {M}=fresh();
+ const l1=M.list(1,G,{kind:"items",items:["b1","b2"],bulletins:0},NOW),l2=M.list(1,{items:["a2"]},{kind:"items",items:["b3"],bulletins:0},NOW);
+ const l3=M.list(1,{items:["a3"]},{kind:"rarity",rarity:"rare",slot:"any",bulletins:0},NOW),l4=M.list(2,G,{kind:"items",items:["b1"],bulletins:0},NOW);
+ const o=M.offer(l1,3,{items:["c1"]},NOW);
+ assert.deepEqual(M.closeWanting(1,["b2","zz"]),{listings:[l1],offers:[],told:[3]});
+ assert.equal(M.listing(l1).status,"closed");assert.equal(M.offerOf(o).status,"closed");
+ for(const l of [l2,l3,l4])assert.equal(M.listing(l).status,"open");
+ assert.deepEqual(M.closeWanting(1,[]),{listings:[],offers:[],told:[]});
+});
+
+test("closeListing closes one open listing and its pending offers, telling who offered",()=>{
+ const {M}=fresh();
+ const l=M.list(1,G,W,NOW),o=M.offer(l,2,W,NOW),o2=M.offer(l,3,W,NOW);M.setOffer(o2,"refused");
+ assert.deepEqual(M.closeListing(l),[2]);
+ assert.equal(M.listing(l).status,"closed");assert.equal(M.offerOf(o).status,"closed");assert.equal(M.offerOf(o2).status,"refused");
+ assert.equal(M.closeListing(l),null,"no longer open");assert.equal(M.closeListing(999),null);
+});
+
+test("listedSince: the creation times of a player's listings, whatever their status",()=>{
+ const {M}=fresh();
+ const a=M.list(1,G,W,NOW-2*H),b=M.list(1,G,W,NOW);M.withdraw(a,1);M.list(2,G,W,NOW);M.list(1,G,W,NOW-30*H);
+ assert.deepEqual(M.listedSince(1,NOW-26*H),[NOW,NOW-2*H]);assert.ok(b);
 });
 
 test("creating the module twice on one database is idempotent",()=>{

@@ -1629,7 +1629,7 @@ const chat=createChat({db,dataDir:dirname(DB_PATH),players,clients,sse,auth,limi
 // written in one transaction: both games, the listing traded, the offers closed, the day's counts, the history. Nothing
 // awaits between the checks and the COMMIT: of two requests for one listing, the second finds it gone.
 const M=createMarket(db);
-const MK_GONE="Cette annonce n'est plus disponible.",MK_GONE_O="Cette offre n'est plus disponible.",MK_OFFERS_SHOWN=20,MK_OFFERS_DAY=10;
+const MK_GONE="Cette annonce n'est plus disponible.",MK_GONE_O="Cette offre n'est plus disponible.",MK_OFFERS_SHOWN=20,MK_OFFERS_DAY=10,MK_LISTINGS_DAY=10;
 // A visit of the Brocante is written at most every 30 s; /api/me's count is kept 10 s; the board's live refresh is
 // one trailing event per 3 s whatever the number of changes.
 const MK_SEEN_WRITE=30e3,MK_NEW_MS=10e3,MK_BOARD_MS=3e3;
@@ -1660,10 +1660,21 @@ function readGive(x,needItem){
  const g=MK.cleanGive({items,bulletins:b},{needItem});if(!g)throw new HttpError(422,bad);
  return g;
 }
-// A listing is on the board when its author is, and still holds what it offers (else refused at the take).
+// A listing that offers an item no longer tradable (the catalogue changed), or that cannot be read: gone for good.
+const mkDead=l=>!Array.isArray(l?.give?.items)||!l.give.items.every(MK.tradable);
+// Closed, its author and offerers told; never throws (it runs while a board is read).
+function mkCloseDead(l){
+ try{const who=M.closeListing(l.id);if(who){marketCast([l.player_id,...who],"mine");marketBoardChanged();}}
+ catch(e){console.error(`market: listing ${l.id} not closed`,e);}
+}
+// A listing is on the board when its author is, still holds what it offers (else refused at the take) and does not ask
+// by name for something already his (a draw, a gift: it could never be taken). Hidden, not closed; a dead one is closed.
 function listingShown(l,ok,now){
+ if(mkDead(l)){mkCloseDead(l);return false;}
  if(!ok.has(l.player_id))ok.set(l.player_id,!authorHidden(players.get(l.player_id),now));
- return ok.get(l.player_id)&&!MK.missing(players.get(l.player_id).state,l.give);
+ if(!ok.get(l.player_id))return false;
+ const S=players.get(l.player_id).state,w=l.want;
+ return !MK.missing(S,l.give)&&!(w?.kind==="items"&&Array.isArray(w.items)&&MK.dupes(S,w.items).length);
 }
 const listingOut=(l,mine)=>({id:l.id,author:mkWho(l.player_id),give:l.give,want:l.want,created:l.created,mine});
 // The board (others' visible listings), mine with their pending offers, my offers (pending, and the latest decided).
@@ -1707,12 +1718,13 @@ function doTrade(l,o,taker,tGives,now){
  if(!author||author.suspended||!players.has(taker.id)||taker.suspended||cur?.status!=="open")throw new HttpError(409,MK_GONE);
  if(author.id===taker.id)throw new HttpError(422,"C'est ta propre annonce.");
  if(o&&(M.offerOf(o.id)?.status!=="pending"||o.listing_id!==l.id))throw new HttpError(409,MK_GONE_O);
+ if(mkDead(cur)){mkCloseDead(cur);throw new HttpError(409,MK_GONE);}   // closed before any write, never written then rolled back
  if(marketBlock(author,now)||marketBlock(taker,now))throw new HttpError(422,"Échange impossible pour l'instant.");
  const aGives=cur.give;
  // The author no longer holds it (never through the game: a state reset on load): closed when an item is gone.
  if(MK.missing(author.state,aGives)){
   const lost=aGives.items.filter(i=>!author.state.wardrobe.own.includes(i));
-  if(lost.length){try{M.closeUsing(author.id,lost);}catch(e){console.error(`market: listing ${l.id} not closed`,e);}}
+  if(lost.length){try{const c=M.closeUsing(author.id,lost);marketCast([author.id,...c.told],"mine");marketBoardChanged();}catch(e){console.error(`market: listing ${l.id} not closed`,e);}}
   throw new HttpError(409,MK_GONE);
  }
  const miss=MK.missing(taker.state,tGives);if(miss)throw new HttpError(409,miss+".");
@@ -1720,19 +1732,22 @@ function doTrade(l,o,taker,tGives,now){
  const keep=[author.state,taker.state],same=sameNet(author.netFp,taker.netFp),aT=giveText(aGives),bT=giveText(tGives);
  const closedLine=(S,n)=>{if(n)R.logEntry(S,"market",`Brocante : ${n>1?`${n} de tes annonces sont fermées`:"une de tes annonces est fermée"}, l'objet a changé de mains.`);};
  // The staff's own checks wait for the COMMIT (as in transferBaton), then run for both.
- batonBusy=true;
+ batonBusy=true;let told=[];
  try{
  db.exec("BEGIN");
  try{
   try{M.trade({listingId:l.id,offerId:o?.id??null,aId:author.id,bId:taker.id,aGave:aGives,bGave:tGives,sameNet:same,now});}
   catch(e){const m=e?.message;throw m==="Offre indisponible."?new HttpError(409,MK_GONE_O):m==="Annonce indisponible."?new HttpError(409,MK_GONE):e;}   // a failed write stays a 500
-  const ca=M.closeUsing(author.id,aGives.items),cb=M.closeUsing(taker.id,tGives.items);
+  // Closed with the trade: each side's listings and offers holding what it gave, and its listings asking by name for
+  // what it received (they could never be taken now).
+  const ca=M.closeUsing(author.id,aGives.items),cb=M.closeUsing(taker.id,tGives.items),wa=M.closeWanting(author.id,tGives.items),wb=M.closeWanting(taker.id,aGives.items);
+  told=[ca,cb,wa,wb].flatMap(c=>c.told).filter(id=>id!==author.id&&id!==taker.id);
   update(author,SA=>{
    update(taker,SB=>{
     try{MK.applyTrade(SA,aGives,SB,tGives);}catch(e){throw new HttpError(409,/\.$/.test(e.message)?e.message:e.message+".");}
-    closedLine(SB,cb.listings.length);R.logEntry(SB,"market",`Brocante : ${bT} contre ${aT} ${deName(author.name)}.`,{listing:l.id});
+    closedLine(SB,cb.listings.length+wb.listings.length);R.logEntry(SB,"market",`Brocante : ${bT} contre ${aT} ${deName(author.name)}.`,{listing:l.id});
    });
-   closedLine(SA,ca.listings.length);R.logEntry(SA,"market",`Brocante : ${aT} contre ${bT} ${deName(taker.name)}.`,{listing:l.id});
+   closedLine(SA,ca.listings.length+wa.listings.length);R.logEntry(SA,"market",`Brocante : ${aT} contre ${bT} ${deName(taker.name)}.`,{listing:l.id});
   });
   db.exec("COMMIT");
  }catch(e){
@@ -1742,7 +1757,7 @@ function doTrade(l,o,taker,tGives,now){
  }
  }finally{batonBusy=false;}
  for(const pl of [author,taker]){try{batonCheck(pl,now);}catch(e){console.error(`player ${pl.id}: Bâton check failed`,e);}}
- marketCast([author.id,taker.id],"trade");marketBoardChanged();
+ marketCast([author.id,taker.id],"trade");if(told.length)marketCast(told,"offer");marketBoardChanged();
  if(o)marketPush(taker.id,`${author.name} a accepté ton offre : ${bT} contre ${aT}.`);
  else marketPush(author.id,`ton annonce a trouvé preneur, ${aT} contre ${bT} ${deName(taker.name)}.`);
  if(author.state.camp!==taker.state.camp)feedLine(author.name,"market",`🔄 ${author.name} a troqué ${aT} contre ${bT} ${deName(taker.name)}`);
@@ -1763,7 +1778,7 @@ async function marketRoute(req,res){
  // Someone else's listing, on the board: a hidden one answers as a gone one (never why: no window on the author).
  const others=l=>{
   if(l.player_id===p.id)throw new HttpError(422,"C'est ta propre annonce.");
-  const o=players.get(l.player_id);if(authorHidden(o,now)||MK.missing(o.state,l.give))throw new HttpError(409,MK_GONE);return o;
+  if(!listingShown(l,new Map(),now))throw new HttpError(409,MK_GONE);return players.get(l.player_id);
  };
  // What p would receive and what the other would receive: never something already owned (the other's, unnamed).
  const noDupes=(o,give,l)=>{
@@ -1779,6 +1794,9 @@ async function marketRoute(req,res){
   if(want.kind==="items"){const d=MK.dupes(p.state,want.items);if(d.length)throw new HttpError(422,`Tu as déjà : ${itemNames(d)}.`);}
   const listed=new Set(M.openOf(p.id).flatMap(l=>l.give?.items??[])),twice=give.items.filter(i=>listed.has(i));
   if(twice.length)throw new HttpError(422,`Déjà en vitrine dans une autre annonce : ${itemNames(twice)}.`);
+  // Deposit, withdraw, deposit again: 10 listings a server day, whatever became of them.
+  const day=dayNow(now);
+  if(M.listedSince(p.id,now-26*R.H).filter(t=>dayNow(t)===day).length>=MK_LISTINGS_DAY)throw new HttpError(422,`${MK_LISTINGS_DAY} annonces par jour : reviens demain.`);
   if(M.openCount(p.id)>=MK.MARKET.maxListings)throw new HttpError(422,`${MK.MARKET.maxListings} annonces ouvertes au plus : retires-en une d'abord.`);
   const id=M.list(p.id,give,want,now);
   marketCast([p.id],"mine");marketBoardChanged();
@@ -1841,6 +1859,7 @@ async function marketRoute(req,res){
   if(from.suspended||marketBlock(from,now))throw new HttpError(422,`${from.name} ne peut pas échanger pour l'instant : son offre reste en attente.`);
   // An offer that can never go through any more is closed.
   const close=why=>{M.setOffer(o.id,"closed");marketCast([from.id,p.id],"offer");return new HttpError(409,`L'offre ne tient plus : ${why}.`);};
+  if(mkDead(o))throw close("un des objets proposés ne s'échange plus");
   if(MK.missing(from.state,o.give))throw close(`${from.name} n'a plus ce qu'il proposait`);
   let d=MK.dupes(from.state,l.give.items);if(d.length)throw close(`${from.name} a déjà ${itemNames(d)}`);
   d=MK.dupes(p.state,o.give.items);if(d.length)throw close(`tu as déjà ${itemNames(d)}`);
@@ -2639,14 +2658,15 @@ function removePlayer(p){
  try{snowChCancelOf(p.id,now);}catch(e){console.error("snow challenges, deleting a player:",e);}
  db.exec("BEGIN");
  // Their listings and pending offers close with the account (the rows stay for the trade history), both ways.
- const hadListings=M.openCount(p.id)>0;
- try{M.removePlayer(p.id);q.freeMythicsOf.run(p.id);q.deleteSchedulesTo.run(p.id);q.deletePlayer.run(p.id);q.tombstone.run(nameKey(p.name),p.created,now);q.deleteFeedOf.run(p.name);setSetting("playerFloor",String(Math.max(p.id,Number(getSetting("playerFloor"))||0)));db.exec("COMMIT");}catch(e){db.exec("ROLLBACK");throw e;}
+ const hadListings=M.openCount(p.id)>0;let told=[];
+ try{told=M.removePlayer(p.id);q.freeMythicsOf.run(p.id);q.deleteSchedulesTo.run(p.id);q.deletePlayer.run(p.id);q.tombstone.run(nameKey(p.name),p.created,now);q.deleteFeedOf.run(p.name);setSetting("playerFloor",String(Math.max(p.id,Number(getSetting("playerFloor"))||0)));db.exec("COMMIT");}catch(e){db.exec("ROLLBACK");throw e;}
  players.delete(p.id);deferred.delete(p.id);soloTurns.delete(p.id);cleanCache.delete(p.id);   // a staff they held is back in the urn
  try{broadcast("feedInit",q.recentFeed.all(40));}catch(e){console.error("feed after deleting a player:",e);}
  try{after?.();}catch(e){console.error("chat, after deleting a player:",e);}
  try{chat.playerDeleted(p.id);}catch(e){console.error("chat, deleted player:",e);}
  for(const c of [...clients])if(c.playerId===p.id)closeStream(c,true);
  mkNew.delete(p.id);if(hadListings)marketBoardChanged();
+ if(told.length)marketCast(told,"offer");   // the other side of the listings and offers closed with the account
  publishBoard(true);   // gone from every board at once
 }
 function closeStreamsOf(id){for(const c of [...clients])if(c.playerId===id)closeStream(c);}

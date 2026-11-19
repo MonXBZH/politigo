@@ -74,6 +74,7 @@ CREATE INDEX IF NOT EXISTS market_offers_p ON market_offers(player_id,status);`)
   today:db.prepare("SELECT n FROM market_daily WHERE day=? AND player_id=?"),
   pendOnL:db.prepare("SELECT * FROM market_offers WHERE listing_id=? AND status='pending' ORDER BY id"),
   byLim:db.prepare("SELECT * FROM market_offers WHERE player_id=? AND (status='pending' OR id IN (SELECT id FROM market_offers WHERE player_id=? ORDER BY id DESC LIMIT ?)) ORDER BY id DESC"),
+  listedSince:db.prepare("SELECT created FROM market_listings WHERE player_id=? AND created>=? ORDER BY id DESC LIMIT 100"),
   ofLP:db.prepare("SELECT * FROM market_offers WHERE listing_id=? AND player_id=? ORDER BY id DESC LIMIT 20"),
   refused:db.prepare("SELECT COUNT(*) AS n FROM market_offers WHERE listing_id=? AND player_id=? AND status='refused'"),
   since:db.prepare("SELECT created FROM market_offers WHERE player_id=? AND created>=? ORDER BY id DESC LIMIT 100"),
@@ -84,6 +85,13 @@ CREATE INDEX IF NOT EXISTS market_offers_p ON market_offers(player_id,status);`)
   purgeD:db.prepare("DELETE FROM market_daily WHERE day<?"),
  };
  const closeO=id=>q.setO.run("closed",id).changes>0;
+ // One open listing closed with its pending offers: the offerers whose offer closed, or null when it was not open.
+ const closeL=id=>{
+  const who=q.pendOnL.all(id).map(o=>o.player_id);
+  if(!q.setL.run("closed",id).changes)return null;
+  q.closeOn.run(id);return who;
+ };
+ const uniq=a=>[...new Set(a)].sort((x,y)=>x-y);
  return {
   list:(playerId,give,want,now=Date.now())=>Number(q.insL.run(playerId,JSON.stringify(give),JSON.stringify(want),now).lastInsertRowid),
   listing:id=>L(q.getL.get(id)),
@@ -108,6 +116,8 @@ CREATE INDEX IF NOT EXISTS market_offers_p ON market_offers(player_id,status);`)
   offersOf:(listingId,playerId)=>q.ofLP.all(listingId,playerId).map(O),   // the latest 20, newest first
   refusedOn:(listingId,playerId)=>q.refused.get(listingId,playerId).n,
   createdSince:(playerId,since)=>q.since.all(playerId,since).map(r=>r.created),
+  listedSince:(playerId,since)=>q.listedSince.all(playerId,since).map(r=>r.created),   // any status, newest first
+  closeListing:closeL,
   // Decided rows older than `before` go (offers withdrawn, refused or closed; listings withdrawn or closed and never
   // traded) and the daily counts of older days. Trades, traded listings and accepted offers stay: the admin's history.
   purge(before){
@@ -131,17 +141,28 @@ CREATE INDEX IF NOT EXISTS market_offers_p ON market_offers(player_id,status);`)
   },
   today:(playerId,day)=>q.today.get(day,playerId)?.n??0,
   // The player's open listings / pending offers that hold any of these items are closed (an item left his hands).
+  // told: the other players concerned (offerers on those listings, authors of those offers' listings), to refresh.
   closeUsing(playerId,itemIds){
-   const out={listings:[],offers:[]};
-   if(!Array.isArray(itemIds)||!itemIds.length)return out;
-   for(const l of q.openOfL.all(playerId))if(uses(js(l.give),itemIds)&&q.setL.run("closed",l.id).changes){q.closeOn.run(l.id);out.listings.push(l.id);}
-   for(const o of q.pendO.all(playerId))if(uses(js(o.give),itemIds)&&closeO(o.id))out.offers.push(o.id);
-   return out;
+   const out={listings:[],offers:[]},told=[];
+   if(Array.isArray(itemIds)&&itemIds.length){
+    for(const l of q.openOfL.all(playerId))if(uses(js(l.give),itemIds)){const w=closeL(l.id);if(w){out.listings.push(l.id);told.push(...w);}}
+    for(const o of q.pendO.all(playerId))if(uses(js(o.give),itemIds)&&closeO(o.id)){out.offers.push(o.id);const a=q.getL.get(o.listing_id)?.player_id;if(a!=null)told.push(a);}
+   }
+   return {...out,told:uniq(told.filter(id=>id!==playerId))};
+  },
+  // The player's open listings asking by name for any of these items (now his: they could never be taken) are closed.
+  closeWanting(playerId,itemIds){
+   const out={listings:[],offers:[]},told=[];
+   if(Array.isArray(itemIds)&&itemIds.length)for(const l of q.openOfL.all(playerId))if(asks(js(l.want),itemIds)){const w=closeL(l.id);if(w){out.listings.push(l.id);told.push(...w);}}
+   return {...out,told:uniq(told.filter(id=>id!==playerId))};
   },
   // A deleted player: his open listings are closed, his pending offers and the pending offers on his listings too.
+  // Returns the other players concerned.
   removePlayer(playerId){
-   for(const l of q.openOfL.all(playerId)){q.setL.run("closed",l.id);q.closeOn.run(l.id);}
-   for(const o of q.pendO.all(playerId))closeO(o.id);
+   const told=[];
+   for(const l of q.openOfL.all(playerId))told.push(...(closeL(l.id)??[]));
+   for(const o of q.pendO.all(playerId))if(closeO(o.id)){const a=q.getL.get(o.listing_id)?.player_id;if(a!=null)told.push(a);}
+   return uniq(told.filter(id=>id!==playerId));
   },
   recent:(limit=50)=>q.recent.all(Math.max(1,Math.min(500,limit|0))).map(T),
   tradesSince:since=>q.tradesSince.all(since).map(T),
