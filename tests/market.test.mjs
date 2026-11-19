@@ -195,3 +195,14 @@ test("purge: a refused offer on a listing still open survives, closed and withdr
  M.purge(NOW-30*864e5);
  assert.ok(M.offerOf(r));assert.ok(M.offerOf(w));assert.equal(M.refusedOn(l,2),1);
 });
+
+test("netPrefix: IPv4 as is, IPv4-mapped IPv6 back to IPv4, IPv6 cut to its /64, anything else empty",()=>{
+ const n=MK.netPrefix;
+ assert.equal(n("10.9.0.1"),"10.9.0.1");
+ assert.equal(n("::ffff:10.9.0.1"),"10.9.0.1");assert.equal(n("::FFFF:192.168.1.20"),"192.168.1.20");assert.equal(n("::ffff:a09:1"),"10.9.0.1");
+ const p="2001:db8:12:34::/64";
+ for(const ip of ["2001:db8:12:34::1","2001:0db8:0012:0034:aaaa:bbbb:cccc:dddd","2001:DB8:12:34:0:0:0:ff","2001:db8:12:34::10.0.0.1"])assert.equal(n(ip),p,ip);
+ assert.notEqual(n("2001:db8:12:35::1"),p,"another /64");
+ assert.equal(n("::1"),"0:0:0:0::/64");assert.equal(n("fe80::1%eth0"),"fe80:0:0:0::/64");
+ for(const bad of ["","?",null,undefined,"localhost","1.2.3","::ffff:999.1.1.1","x".repeat(60)])assert.equal(n(bad),"",String(bad));
+});

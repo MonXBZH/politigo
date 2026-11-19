@@ -3,7 +3,7 @@
 import {test,before,after} from "node:test";
 import assert from "node:assert/strict";
 import {DatabaseSync} from "node:sqlite";
-import {mkdtempSync,readFileSync,writeFileSync} from "node:fs";
+import {mkdtempSync,readFileSync,writeFileSync,statSync} from "node:fs";
 import {createConnection} from "node:net";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
@@ -42,23 +42,35 @@ it("net fingerprint: never the raw IP, same network detected",async()=>{
   const l=from(port,"10.9.0.1");assert.equal((await l.call("POST","/api/login",{name:"Cleo Net",password:PW})).status,200);
   const db2=new DatabaseSync(join(dir,"t.db"));
   assert.equal(db2.prepare("SELECT net_fp FROM players WHERE name=?").get("Cleo Net").net_fp,fa,"login rewrites the last address");
-  assert.equal(db2.prepare("SELECT count(*) n FROM settings WHERE key='netkey'").get().n,1);
+  assert.equal(db2.prepare("SELECT count(*) n FROM settings WHERE key='netkey'").get().n,0,"never in the database");
   db2.close();
+  // the key: a file next to the database, 64 hex, readable by its owner alone, the same across the restart
+  const key=readFileSync(join(dir,"netkey.txt"),"utf8").trim();assert.match(key,/^[0-9a-f]{64}$/);
+  assert.equal(statSync(join(dir,"netkey.txt")).mode&0o777,0o600);
+  // IPv6: one /64 is one network; an IPv4-mapped address is its IPv4
+  for(const [n,ip] of [["Six Un","2001:db8:7:8::1"],["Six Deux","2001:db8:7:8:ffff::2"],["Six Trois","2001:db8:7:9::1"],["Mappe Bro","::ffff:10.9.0.2"]])await signup(port,n,ip);
+  const db3=new DatabaseSync(join(dir,"t.db"));
+  const fp3=n=>db3.prepare("SELECT net_fp FROM players WHERE name=?").get(n).net_fp;
+  assert.equal(fp3("Six Un"),fp3("Six Deux"));assert.notEqual(fp3("Six Un"),fp3("Six Trois"));assert.match(fp3("Six Un"),/^[0-9a-f]{64}$/);
+  assert.equal(fp3("Mappe Bro"),fc,"::ffff:10.9.0.2 is 10.9.0.2");
+  db3.close();
  }finally{await stop(srv);}
 });
 
-it("net fingerprint: a legacy NULL row loads as empty and is filled at the next login",async()=>{
+it("net fingerprint: a legacy NULL row loads as empty and is filled at the next login; a legacy netkey row is deleted",async()=>{
  const dir=mkdtempSync(join(tmpdir(),"market-")),port=18932;
  let srv=await boot(port,dir);
  try{
   await signup(port,"Old Timer","10.9.1.1");await stop(srv);
   const db=new DatabaseSync(join(dir,"t.db"));db.prepare("UPDATE players SET net_fp=NULL WHERE name=?").run("Old Timer");
-  const key=db.prepare("SELECT value FROM settings WHERE key='netkey'").get().value;db.close();
+  db.prepare("INSERT OR REPLACE INTO settings(key,value) VALUES('netkey',?)").run("ab".repeat(32));db.close();   // where the key used to be
+  const key=readFileSync(join(dir,"netkey.txt"),"utf8");
   srv=await boot(port,dir);
   const l=from(port,"10.9.1.1");assert.equal((await l.call("POST","/api/login",{name:"Old Timer",password:PW})).status,200);
   const db2=new DatabaseSync(join(dir,"t.db"));
   assert.match(db2.prepare("SELECT net_fp FROM players WHERE name=?").get("Old Timer").net_fp,/^[0-9a-f]{64}$/);
-  assert.equal(db2.prepare("SELECT value FROM settings WHERE key='netkey'").get().value,key,"the key is not remade");
+  assert.equal(db2.prepare("SELECT count(*) n FROM settings WHERE key='netkey'").get().n,0,"the legacy row is gone");
+  assert.equal(readFileSync(join(dir,"netkey.txt"),"utf8"),key,"the key is not remade");
   db2.close();
  }finally{await stop(srv);}
 });

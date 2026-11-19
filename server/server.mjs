@@ -19,7 +19,7 @@ import * as D from "./duel.mjs";
 import * as SF from "./snowfront.mjs";
 import {createChallenges} from "./snowchallenges.mjs";
 import * as MK from "./market.mjs";
-import {createMarket} from "./marketstore.mjs";
+import {createMarket,netPrefix} from "./marketstore.mjs";
 
 const env=process.env;
 process.umask(0o077);
@@ -561,15 +561,23 @@ function auth(req){
 }
 // The last connection, for the console alone: at most one write an hour per player. Coming back clears an "ignored".
 const SEEN_EVERY=36e5;
-// "Same network" (La Brocante): one HMAC-SHA256 of the player's last address under a key made once and kept in the
-// settings. Never the address itself, never a history, never sent to anyone; "" when the address is unknown.
-let NET_KEY=null;
-function netFp(ip){
- if(!ip||ip==="?")return "";
- if(!NET_KEY){let k=getSetting("netkey");if(!/^[0-9a-f]{64}$/.test(k||"")){db.prepare("INSERT OR IGNORE INTO settings(key,value) VALUES('netkey',?)").run(crypto.randomBytes(32).toString("hex"));k=getSetting("netkey");}   // another process may have made it first: the stored one wins
-  if(!/^[0-9a-f]{64}$/.test(k||""))throw new Error("netkey unusable");NET_KEY=Buffer.from(k,"hex");}
- return crypto.createHmac("sha256",NET_KEY).update(String(ip)).digest("hex");
+// "Same network" (La Brocante): one HMAC-SHA256 of the network of the player's last address (netPrefix: the IPv4, or the
+// IPv6 /64) under a key made once and kept in a 0600 file next to the database, never in it: a copy of the database
+// carries the fingerprints, not their key. Never the address itself, never a history, never sent to anyone; "" when unknown.
+const NETKEY_FILE=join(dirname(DB_PATH),"netkey.txt");
+function loadNetKey(){
+ const temp=why=>{console.error(`${NETKEY_FILE}: ${why}, using a temporary key ("same network" fingerprints change at every start)`);return crypto.randomBytes(32);};
+ const read=()=>{const k=readFileSync(NETKEY_FILE,"utf8").trim();return /^[0-9a-f]{64}$/.test(k)?Buffer.from(k,"hex"):null;};
+ // A file that is there but damaged is left untouched (it may be repaired by hand).
+ try{return read()??temp("no usable key (file left untouched)");}catch(e){if(e.code!=="ENOENT")return temp(e.message);}
+ // Created with O_EXCL: of two processes starting together, one writes it and both read the same key back.
+ try{writeFileSync(NETKEY_FILE,crypto.randomBytes(32).toString("hex")+"\n",{mode:0o600,flag:"wx"});}catch(e){if(e.code!=="EEXIST")return temp(`not saved (${e.message})`);}
+ try{return read()??temp("no usable key after creation");}catch(e){return temp(e.message);}
 }
+const NET_KEY=loadNetKey();
+// The 1.9.0 betas kept the key in the settings: gone (the fingerprints made with it are rewritten at the next login or hour).
+try{db.prepare("DELETE FROM settings WHERE key='netkey'").run();}catch(e){console.error("legacy network key not deleted:",e.message);}
+function netFp(ip){const n=netPrefix(ip);return n?crypto.createHmac("sha256",NET_KEY).update(n).digest("hex"):"";}
 const sameNet=(a,b)=>!!a&&!!b&&a===b;
 function noteNet(p,ip){
  try{const f=netFp(ip);if(!f||p.netFp===f)return;q.setNetFp.run(f,p.id);p.netFp=f;}

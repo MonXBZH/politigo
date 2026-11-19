@@ -3,6 +3,7 @@
 // do what is the server's business. Plain node:sqlite; the tables are created here. Never BEGINs: trade() runs inside the
 // caller's transaction. In the image it sits next to web/market.mjs (the rules, /app/market.mjs) under its own name.
 // Statuses: listing "open"|"traded"|"withdrawn"|"closed"; offer "pending"|"accepted"|"refused"|"closed"|"withdrawn".
+import {isIP} from "node:net";
 import * as R from "./rules.mjs";
 
 const dayOf=now=>R.dayKey(Math.floor(now/R.H));
@@ -15,6 +16,26 @@ const ids=v=>{const out=new Set(),walk=x=>{if(typeof x==="string")out.add(x);els
 // A dead listing older than the cut (?): withdrawn or closed, never traded (a trade keeps its listing for the history).
 const DEAD="status IN ('withdrawn','closed') AND created<? AND id NOT IN (SELECT listing_id FROM market_trades)";
 const uses=(v,items)=>{const s=ids(v);return items.some(i=>s.has(i));};
+const asks=(w,items)=>w?.kind==="items"&&Array.isArray(w.items)&&items.some(i=>w.items.includes(i));
+
+// The part of an address that names a network (the "same network" fingerprint hashes this): an IPv4 as is, an IPv6 cut
+// to its /64 (one home, one prefix), an IPv4-mapped IPv6 (::ffff:a.b.c.d, a dual-stack socket) as its IPv4; "" otherwise.
+export function netPrefix(ip){
+ let a=typeof ip==="string"?ip.trim():"";const z=a.indexOf("%");if(z>=0)a=a.slice(0,z);   // an IPv6 zone (fe80::1%eth0)
+ if(a.length>45)return "";
+ const v=isIP(a);
+ if(v===4)return a;
+ if(v!==6)return "";
+ let tail=[];
+ const m=/^(.*:)(\d+\.\d+\.\d+\.\d+)$/.exec(a);   // an IPv4 written at the end: two groups
+ if(m){const b=m[2].split(".").map(Number);a=m[1]+"0:0";tail=[(b[0]<<8|b[1]).toString(16),(b[2]<<8|b[3]).toString(16)];}
+ const [h,t]=a.includes("::")?a.split("::"):[a,null],head=h?h.split(":"):[],end=t?t.split(":"):[];
+ const g=t===null?head:[...head,...Array(8-head.length-end.length).fill("0"),...end];
+ if(tail.length)g.splice(6,2,...tail);
+ const n=g.map(x=>parseInt(x,16));
+ if(n.slice(0,5).every(x=>x===0)&&n[5]===0xffff)return [n[6]>>8,n[6]&255,n[7]>>8,n[7]&255].join(".");
+ return n.slice(0,4).map(x=>x.toString(16)).join(":")+"::/64";
+}
 
 export function createMarket(db){
  db.exec(`CREATE TABLE IF NOT EXISTS market_listings(id INTEGER PRIMARY KEY AUTOINCREMENT,player_id INTEGER NOT NULL,give TEXT NOT NULL,want TEXT NOT NULL,
