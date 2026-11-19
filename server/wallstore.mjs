@@ -34,6 +34,7 @@ CREATE INDEX IF NOT EXISTS wall_days_p ON wall_days(player_id);`);
    ON CONFLICT(day,player_id) DO UPDATE SET pasted=pasted+1,useful=useful+excluded.useful,reached_at=CASE WHEN excluded.useful>0 THEN excluded.reached_at ELSE reached_at END`),
   active:db.prepare("SELECT camp,COUNT(*) AS n FROM wall_days WHERE day=? GROUP BY camp"),
   who:db.prepare("SELECT player_id FROM wall_days WHERE day=? AND camp=? ORDER BY player_id"),
+  used:db.prepare("SELECT pasted FROM wall_days WHERE day=? AND player_id=?"),
   vol:db.prepare("SELECT used FROM wall_vol WHERE day=? AND camp=?"),
   addVol:db.prepare("INSERT INTO wall_vol(day,camp,used) VALUES(?,?,?) ON CONFLICT(day,camp) DO UPDATE SET used=used+excluded.used"),
   night:db.prepare("SELECT 1 AS x FROM wall_nights WHERE day=?"),
@@ -77,6 +78,8 @@ CREATE INDEX IF NOT EXISTS wall_days_p ON wall_days(player_id);`);
    return o;
   },
   colleurs:(day,camp)=>q.who.all(day,camp).map(r=>r.player_id),
+  // The posters a player used that day (the quota): every noted attempt, an expired one included.
+  used:(day,playerId)=>q.used.get(day,playerId)?.pasted??0,
   volunteerUsed:(day,camp)=>q.vol.get(day,camp)?.used??0,
   addVolunteerUsed(day,camp,n){q.addVol.run(day,camp,n|0);},
   nightClosed:day=>!!q.night.get(day),

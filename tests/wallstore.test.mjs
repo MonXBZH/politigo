@@ -63,6 +63,9 @@ test("noteColleur twice keeps one row and sums; active counts distinct humans pe
  assert.deepEqual(W.active(20261117),{left:0,right:0});
  assert.deepEqual(W.colleurs(20261118,"left"),[1,2]);
  assert.deepEqual(W.colleurs(20261118,"right"),[3]);
+ // the day's quota reads the posters used: 0 for a day or a player with no row
+ assert.equal(W.used(20261118,1),2);assert.equal(W.used(20261118,3),1);
+ assert.equal(W.used(20261117,1),0);assert.equal(W.used(20261118,9),0);
 });
 
 test("volunteer budget accumulates per day and camp",()=>{
