@@ -5,19 +5,22 @@
 import {cmpRelease} from "./rules.mjs";
 
 export const CHANGELOG=[
- {version:"1.9.0",date:"2026-11-19",help:["brocante","tombola"],
+ {version:"1.9.0",date:"2026-11-19",help:["brocante","tombola","collage","xp"],
   added:[
    "La Brocante : un tableau d'annonces où les joueurs échangent tenues et objets de leur Garde-robe. Dépose une annonce, troque tout de suite si tu as ce qu'elle demande, ou fais une offre que l'auteur accepte ou refuse.",
    "Les échanges se font entre les deux camps : l'objet reçu se porte. Dès le niveau 5, avec un compte d'au moins 3 jours, 3 échanges et 10 annonces déposées par jour.",
    "Tu es prévenu d'une offre reçue, d'un échange conclu ou d'une réponse à ton offre, et les échanges entre camps apparaissent dans le fil.",
    "Les objets en vitrine sont marqués dans la Garde-robe.",
-   "La vague satirique : 35 nouvelles pièces à la Tombola et à la Loterie, 14 tenues et 21 objets, dont 9 pour les deux camps. Au menu : des affaires, des promesses, un 49.3 et un siège éjectable. Toutes s'échangent à la Brocante."
+   "La vague satirique : 35 nouvelles pièces à la Tombola et à la Loterie, 14 tenues et 21 objets, dont 9 pour les deux camps. Au menu : des affaires, des promesses, un 49.3 et un siège éjectable. Toutes s'échangent à la Brocante.",
+   "Collage le jour, La Nuit du collage de 20 h à 8 h : les deux camps se disputent des murs d'affiches, à coups de pinceau chronométré, dès le niveau 3. Chaque soir à minuit, le camp qui tient le plus de cases l'emporte, et ses colleurs gagnent un bulletin. Un titre de Colleur de la semaine à la clé."
   ],
   fixed:[
+   "L'aide explique maintenant quand une série retombe à zéro : dès qu'une heure se termine avec une jauge sous 50, ou à une mort politique.",
    "Un ultra rare, même en doublon, ne remet plus à zéro le compteur du légendaire garanti.",
    "Le légendaire garanti est désormais un légendaire que tu n'as pas encore, tant qu'il t'en manque un."
   ],
   admin:[
+   "La carte Collage de la console, en lecture seule : les 30 dernières nuits, les colleurs et les bénévoles du jour, les murs et le titre de la semaine.",
    "La carte Brocante de la console liste les annonces ouvertes et l'historique des échanges, avec les paires qui reviennent sur 30 jours et un signal « même réseau : oui / non ».",
    "Nouveau droit de modérateur : « Retirer une annonce de la Brocante », inclus dans « Modo complet ».",
    "Le jeu garde une empreinte non réversible de la dernière connexion de chaque joueur pour ce signal, jamais l'adresse. Sa clé est un fichier à part (netkey.txt, à côté de la base) : les sauvegardes de la base ne la contiennent pas."

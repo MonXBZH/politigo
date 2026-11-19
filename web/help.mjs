@@ -4,6 +4,7 @@
 import {XP,DUEL,DEBATE,MINI,PONG_RULES} from "./rules.mjs";
 import {MISSION_RULES,MISSIONS,MAIL,GOALS_PER_DAY,FLAME} from "./activities.mjs";
 import {ODDS,PITY,CONFETTI,EXCHANGE,RARITY_LABEL} from "./wardrobe.mjs";
+import {WALL_W,WALL_H,MAX_WALLS,DAILY_QUOTA,WEAR_H,BRUSH_MS,SOLIDITY,XP as WALL_XP,WALL_NIGHT,WAVE_HOURS} from "./wall.mjs";
 
 const pct=v=>`${String(v).replace(".",",")} %`;
 const mins=ms=>ms>=36e5?`${ms/36e5} h`:`${Math.round(ms/6e4)} min`;
@@ -32,6 +33,7 @@ export const HELP=[
    `Les activités (mini-jeux) : ${XP.actsPerVisit} par visite, ${XP.actsPerDay} par jour. Le Pong rapporte ${PONG_RULES.xp} XP et la Manif ${MINI.cortege.xp}, plus un bonus selon ton score ; le Débat chrono, ${String(MINI.debate.bonusRate).replace(".",",")} XP par bonne réponse (${MINI.debate.bonusCap} au plus).`,
    `Les missions : de +${tierXp(1)} à +${tierXp(3)} XP à chaque rapport, selon leur durée.`,
    "La forme compte : bien soigné, il gagne de l'XP plus vite et enchaîne les séries ; négligé, il régresse.",
+   `Une série, ce sont des heures de suite en forme « Excellente » : les quatre jauges à ${XP.excellent} ou plus, vérifiées chaque heure, nuit comprise. Chaque heure de série ajoute +1 % d'XP passive, jusqu'à +${Math.round(XP.streakCap*100)} %. La série retombe à zéro dès qu'une heure se termine avec une jauge sous ${XP.excellent} (forme Correcte, Négligée ou Abandonnée), et à la mort politique. Ta série record, elle, est gardée.`,
    "Une nouvelle figure tous les 10 niveaux, jusqu'à la légende du niveau 100."],
   "Les frais de mandat (FM) tombent à chaque heure où il reste en vie. Ils servent à la Buvette et aux Soins. Aucun achat réel, jamais."]},
  {id:"jeux",title:"Les mini-jeux",parts:[
@@ -78,6 +80,18 @@ export const HELP=[
    "Un objet échangé quitte ta Garde-robe : si tu en tires un autre exemplaire plus tard, c'est un nouvel objet. Rien d'autre ne change : ni XP, ni jauges, ni confettis.",
    "Tu es prévenu d'une offre reçue, d'un échange conclu ou d'une réponse à ton offre. Les échanges entre camps s'affichent dans le fil.",
    "Vie privée : le jeu garde une empreinte non réversible de ta dernière adresse de connexion, pour repérer les échanges entre comptes d'une même personne ; jamais l'adresse elle-même."]]},
+ {id:"collage",title:"Collage et la Nuit du collage",parts:[
+  `Les deux camps se disputent des murs d'affiches. « Collage » le jour, « La Nuit du collage » de ${WALL_NIGHT.start} h à ${WALL_NIGHT.end} h (heure de Paris), avec ${String(WALL_NIGHT.xp).replace(".",",")} fois plus d'XP la nuit (cumulable avec un événement « XP doublée »). Ouvert 24 h sur 24, à partir du niveau 3.`,
+  [`Les murs : ${WALL_W} × ${WALL_H} cases. Quand le dernier est plein, un nouveau s'ouvre (${MAX_WALLS} au plus) ; les flèches ◀ ▶ changent de mur.`,
+   `${DAILY_QUOTA} affiches par jour. Un coup de pinceau abandonné en use une quand même.`,
+   `Le pinceau : ${BRUSH_MS/1000} secondes, arrête-le au bon moment. Parfait, bon ou bâclé : solidité ${SOLIDITY.parfait}, ${SOLIDITY.bon} ou ${SOLIDITY.bacle}, et ${WALL_XP.parfait}, ${WALL_XP.bon} ou ${WALL_XP.bacle} XP (×${String(WALL_NIGHT.xp).replace(".",",")} la nuit).`,
+   "Sur ta propre affiche, tu la rafraîchis : son âge repart à zéro, avec la meilleure des deux solidités. Sur celle de l'adversaire, tu retires 1 de solidité ; à 0, la case change de camp.",
+   `L'usure : une affiche est nette moins de ${WEAR_H.pale} h, pâlie jusqu'à ${WEAR_H.torn} h, déchirée jusqu'à ${WEAR_H.free} h. À ${WEAR_H.free} h, la case est libre.`,
+   "À minuit, on compte les cases. Seul un camp qui a eu au moins un colleur dans la journée peut gagner : celui qui a le plus de cases l'emporte, une égalité donne la victoire aux deux, et un camp seul l'emporte avec au moins une case.",
+   "Chaque colleur du camp gagnant, pour sa journée, reçoit 1 bulletin pour la Tombola.",
+   `Les bénévoles : le camp en infériorité reçoit des renforts, autant que l'écart ou que ses propres colleurs du jour, au plus. Ils collent à ${WAVE_HOURS.slice(0,-1).join(", ")} et ${WAVE_HOURS.at(-1)} h, des affiches « bon » au coin doré, sans XP. Jamais pour un camp où personne n'a collé.`,
+   "Le Colleur de la semaine : celui qui a le plus de poses sur des cases libres, plus de cases prises. À égalité, le premier arrivé l'emporte. Son badge s'affiche sur sa fiche la semaine suivante."],
+  "Le décompte se fait juste après minuit, avec jusqu'à une demi-minute de retard."]},
  {id:"events",title:"Les événements",parts:[
   "De temps en temps, l'organisation lance un événement pour quelques heures : XP doublée, missions sans limite, soldes à la Buvette, nuit des duels… Un bandeau l'annonce en haut de l'écran, avec le temps restant. Touche-le pour en lire le détail.",
   ["Dans le jeu, les récompenses et les prix modifiés ressortent, par exemple « ×2 ».",
@@ -111,4 +125,4 @@ export function signupProblem({name,password,invite}={}){
  return "";
 }
 // The section a sheet's « ? » opens.
-export const SHEET_HELP={food:"jauges",care:"jauges",play:"jeux",duels:"duels",more:"demarrer",wardrobe:"tombola",urn:"tombola",player:"social",chat:"social",advent:"treve",snow:"treve",market:"brocante",marketDo:"brocante"};
+export const SHEET_HELP={food:"jauges",care:"jauges",play:"jeux",duels:"duels",more:"demarrer",wardrobe:"tombola",urn:"tombola",player:"social",chat:"social",advent:"treve",snow:"treve",market:"brocante",marketDo:"brocante",wall:"collage"};

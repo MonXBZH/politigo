@@ -114,7 +114,9 @@ de renaissance propre à chaque camp (la *primaire unitaire* à gauche, *le part
 - 🎲 **Quitte ou double** : juste après un débat, une revanche à pile ou face. Gagnée : moral **+12** et énergie **+12**.
   Perdue : un **stress ×2**.
 - 💼 **Frais de mandat (FM)** : la monnaie du jeu, 2 FM gagnés par heure de vie. **Aucun achat réel, jamais.**
-- 📈 **La forme compte** : bien soigné, il gagne de l'XP plus vite et enchaîne les séries. Négligé, il régresse.
+- 📈 **La forme compte** : bien soigné, il gagne de l'XP plus vite et enchaîne les séries. Négligé, il régresse. Une **série**, ce sont des heures de suite en forme « Excellente » (les quatre
+  jauges à 50 ou plus, vérifiées chaque heure, nuit comprise) : chacune ajoute +1 % d'XP passive, jusqu'à +25 %. Elle retombe à zéro
+  dès qu'une heure se termine avec une jauge sous 50, et à la mort politique ; la série record, elle, est gardée.
   Avec six visites et quelques activités par jour, le niveau 100 se gagne en une quinzaine de jours,
   un peu moins si tu brilles aux mini-jeux.
 
@@ -161,11 +163,12 @@ dans la main. **Purement cosmétique** : aucun effet sur le jeu, et **jamais d'a
   de 1 à 3 par mission selon sa durée (6 par jour au plus), un par objectif du jour atteint, un toutes les trois lettres
   répondues (2 par jour au plus pour le courrier).
 - 🌈 **Cinq raretés** : commun (60 %), rare (28 %), épique (9,5 %), légendaire (2 %) et ultra rare (0,5 %). Un tirage
-  garanti épique au 10ᵉ sans en voir, légendaire au 50ᵉ, ultra rare au 80ᵉ.
+  garanti épique au 10ᵉ sans en voir, légendaire au 50ᵉ, ultra rare au 80ᵉ. Un ultra rare ne remet pas à zéro le compteur du légendaire, et le légendaire garanti est un
+  légendaire que tu n'as pas encore, tant qu'il t'en manque un.
 - 🎊 **Les doublons deviennent des confettis**. Ils s'échangent contre la case de ton choix : 100 pour une commune, 200 pour une rare, 300 pour une épique.
 - 👔 **La Garde-robe** (Dossier) : une vingtaine de tenues par camp, du *Bleu de travail* au *Front populaire, 1936*,
-  du *Pull sur les épaules* au *Général, 1958*, et une cinquantaine d'objets à brandir. La tenue se superpose à
-  tous les personnages de la collection.
+  du *Pull sur les épaules* au *Général, 1958*, et une cinquantaine d'objets à brandir, plus **la vague satirique** (35 pièces : 14 tenues et 21 objets, dont 9 pour les deux
+  camps). La tenue se superpose à tous les personnages de la collection.
 
 | La Tombola de la Fête | Un tirage | La Garde-robe, à gauche | La Garde-robe, à droite | Les objets |
 |:---:|:---:|:---:|:---:|:---:|
@@ -191,6 +194,11 @@ dans la main. **Purement cosmétique** : aucun effet sur le jeu, et **jamais d'a
   deux camps. Dépose une annonce (1 à 3 objets, ce que tu cherches), **troque** tout de suite si tu as ce qu'elle demande, ou
   fais une **offre** que l'auteur accepte ou refuse. Dès le niveau 5 et 3 jours de compte, 3 échanges par jour ; certains objets
   très rares ne s'échangent pas. Tu es prévenu des offres, et les échanges entre camps s'affichent dans le fil.
+- 🖌️ **Collage et La Nuit du collage** (dès le niveau 3, 24 h sur 24) : les deux camps se disputent des murs d'affiches de 8 × 6 cases.
+  5 affiches par jour, un coup de pinceau de 3 secondes : plus il est juste, plus l'affiche est solide (et l'XP, ×1,5 de 20 h à 8 h). On rafraîchit les siennes, on
+  abîme celles de l'adversaire jusqu'à retourner la case ; une affiche s'use et disparaît au bout de 48 h. À minuit, le camp qui
+  tient le plus de cases l'emporte (à condition d'avoir collé dans la journée) et chacun de ses colleurs gagne un bulletin ; le camp en
+  infériorité reçoit des bénévoles. Un titre de **Colleur de la semaine**, avec son badge, récompense le plus actif.
 - 🔔 **Notifications** : sois prévenu d'un défi ou d'un résultat même le jeu fermé (Dossier → Compte).
   Sur iPhone, ajoute d'abord PolitiGo à l'écran d'accueil.
 - 💬 **Le chat** (si l'organisateur l'ouvre, salon par salon) : un salon pour tout le monde et un salon réservé à ton camp. Emojis, images et GIF (colle celui de ton
@@ -203,7 +211,7 @@ dans la main. **Purement cosmétique** : aucun effet sur le jeu, et **jamais d'a
 
 Une **interface d'administration** facultative, dans son propre conteneur, pour le réseau local : tableau de bord, fiches
 des joueurs (mot de passe, déblocage, renommage, suspension, suppression, protection), **annonces** immédiates ou planifiées (à tous, à un camp, à un
-joueur), ouverture et modération du chat (avec le fil de tous les salons en direct), modération du fil, duels, Brocante (annonces et échanges, avec un signal « même réseau »), code d'invitation en un clic,
+joueur), ouverture et modération du chat (avec le fil de tous les salons en direct), modération du fil, duels, Brocante (annonces et échanges, avec un signal « même réseau »), Collage (les dernières nuits, les colleurs et les murs, en lecture seule), code d'invitation en un clic,
 inscriptions et événements à chaud, sauvegardes automatiques, **détection de bots**, journal des actions. Les cas à traiter (signalements,
 duels suspects, comptes louches, comptes abandonnés, événements rares) remontent en direct dans « À traiter », avec un son et une notification
 système. L'organisateur peut nommer des **modérateurs** parmi les joueurs, avec des droits choisis un par un. La fiche d'un

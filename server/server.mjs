@@ -20,6 +20,8 @@ import * as SF from "./snowfront.mjs";
 import {createChallenges} from "./snowchallenges.mjs";
 import * as MK from "./market.mjs";
 import {createMarket,netPrefix} from "./marketstore.mjs";
+import * as WL from "./wall.mjs";
+import {createWall} from "./wallstore.mjs";
 
 const env=process.env;
 process.umask(0o077);
@@ -77,6 +79,9 @@ if(DUEL_MIN_LEVEL!==R.DUEL.minLevel||DUEL_MIN_AGE!==R.DUEL.minAgeMs)console.warn
 // La Brocante: the duels' level, and an account age of its own (3 days), which the knob can only lower (tests).
 const MARKET_MIN_AGE=knob(env.POLITIGO_MARKET_MIN_AGE_H,MK.MARKET.minAgeMs/R.H)*R.H;
 if(MARKET_MIN_AGE!==MK.MARKET.minAgeMs)console.warn(`Brocante test setting active: accounts ${MARKET_MIN_AGE/R.H} h old+ (normal: ${MK.MARKET.minAgeMs/R.H} h).`);
+// La Nuit du collage opens at level 3; the knob can only lower it (tests).
+const WALL_LEVEL=3,WALL_MIN_LEVEL=knob(env.POLITIGO_WALL_MIN_LEVEL,WALL_LEVEL);
+if(WALL_MIN_LEVEL!==WALL_LEVEL)console.warn(`Collage test setting active: level ${WALL_MIN_LEVEL}+ (normal: ${WALL_LEVEL}).`);
 // The Duel du Bâton on a test server: its rounds' clock runs this many times faster, and a deferred duel is replayed this
 // long after the bearer's part instead of at the next 21:00. Never set on a real server (said at start).
 const BATON_K=Math.max(1,Math.min(20,Math.floor(Number(env.POLITIGO_BATON_SPEED))||1));
@@ -103,6 +108,16 @@ if(env.POLITIGO_NEWYEAR_AT!==undefined&&env.POLITIGO_NEWYEAR_AT!==""){
  const n=Number(env.POLITIGO_NEWYEAR_AT);
  if(!Number.isSafeInteger(n)||n<=0){console.error("POLITIGO_NEWYEAR_AT must be an instant in ms since 1970.");process.exit(1);}
  NEWYEAR_AT=n;console.warn(`New Year test setting active: midnight at ${new Date(n).toISOString()}.`);
+}
+// La Nuit du collage's close moved to an instant, in ms: a test setting (refused on a released image, like the New Year's).
+// It closes the night of that instant's day once, at that instant; the real midnights then go on as usual.
+let WALL_CLOSE_AT=null;
+if(env.POLITIGO_WALL_CLOSE_AT!==undefined&&env.POLITIGO_WALL_CLOSE_AT!==""){
+ const rawVersion=env.POLITIGO_VERSION??"";
+ if(rawVersion!==""&&rawVersion!=="dev"){console.error("POLITIGO_WALL_CLOSE_AT is a test setting: refused unless POLITIGO_VERSION is unset or \"dev\". Remove it.");process.exit(1);}
+ const n=Number(env.POLITIGO_WALL_CLOSE_AT);
+ if(!Number.isSafeInteger(n)||n<=0){console.error("POLITIGO_WALL_CLOSE_AT must be an instant in ms since 1970.");process.exit(1);}
+ WALL_CLOSE_AT=n;console.warn(`Collage test setting active: night close at ${new Date(n).toISOString()}.`);
 }
 // The timed events still to come or running (the table holds them all): read by every action and every clock tick.
 let EVENTS=[];
@@ -605,11 +620,13 @@ const onlineIds=()=>new Set([...clients].map(c=>c.playerId));
 const isOnline=id=>[...clients].some(c=>c.playerId===id);
 function boardRows(){
  const on=onlineIds(),tally=new Map(q.duelTally.all().map(r=>[r.id,r]));
+ // The Colleur de la semaine wears his title on his card the whole following week.
+ let colleur=null;try{colleur=WS.title(Date.now())?.playerId??null;}catch(e){console.error("board, wall title:",e);}
  return [...players.values()].filter(p=>!p.suspended).map(p=>{const S=p.state,worn=S.wardrobe?.worn,t=tally.get(p.id);return {
   name:p.name,camp:S.camp,candidate:R.person(S).name,lvl:S.lvl,score:R.score(S),form:S.form,
   streak:S.streak,bestStreak:S.bestStreak,deaths:S.deaths,asleep:R.isAsleep(S),online:on.has(p.id),
   // What the portraits wear, and the duel record of the last month (closed duels are purged after 30 days).
-  outfit:worn?.outfit??null,object:worn?.object??null,dw:Number(t?.dw??0),dl:Number(t?.dl??0)};})
+  outfit:worn?.outfit??null,object:worn?.object??null,dw:Number(t?.dw??0),dl:Number(t?.dl??0),...(p.id===colleur?{wallTitle:true}:{})};})
  .sort((a,b)=>b.score-a.score||b.lvl-a.lvl||a.name.localeCompare(b.name,"fr"));
 }
 const clients=new Set();         // live SSE connections: {res, playerId}
@@ -650,7 +667,7 @@ function flushBoard(){
 }
 // The debate's seed deals its answers: it never leaves the server (the other games' seeds only shape what is drawn).
 const publicState=S=>S.mini?.k==="debate"&&"seed" in S.mini?{...S,mini:Object.fromEntries(Object.entries(S.mini).filter(([k])=>k!=="seed"))}:S;
-function mePayload(p){return {name:p.name,state:publicState(p.state),speed:SPEED,tz:R.timeZone(),serverNow:Date.now(),event:EVENT_MODE,events:publicEvents(Date.now()),version:VERSION,release:RELEASE,seenVersion:p.seen??null,chat:chatRooms(),urnHint:urnHintOf(p),baton:batonWon?batonView(p):null,marketNew:marketNewOf(p,Date.now()),marketListed:marketListedOf(p),...noelView(p,Date.now())};}
+function mePayload(p){return {name:p.name,state:publicState(p.state),speed:SPEED,tz:R.timeZone(),serverNow:Date.now(),event:EVENT_MODE,events:publicEvents(Date.now()),version:VERSION,release:RELEASE,seenVersion:p.seen??null,chat:chatRooms(),urnHint:urnHintOf(p),baton:batonWon?batonView(p):null,marketNew:marketNewOf(p,Date.now()),marketListed:marketListedOf(p),wallLeft:wallLeftOf(p,Date.now()),...noelView(p,Date.now())};}
 
 // ===================================================================== TRÊVE: THE FRONT DE NEIGE AND THE NEW YEAR TOAST
 // Every snowball fight the server replayed adds its score to its player's camp (snowfront.mjs), unless flagged as a
@@ -887,6 +904,7 @@ setInterval(()=>{
  if(now-lastChores>=60e3){lastChores=now;try{chores(now);}catch(e){console.error("sweep, chores:",e);}}
  try{sweepDuels(now);}catch(e){console.error("sweep, duels:",e);}
  try{chat.sweep(now);}catch(e){console.error("sweep, chat:",e);}
+ try{wallTick(now);}catch(e){console.error("sweep, wall:",e);}
  try{flushDeferred();}catch(e){console.error("sweep, deferred pushes:",e);}   // games that expired or were closed above
  lastSweep=now;
 },SWEEP_MS).unref();
@@ -1869,6 +1887,188 @@ async function marketRoute(req,res){
  throw new HttpError(400,"Opération inconnue.");
 }
 
+// ===================================================================== LA NUIT DU COLLAGE (wall.mjs: the rules, wallstore.mjs: the rows)
+// One brush stroke per poster: "start" opens an attempt (in memory, one per player, its seed never re-drawn), "stop"
+// pastes it on the live cell in one transaction (cells, the day's row, the XP and the journal). The quality is the
+// server's: a time longer than what really elapsed (+1 s), too quick or nonsense is « bâclé ». An attempt not stopped
+// within WALL_ATTEMPT_MS pastes nothing but its poster is spent (quota only, never active). Open 24/7: night and nap never block.
+const WS=createWall(db);
+const WALL_ATTEMPT_MS=10e3,WALL_CAST_MS=3e3,WALL_GONE="Ce coup de pinceau n'est plus valable.";
+const wallAttempts=new Map();   // playerId -> {id, seed, g, t0, timer}
+const wallHour=now=>R.hodOf(Math.floor(now/R.H));
+const WALL_WORD={posee:"posée",rafraichie:"rafraîchie",abimee:"abîmée",prise:"prise"};
+// An attempt past its time: forgotten, its poster spent (on the day it expires) without making its player active. Never throws.
+function wallExpire(p,a,now){
+ if(wallAttempts.get(p.id)!==a)return;
+ wallAttempts.delete(p.id);clearTimeout(a.timer);
+ try{if(players.has(p.id))WS.spend(dayNow(now),p.id,p.state.camp);}catch(e){console.error(`wall: expired attempt of player ${p.id} not noted`,e);}
+ try{if(players.has(p.id))pushMe(p);}catch{}
+}
+const wallLive=(p,now)=>{const a=wallAttempts.get(p.id);if(a&&now-a.t0>WALL_ATTEMPT_MS)wallExpire(p,a,now);return wallAttempts.get(p.id)??null;};
+// Posters left today: the quota, less the noted ones and the attempt in progress (0 rather than a broken payload).
+function wallLeftOf(p,now){try{return Math.max(0,WL.DAILY_QUOTA-WS.used(dayNow(now),p.id)-(wallLive(p,now)?1:0));}catch{return 0;}}
+const wallCounts=(cells,now)=>{const n=WL.countWall(cells,now);return {left:n.left,right:n.right};};
+// The next Paris midnight, when the night is counted.
+const wallClosesAt=now=>{const w=wall(now);return wallToUtc(w.year,w.month,w.day+1,0,0);};
+function wallView(p,now){
+ const st=WS.settle(now),cells=st.cells,day=dayNow(now),active=WS.active(day),a=wallLive(p,now),t=WS.title(now),tp=t&&players.get(t.playerId);
+ if(st.changed)wallChanged();   // a poster reached its 48 h since the last tick: the other screens hear it too
+ return {cells,walls:WL.wallCount(cells),now,counts:wallCounts(cells,now),active,volunteers:WL.volunteerCounts(active),left:wallLeftOf(p,now),
+  attempt:a?{id:a.id,seed:a.seed,g:a.g,t0:a.t0}:null,title:tp?{name:tp.name,camp:tp.state.camp}:null,closesAt:wallClosesAt(now)};
+}
+// The walls changed: every screen hears it once, WALL_CAST_MS after the first change (the ones in between ride along).
+let wallTimer=null;
+function wallChanged(){
+ if(wallTimer)return;
+ wallTimer=setTimeout(()=>{wallTimer=null;try{const now=Date.now(),cells=WS.cells(now);broadcast("wall",{cells,counts:wallCounts(cells,now),walls:WL.wallCount(cells)});}catch(e){console.error("wall cast:",e);}},WALL_CAST_MS);
+ wallTimer.unref?.();
+}
+// POST /api/wall {op:"start", g} → {id, seed, t0}; {op:"stop", id, ms} → {quality, outcome, cell, xp, left, opened?}.
+async function wallRoute(req,res){
+ const p=auth(req);
+ if(limited("wall:"+p.id,30,60e3))throw new HttpError(429,"Doucement : réessaie dans un instant.");
+ const b=await readJson(req);
+ if(!players.has(p.id))throw new HttpError(401,"Connexion requise.");   // deleted while the body was arriving
+ if(p.suspended)throw new HttpError(403,SUSPENDED);   // suspended while it was arriving
+ const now=Date.now(),op=typeof b.op==="string"?b.op:"?";
+ if(op==="start"){
+  if(wallLive(p,now))throw new HttpError(409,"Un coup de pinceau est déjà en cours.");
+  const why=WL.wallBlock(p.state,{minLevel:WALL_MIN_LEVEL,used:WS.used(dayNow(now),p.id)});if(why)throw new HttpError(422,why);
+  const cells=WS.cells(now),g=b.g;
+  if(!Number.isInteger(g)||g<0||g>=cells.length)throw new HttpError(400,"Case inconnue.");
+  const a={id:crypto.randomBytes(12).toString("base64url"),seed:crypto.randomInt(0,2**32),g,t0:now,timer:null};
+  a.timer=setTimeout(()=>wallExpire(p,a,Date.now()),WALL_ATTEMPT_MS+50);a.timer.unref?.();
+  wallAttempts.set(p.id,a);
+  try{pushMe(p);}catch{}
+  return send(res,200,{ok:true,id:a.id,seed:a.seed,t0:a.t0});
+ }
+ if(op==="stop"){
+  // Someone else's id, an unknown one, a second stop: the same answer, and nobody's attempt is touched.
+  const a=wallAttempts.get(p.id);
+  if(!a||typeof b.id!=="string"||b.id!==a.id)throw new HttpError(409,WALL_GONE);
+  if(now-a.t0>WALL_ATTEMPT_MS){wallExpire(p,a,now);throw new HttpError(409,WALL_GONE);}
+  wallAttempts.delete(p.id);clearTimeout(a.timer);
+  const ms=typeof b.ms==="number"?b.ms:NaN,q=WL.brushTimeOk(ms,now-a.t0)?WL.brushQuality(a.seed,ms):"bacle";
+  const camp=p.state.camp,hour=wallHour(now),xp=WL.wallXp(q,hour,fxOf(p)(now).xp.wall),day=dayNow(now);
+  const keep=p.state;let r=null,opened,gone=false;
+  batonBusy=true;db.exec("BEGIN");
+  try{
+   const cells=WS.cells(now);
+   if(a.g>=cells.length)gone=true;   // its wall vanished meanwhile (emptied by wear): the poster is spent all the same
+   else{
+    r=WL.pasteEffect(cells[a.g],{camp,quality:q,by:p.id,name:p.name,now,motif:a.seed%1000});
+    const next=cells.slice();next[a.g]=r.cell;
+    const settled=WL.settleWalls(next,now).cells,n=WL.wallCount(settled);
+    if(n>WL.wallCount(cells))opened=n-1;
+    WS.setCells(settled,cells);
+   }
+   if(r)WS.noteColleur(day,p.id,camp,WL.isUseful(r.outcome),now);else WS.spend(day,p.id,camp);
+   if(r)update(p,S=>{R.advance(S,now,SPEED,rand,fxOf(p));R.addXp(S,xp);
+    R.logEntry(S,"wall",`${WL.isWallNight(hour)?"Nuit du collage":"Collage"} : affiche ${WALL_WORD[r.outcome]} en ${WL.cellLabel(a.g)} (${WL.QUALITY_LABEL[q]}, +${xp} XP).`,{g:a.g,outcome:r.outcome,quality:q});});
+   db.exec("COMMIT");
+  }catch(e){try{db.exec("ROLLBACK");}catch{}p.state=keep;try{pushMe(p);}catch{}throw e;}
+  finally{batonBusy=false;}
+  try{batonCheck(p,now);}catch(e){console.error(`player ${p.id}: Bâton check failed`,e);}
+  if(gone){try{pushMe(p);}catch{}throw new HttpError(409,"Ce mur a disparu : l'affiche n'a pas été posée.");}
+  wallChanged();
+  return send(res,200,{ok:true,quality:q,outcome:r.outcome,g:a.g,cell:r.cell,xp,left:wallLeftOf(p,now),...(opened!==undefined?{opened}:{})});
+ }
+ throw new HttpError(400,"Opération inconnue.");
+}
+// ---- The wall's clock (every sweep): the wear, the volunteers' waves, the night at Paris midnight, the week on Monday.
+// Each is done once, kept in a setting: wall_wave = "day:wave", wall_night_closed = the last closed day, wall_week_closed
+// = the last closed week. After a downtime only the latest due wave, the last night and the last week are done.
+const WALL_NIGHT_JOURNAL="🖌️ Nuit du collage : ton camp a tenu le mur. +1 bulletin.";
+// The day key n days from a day key, by the calendar (a 23 h or 25 h day never skips nor repeats one); the days between two.
+const dayUtc=k=>Date.UTC(Math.floor(k/10000),Math.floor(k/100)%100-1,k%100);
+const dayShift=(k,n)=>{const d=new Date(dayUtc(k)+n*864e5);return d.getUTCFullYear()*10000+(d.getUTCMonth()+1)*100+d.getUTCDate();};
+const dayGap=(a,b)=>Math.round((dayUtc(b)-dayUtc(a))/864e5);
+function wallTick(now){
+ const day=dayNow(now),step=(what,fn)=>{try{fn();}catch(e){console.error(`wall tick, ${what}:`,e);}};
+ step("wear",()=>{if(WS.settle(now).changed)wallChanged();});
+ step("volunteers",()=>{
+  let i=-1;const h=wallHour(now);for(const [k,wh] of WL.WAVE_HOURS.entries())if(h>=wh)i=k;
+  if(i<0)return;
+  const [d,w]=String(getSetting("wall_wave")??"").split(":").map(Number);
+  if(d===day&&w>=i)return;
+  wallWave(day,i,now);
+ });
+ step("night",()=>{
+  const last=Number(getSetting("wall_night_closed"))||0,prev=dayShift(day,-1);
+  if(last<prev){
+   const gap=last?dayGap(last,prev)-1:0;   // the nights between the last closed one and yesterday: skipped
+   if(gap>0)audit("server","wall-night-skip",`${dayShift(last,1)}-${dayShift(prev,-1)}`,`${gap} nuit${gap>1?"s":""} non close${gap>1?"s":""} (serveur arrêté) : seule la dernière compte`);
+   if(WS.nightClosed(prev))setSetting("wall_night_closed",String(prev));else closeWallNight(prev,now);
+  }
+  if(WALL_CLOSE_AT!==null&&now>=WALL_CLOSE_AT){const d=dayNow(WALL_CLOSE_AT);if(!WS.nightClosed(d))closeWallNight(d,now);}
+ });
+ step("week",()=>{
+  const wk=WL.weekOf(day)-1;
+  if((Number(getSetting("wall_week_closed"))||0)<wk)closeWallWeek(wk);
+ });
+}
+// One wave: each minority volunteer pastes one « bon » poster (planWave: a volunteer appearing late only gets the waves
+// left, one per wave), by nobody, no XP, never an active colleur. The cells, the count and the setting in one transaction.
+function wallWave(day,i,now){
+ const before=WS.cells(now),vc=WL.volunteerCounts(WS.active(day)),done={left:0,right:0};
+ let cells=before;
+ for(const camp of WL.CAMPS){
+  const n=vc[camp];if(!n)continue;
+  const {posters}=WL.planWave(Array(n).fill(WL.WAVE_HOURS.length-i),n,i);
+  const r=WL.runVolunteers(cells,{camp,posters,now,seed:WL.hash32("wall-wave",day,i,camp)});
+  cells=r.wall;done[camp]=r.actions.length;
+ }
+ db.exec("BEGIN");
+ try{
+  if(done.left||done.right)WS.setCells(cells,before);
+  for(const camp of WL.CAMPS)if(done[camp])WS.addVolunteerUsed(day,camp,done[camp]);
+  setSetting("wall_wave",`${day}:${i}`);
+  db.exec("COMMIT");
+ }catch(e){try{db.exec("ROLLBACK");}catch{}throw e;}
+ if(done.left||done.right){console.log(`Collage: volunteers' wave ${i} of ${day}, left ${done.left}, right ${done.right}`);wallChanged();}
+}
+// The night: the walls counted now, the winners (scoreNight: only a camp with an active human colleur that day), one
+// bulletin to each of the winning camps' colleurs of the day, the night's row and the setting in ONE transaction, as
+// closeFront: an error pays nobody, puts the live states back and is retried at the next tick. Then the feed line (none
+// when nobody wins) and, when anybody pasted that day, the admin log.
+function closeWallNight(day,now){
+ const cells=WS.cells(now),n=WL.countWall(cells,now),counts={left:n.left,right:n.right},active=WS.active(day);
+ const {winners}=WL.scoreNight(counts,active),can=WL.CAMPS.filter(c=>active[c]>0),keep=new Map();let paid=0;
+ batonBusy=true;db.exec("BEGIN");
+ try{
+  for(const camp of winners)for(const id of WS.colleurs(day,camp)){
+   const p=players.get(id);if(!p||p.suspended)continue;
+   keep.set(id,p.state);let credited=false;
+   update(p,S=>{const w=S.wardrobe;if(!w)return false;credited=true;const b=Number.isFinite(w.bulletins)?w.bulletins:0;w.bulletins=Math.min(9999,b+1);
+    R.logEntry(S,"wall",WALL_NIGHT_JOURNAL,{bulletins:1});});
+   if(credited)paid++;
+  }
+  WS.closeNight(day,{...counts,winners,paid,at:now});
+  setSetting("wall_night_closed",String(Math.max(day,Number(getSetting("wall_night_closed"))||0)));
+  db.exec("COMMIT");
+ }catch(e){
+  try{db.exec("ROLLBACK");}catch{}
+  for(const [id,st] of keep){const p=players.get(id);if(p)p.state=st;}
+  console.error(`Collage night ${day} NOT closed (retried at the next tick):`,e);return;
+ }finally{batonBusy=false;}
+ console.log(`Collage night ${day} closed: left ${counts.left}, right ${counts.right}, winners ${winners.join("+")||"none"}, ${paid} player(s) paid`);
+ const line=WL.nightLine(winners,counts,can);if(line)feedLine("PolitiGo","wall",line);
+ if(can.length)audit("server","wall-night",String(day),`Gauche ${counts.left} · Droite ${counts.right} · ${winners.length===2?"égalité":winners.length?`${WL.CAMP_NAME[winners[0]]} gagne`:"personne ne gagne"} · +1 bulletin à ${paid} joueur${paid>1?"s":""}`);
+}
+// The week: its champion (most poses on an empty cell and captures, the earliest to the score on a tie) wears the title
+// the following week. A week nobody pasted usefully closes quietly.
+function closeWallWeek(wk){
+ const champ=WS.week(wk).find(r=>players.has(r.playerId))??null;
+ db.exec("BEGIN");
+ try{if(champ)WS.setTitle(wk,champ.playerId);setSetting("wall_week_closed",String(wk));db.exec("COMMIT");}
+ catch(e){try{db.exec("ROLLBACK");}catch{}throw e;}
+ publishBoard();   // last week's title leaves its card, this one's arrives
+ if(!champ)return;
+ const name=players.get(champ.playerId).name,n=champ.useful;
+ feedLine("PolitiGo","wall",`🖌️ Colleur de la semaine : ${name} (${n} collage${n>1?"s":""} utile${n>1?"s":""}).`);
+ audit("server","wall-week",name,`Semaine ${wk} · ${n} collage${n>1?"s":""} utile${n>1?"s":""}`);
+}
+
 // ===================================================================== ROUTES
 async function route(req,res){
  // Only the path matters, and an odd request target ("//", "//host") is just not found, never a 500.
@@ -2000,6 +2200,11 @@ async function route(req,res){
   return send(res,200,{ok:true,...v});
  }
  if(path==="/api/market"&&method==="POST")return marketRoute(req,res).finally(()=>{if(deferred.size)flushDeferred();});
+ if(path==="/api/wall"&&method==="GET"){
+  const p=auth(req);if(limited("wallget:"+p.id,30,10e3))throw new HttpError(429,"Doucement : réessaie dans un instant.");
+  return send(res,200,{ok:true,...wallView(p,Date.now())});
+ }
+ if(path==="/api/wall"&&method==="POST")return wallRoute(req,res).finally(()=>{if(deferred.size)flushDeferred();});
  if(path==="/api/debate"&&method==="POST")return debateRoute(req,res).finally(()=>{if(deferred.size)flushDeferred();});
  if(path==="/api/duels"&&method==="GET"){
   const p=auth(req),now=Date.now();
@@ -2659,13 +2864,15 @@ function removePlayer(p){
  db.exec("BEGIN");
  // Their listings and pending offers close with the account (the rows stay for the trade history), both ways.
  const hadListings=M.openCount(p.id)>0;let told=[];
- try{told=M.removePlayer(p.id);q.freeMythicsOf.run(p.id);q.deleteSchedulesTo.run(p.id);q.deletePlayer.run(p.id);q.tombstone.run(nameKey(p.name),p.created,now);q.deleteFeedOf.run(p.name);setSetting("playerFloor",String(Math.max(p.id,Number(getSetting("playerFloor"))||0)));db.exec("COMMIT");}catch(e){db.exec("ROLLBACK");throw e;}
+ // Their posters stay on the walls, nameless (« ancien élu »); their day and title rows go.
+ try{told=M.removePlayer(p.id);WS.removePlayer(p.id);q.freeMythicsOf.run(p.id);q.deleteSchedulesTo.run(p.id);q.deletePlayer.run(p.id);q.tombstone.run(nameKey(p.name),p.created,now);q.deleteFeedOf.run(p.name);setSetting("playerFloor",String(Math.max(p.id,Number(getSetting("playerFloor"))||0)));db.exec("COMMIT");}catch(e){db.exec("ROLLBACK");throw e;}
  players.delete(p.id);deferred.delete(p.id);soloTurns.delete(p.id);cleanCache.delete(p.id);   // a staff they held is back in the urn
  try{broadcast("feedInit",q.recentFeed.all(40));}catch(e){console.error("feed after deleting a player:",e);}
  try{after?.();}catch(e){console.error("chat, after deleting a player:",e);}
  try{chat.playerDeleted(p.id);}catch(e){console.error("chat, deleted player:",e);}
  for(const c of [...clients])if(c.playerId===p.id)closeStream(c,true);
  mkNew.delete(p.id);if(hadListings)marketBoardChanged();
+ {const a=wallAttempts.get(p.id);if(a){clearTimeout(a.timer);wallAttempts.delete(p.id);}}wallChanged();
  if(told.length)marketCast(told,"offer");   // the other side of the listings and offers closed with the account
  publishBoard(true);   // gone from every board at once
 }
@@ -2708,6 +2915,7 @@ function suspend(p,on){
   for(const r of bq.open.all())if(r.challenger===p.id||r.bearer===p.id){try{voidBaton(bLoad(r),now);}catch(e){console.error(`suspend, baton duel ${r.id}:`,e);}}
   try{snowChCancelOf(p.id,now);}catch(e){console.error(`suspend, snow challenges of ${p.id}:`,e);}
   if(M.openCount(p.id))marketBoardChanged();   // their listings leave the board (hidden, not closed)
+  {const a=wallAttempts.get(p.id);if(a){clearTimeout(a.timer);wallAttempts.delete(p.id);}}   // a brush stroke in progress pastes nothing
   publishBoard(true);
  }else{
   // Back on the real hour: the suspension is skipped, not played.
@@ -2972,6 +3180,12 @@ async function adminCommand(b){
   }
   const pairs=[...byPair.values()].filter(e=>e.n>=2).sort((x,y)=>y.n-x.n).slice(0,20);
   return {trades,listings,pairs};
+ }
+ // The Nuit du collage, read-only: the last 30 nights, today's colleurs and volunteers, the walls and their counts, the
+ // title worn now. Names only: never an id, an address or a fingerprint.
+ if(cmd==="wall-list"){
+  const cells=WS.cells(now),active=WS.active(dayNow(now)),t=WS.title(now),tp=t&&players.get(t.playerId);
+  return {nights:WS.history(30),walls:WL.wallCount(cells),counts:wallCounts(cells,now),active,volunteers:WL.volunteerCounts(active),title:tp?{name:tp.name,camp:tp.state.camp}:null};
  }
  if(cmd==="market-withdraw"){
   const l=Number.isSafeInteger(b.id)&&M.listing(b.id);

@@ -17,6 +17,8 @@ import {noelMoment,noelYear,voeuxText,adventCells,adventGiftText,etProgress,
 import {endSummary,frontBar,challengeText,sentText,challengeLists,dareView,sendsOnDeath} from "./snowui.mjs";
 import {MARKET,tradable} from "./market.mjs";
 import {listingView,forMe,pickable,tradeRecap,offerCheck,freshIds,catalogue,candidates,kindWord} from "./marketui.mjs";
+import * as WL from "./wall.mjs";
+import * as WU from "./wallui.mjs";
 const {people,personalItems,stresses,shop,fxNames,XP,xpCost,xpFloor,stage}=R;
 const $=s=>document.querySelector(s);
 const motionQuery=matchMedia("(prefers-reduced-motion: reduce)");
@@ -33,6 +35,9 @@ let snowFront=null,snowLast=null,snowData=null,snowErr="",snowSeq=0,snowAsked=fa
 // La Brocante: GET /api/market (only while its sheet is open), the tab, the flow under way (trade, offer, deposit, mine,
 // done), the listings new to this visit, the Dossier's count (me.marketNew) and whether it is stale.
 let mkData=null,mkErr="",mkSeq=0,mkTab="all",mkFlow=null,mkFresh=new Set(),mkNewCount=0,mkStale=false,mkMeT=0,mkMeLast=0,mkLoadT=0,mkListedIds=new Set();
+// Collage / La Nuit du collage: the sheet's state (wallui.mjs wallState, GET /api/wall only while it is open), its
+// DOM, the posters left (me.wallLeft) and the last counts heard (for the Jeux tile), the animations.
+let wl=null,wlErr="",wlSeq=0,wlLoadT=0,wlUi=null,wlLeft=null,wlCounts=null,wlBusy=false,wlAnim=null,wlFlash=null,wlLoop=false,wlBg=null;
 const curIdx=()=>R.curIdx(S),hodOf=R.hodOf,isNight=()=>R.isNight(S),isAsleep=()=>R.isAsleep(S);
 // What the élu wears from the wardrobe (wardrobe.mjs): drawn over his own look by sprite().
 const worn=()=>S?.wardrobe?.worn||{outfit:null,object:null},dress=p=>({...p,outfit:worn().outfit,object:worn().object});
@@ -78,8 +83,9 @@ function applyMe(m,{replay=false}={}){
  const first=!S||me!==m.name;
  // The action answer and the live stream race each other: an older copy of the state never replaces a newer one.
  if(!first&&m.state.lastReal<S.lastReal)return;
- if(me!==m.name){mkData=null;mkErr="";mkFlow=null;}                  // another player: nothing of the last one's Brocante
+ if(me!==m.name){mkData=null;mkErr="";mkFlow=null;wl=null;wlCounts=null;}                  // another player: nothing of the last one's Brocante
  if(Number.isFinite(m.marketNew))mkNewCount=mkOpen()?0:Math.max(0,m.marketNew);   // the Dossier's count (the open sheet has seen them)
+ if(Number.isFinite(m.wallLeft)){wlLeft=Math.max(0,m.wallLeft);if(wl&&me===m.name)wl={...wl,left:wlLeft};}   // the posters left today (an attempt under way counts)
  if(Array.isArray(m.marketListed))mkListedIds=new Set(m.marketListed.filter(x=>typeof x==="string"));   // the Garde-robe's « En vitrine »
  chatFlags(m.chat);
  me=m.name;SPEED=m.speed||1;VERSION=m.version||"dev";R.setTimeZone(m.tz||"Europe/Paris");
@@ -1135,6 +1141,7 @@ cv.addEventListener("keydown",e=>{if(!pong&&!mini&&(e.key==="Enter"||e.key===" "
 document.addEventListener("keydown",e=>{
  if(!$("#sheet").hidden){
   if(e.key==="Escape"){closeSheet();return;}
+  if(sheetKind==="wall"&&wl?.brush&&(e.key===" "||e.code==="Space")){e.preventDefault();if(!e.repeat)wallStop();return;}   // a fresh Space stops the brush
   if(e.key==="Tab"){                                   // keep keyboard focus inside the open sheet
    // Only what is on screen: a hidden file input or a closed menu cannot take the focus.
    const f=[...$(".sheet-card").querySelectorAll("button:not(:disabled),select,input:not(:disabled),textarea:not(:disabled),[tabindex='0']")].filter(el=>el.getClientRects().length);
@@ -1311,6 +1318,7 @@ function connectLive(){
  on("snowChallenge",v=>{if(v&&typeof v==="object")snowEvent(v);});
  on("snowFront",v=>snowFrontEvent(v));
  on("market",v=>{if(v&&typeof v==="object")marketEvent(v);});
+ on("wall",v=>{if(v&&typeof v==="object")wallEvent(v);});
  on("announce",v=>{if(typeof v?.text!=="string"||!v.text.trim())return;announceQ.push({text:v.text.slice(0,240)});if(announceQ.length>3)announceQ.shift();showAnnounce();});
  // The Bâton de feu found its bearer: a banner for everyone else (the bearer has the legend).
  on("mythic",v=>{
@@ -1425,7 +1433,7 @@ function armedButton(label,armedLabel,cls,onConfirm){
 // 1.6.0: the missions (a report ready), the letter, the goals' progress, the wardrobe and the urn.
 const sheetSig=()=>[S.fm,curIdx(),R.actsToday(S),R.actsThisVisit(S),S.energy<20,S.coffees,S.breadIdx,S.lvl,S.best,S.equipped[person().name]||0,isAsleep(),S.camp,!rematchBlock(),season(),S.treatDay,
  S.missions?.cur?.id,A.missionReady(S),A.missionsToday(S),S.energy<A.MISSION_RULES.minEnergy,S.mail?.letter?.id,A.lettersWaiting(S),A.lettersToday(S),S.mail?.b,S.goals?.list?.map(x=>`${x.n}${x.done?"d":""}`).join(),
- running().map(e=>e.id).join(),S.wardrobe?.own?.length,worn().outfit,worn().object,S.wardrobe?.bulletins,S.wardrobe?.confetti,W.freeDrawToday(S),A.flameOf(S),urnHint,batonSig(),S.advent?.y,S.advent?.opened?.join("-"),mkNewCount,[...mkListedIds].join()].join("|");
+ running().map(e=>e.id).join(),S.wardrobe?.own?.length,worn().outfit,worn().object,S.wardrobe?.bulletins,S.wardrobe?.confetti,W.freeDrawToday(S),A.flameOf(S),urnHint,batonSig(),S.advent?.y,S.advent?.opened?.join("-"),mkNewCount,[...mkListedIds].join(),wlLeft,wlCounts?.left,wlCounts?.right,WL.isWallNight(wlHour())].join("|");
 let shownSig="";
 function setBackgroundInert(on){for(const el of document.querySelectorAll(".topbar,.app,footer"))el.inert=on;lockScroll(on);}
 // The page behind an open sheet does not move: a swipe that reaches the end of a list (the chat) no longer scrolls the
@@ -1454,6 +1462,7 @@ function openSheet(kind,opener){
 // force: what changed is not in the state (the duels list, the push subscription).
 // picked: a redraw asked by the player's own choice in a <select> (focus comes back to it); others wait for the blur.
 function liveSheet(force=false,picked=false){
+ if(S&&sheetKind==="wall"&&!$("#sheet").hidden){wallPaint();return;}   // updated in place: the brush and the focus stay
  if(!S||!sheetKind||$("#sheet").hidden||(!force&&sheetSig()===shownSig))return;
  if(sheetKind==="test")return;                       // a test under way owes nothing to the state: never redrawn under the finger
  if(sheetKind==="chat")return;                       // built once and updated in place (chat.mjs): the composer keeps focus and text
@@ -1510,7 +1519,8 @@ function renderSheet(kind,opener){
    ...(noel()?[boosted(itemButton("❄️ Bataille de boules de neige","45 s contre les élus de l'autre camp : vise, pare leurs boules, épargne les passants. Puis défie un joueur sur le même tirage.",
     `Saison${snowIn()?` · ${snowIn()} défi${snowIn()>1?"s":""}`:""}`,false,openSnow),true)]:[]),
    // Always open: even when he cannot duel now, the sheet shows the challenges, the results and why.
-   boosted(itemButton("Duels",`Défie un rival au Débat chrono : mêmes questions, meilleur score. ${R.DUEL.perDay+f.duels} défis par jour.`,`${dn?`${dn} défi${dn>1?"s":""}`:"PvP"}${f.duelMult>1?` (×${frNum(f.duelMult)})`:""}`,false,openDuels),f.duels>0||f.duelMult>1)
+   boosted(itemButton("Duels",`Défie un rival au Débat chrono : mêmes questions, meilleur score. ${R.DUEL.perDay+f.duels} défis par jour.`,`${dn?`${dn} défi${dn>1?"s":""}`:"PvP"}${f.duelMult>1?` (×${frNum(f.duelMult)})`:""}`,false,openDuels),f.duels>0||f.duelMult>1),
+   wallTile()
   ));
   renderBatonBlock(body);
   renderActivities(body);
@@ -1524,6 +1534,7 @@ function renderSheet(kind,opener){
  if(kind==="snowdare")renderSnowDare(body,set);
  if(kind==="market")renderMarket(body,set);
  if(kind==="marketDo")renderMarketDo(body,set);
+ if(kind==="wall")renderWall(body,set);
  if(kind==="test"){
   set("Test politique","Cinq questions pour les indécis. Sans effet sur la partie : le dernier mot reste le tien.");
   const box=document.createElement("div");box.className="quiz";box.id="sheet-quiz";body.append(box);
@@ -1949,7 +1960,9 @@ function renderPlayer(body,set){
  for(const [k,v] of [["Élu",r.candidate],["Niveau",String(r.lvl)],["Score",`${r.score} pts${rank?` · ${ordinal(rank)}`:""}`],["Duels",`${plural(r.dw|0,"gagné")} · ${plural(r.dl|0,"perdu")}`],["Tenue",r.outfit?item(r.outfit):"aucune"],["Objet",item(r.object)]]){
   const dt=document.createElement("dt"),dd=document.createElement("dd");dt.textContent=k;dd.textContent=v;kv.append(dt,dd);
  }
- body.append(stage,kv);
+ body.append(stage);
+ if(r.wallTitle){const b=document.createElement("p");b.className="wl-badge";b.append(pill("🖌️ Colleur de la semaine","new"));body.append(b);}   // last week's champion
+ body.append(kv);
  // The bearer's sheet: the Duel du Bâton (the challenge, or the arena while a duel is on).
  if(holder||batonDuel()&&[batonDuel().c,batonDuel().b].includes(r.name)){
   const d=batonDuel(),w=watchable(),row=document.createElement("div");row.className="btn-row";
@@ -2082,6 +2095,7 @@ async function markNewsSeen(){
 }
 function closeSheet(fromBack=false){
  if($("#sheet").hidden)return;
+ clearTimeout(wlLoadT);wlLoadT=0;                     // no wall reload for a closed sheet
  if(sheetKind==="news"&&newsAuto){newsAuto=false;SEEN=RELEASE;markNewsSeen();}
  if(!fromBack&&sheetInHistory){sheetInHistory=false;pendingBack=true;history.back();}
  $("#sheet").hidden=true;sheetKind=null;setBackgroundInert(false);chat.hide();$("#sheet").classList.remove("chat");
@@ -2663,6 +2677,210 @@ function duelEvent(v){
  duelsLoad();
 }
 
+// ---------- Collage / La Nuit du collage (wall.mjs: the rules, wallui.mjs: the drawing, the words, the state) ----------
+// One sheet, "wall", built once when it opens and then updated in place (never redrawn under the finger: a live
+// update or a reload keeps the wall on view, the chosen cell, the focus and a brush under way). GET /api/wall only while
+// it is open; closed, the live "wall" notice only keeps the counts for the Jeux tile. Names go in through textContent.
+const WALL_LEVEL=3;                                  // the server's default level: its own 422 says so when a test lowers it
+const wlOpen=()=>sheetKind==="wall"&&!$("#sheet").hidden;
+const wlHour=()=>hodOf(Math.floor(serverNow()/R.H));   // the Paris hour: « Collage » by day, « La Nuit du collage » 20 h – 8 h
+function wallLoad(){clearTimeout(wlLoadT);wlLoadT=setTimeout(()=>{wlLoadT=0;if(wlOpen())wallFetch();},250);}   // never once the sheet is closed
+async function wallFetch(){
+ if(!S)return;
+ const seq=++wlSeq,who=me,r=await api("GET","/api/wall");
+ if(seq!==wlSeq||!S||me!==who)return;
+ if(r.ok&&Array.isArray(r.cells)){wl=WU.wallState(wl,{type:"load",data:r,now:serverNow()});wlCounts=wl.counts;wlLeft=wl.left;wlErr="";}else wlErr=r.error||"Erreur du serveur.";
+ if(wlOpen())wallPaint();
+}
+function openWall(){wl=null;wlErr="";wlAnim=wlFlash=null;openSheet("wall");clearTimeout(wlLoadT);wlLoadT=0;wallFetch();}
+function wallTile(){
+ const t=WU.tile({counts:wlCounts,left:wlLeft??WL.DAILY_QUOTA,hour:wlHour(),lvl:S.lvl,minLevel:WALL_LEVEL});
+ return boosted(itemButton(t.title,t.sub,t.side,false,openWall),t.night||fx().xp.wall>1);   // the night bonus, a Double XP event
+}
+function wallEvent(v){
+ if(v.counts&&typeof v.counts==="object")wlCounts={left:v.counts.left|0,right:v.counts.right|0};
+ if(!wl||!wlOpen()||!Array.isArray(v.cells))return;
+ const ch=WU.changedCells(wl.cells,v.cells);
+ wl=WU.wallState(wl,{type:"live",cells:v.cells,counts:wlCounts,walls:v.walls});
+ if(ch.length){wlFlash={idxs:new Set(ch),until:performance.now()+2500};wallKick();}
+ wallPaint();
+}
+const wlSay=t=>{const a=wlUi?.say;if(!a)return;a.textContent="";setTimeout(()=>{a.textContent=t;},30);};
+function renderWall(body,set){
+ set(`🖌️ ${WL.wallName(wlHour())}`,"");
+ wlUi?.ro?.disconnect();wlUi=null;body.append(mkEl("div","wl"));wallPaint();
+}
+// The skeleton, once per opening: the score, the wall and its arrows, the legend, the cell's card, « Coller », the brush.
+function wallBuild(box){
+ const u={box},btn=(t,cls,fn,label)=>{const b=mkEl("button",`btn ${cls}`,t);b.type="button";if(label)b.setAttribute("aria-label",label);b.addEventListener("click",fn);return b;};
+ u.count=mkEl("b","wl-count");u.pills=mkEl("div","wl-pills");
+ u.cv=mkEl("canvas","wl-cv");u.cv.width=WU.CW;u.cv.height=WU.CH;u.cv.tabIndex=0;u.cv.setAttribute("role","img");u.cv.setAttribute("aria-describedby","wl-help");
+ u.ctx=u.cv.getContext("2d");u.wrap=mkEl("div","wl-wrap");u.wrap.append(u.cv);
+ u.prev=btn("◀","wl-navb",()=>wallGo(-1),"Mur précédent");u.next=btn("▶","wl-navb",()=>wallGo(1),"Mur suivant");u.nav=mkEl("span");
+ const nav=mkEl("div","wl-nav");nav.append(u.prev,u.nav,u.next);
+ const help=mkEl("p","sr","Un mur de 8 colonnes (A à H) sur 6 lignes. Flèches pour choisir une case, Page précédente et Page suivante pour changer de mur, Entrée pour coller, Espace pour arrêter le pinceau.");help.id="wl-help";
+ const leg=mkEl("div","wl-legend"),t0=serverNow();
+ for(const [cell,label] of WU.legendCells(S.camp,t0)){const k=mkEl("canvas");k.width=k.height=WU.ART;k.setAttribute("aria-hidden","true");WU.drawPoster(k.getContext("2d"),0,0,cell,t0);const sp=mkEl("span");sp.append(k,label);leg.append(sp);}
+ const pips=mkEl("span");pips.append(mkEl("b","wl-pips","▮▮▯"),"en bas : solidité (1 à 3)");leg.append(pips);
+ u.info=mkEl("div","wl-info");u.quota=mkEl("span","wl-quota");u.paste=btn("Coller","go",wallPaste);
+ u.action=mkEl("div","wl-action");u.action.append(u.quota,u.paste);u.why=mkEl("p","fine wl-why");
+ u.brush=mkEl("div","wl-brush");u.brush.hidden=true;
+ const bh=mkEl("div","wl-bhead");bh.append(mkEl("b","","Coup de pinceau"),mkEl("span","fine","Arrête le pinceau dans la zone dorée (Espace)."));
+ u.cursor=mkEl("span","wl-cursor");
+ const timer=mkEl("div","wl-timer");timer.setAttribute("aria-hidden","true");u.timer=mkEl("i");timer.append(u.timer);
+ u.stop=btn("Arrêter le pinceau","go",()=>wallStop());
+ u.stop.addEventListener("keydown",e=>{if(WU.brushKey(e)==="block")e.preventDefault();});   // a held Enter (the one that pasted) never stops it
+ u.brush.append(bh,wallGauge(u.cursor,true),timer,u.stop);
+ u.result=mkEl("div","wl-result");u.result.hidden=true;
+ u.say=mkEl("div","sr");u.say.setAttribute("aria-live","polite");
+ u.status=mkEl("p","fine");u.main=mkEl("div","wl-main");
+ u.main.append(u.count,u.pills,u.wrap,nav,help,leg,u.info,u.action,u.why,u.brush,u.result);
+ box.append(u.status,u.main,u.say);
+ u.cv.addEventListener("keydown",e=>{
+  if(!wl||wl.brush)return;
+  if(e.repeat&&(e.key==="Enter"||e.key==="PageUp"||e.key==="PageDown")){e.preventDefault();return;}   // a held key pastes or turns once
+  if(e.key==="PageUp"||e.key==="PageDown"){e.preventDefault();wallGo(e.key==="PageUp"?-1:1);}
+  else if(e.key==="Enter"){e.preventDefault();wallPaste();}
+  else{const n=WU.wallState(wl,{type:"key",key:e.key});if(n!==wl){e.preventDefault();wl=n;wallPaint();wlSay(WU.cellSummary(wl.cells,wl.sel,serverNow()));}}
+ });
+ u.cv.addEventListener("pointerdown",e=>{
+  if(!wl||wl.brush)return;
+  const r=u.cv.getBoundingClientRect(),i=WU.cellAt((e.clientX-r.left)/r.width,(e.clientY-r.top)/r.height);if(i<0)return;
+  wl=WU.wallState(wl,{type:"select",g:wl.view*WL.WALL_CELLS+i});wallPaint();wlSay(WU.cellSummary(wl.cells,wl.sel,serverNow()));
+ });
+ // Crisp pixels: a whole scale when the room allows it, else the full width (width:100% and a max-width: never wider).
+ u.ro=new ResizeObserver(()=>{
+  const st=getComputedStyle(u.wrap),avail=u.wrap.clientWidth-parseFloat(st.paddingLeft)-parseFloat(st.paddingRight),dpr=devicePixelRatio||1,k=avail*dpr/WU.CW;
+  u.cv.style.maxWidth=k>=3&&Math.floor(k)/k>=0.9?`${Math.floor(k)*WU.CW/dpr}px`:"none";
+ });
+ u.ro.observe(u.wrap);
+ return u;
+}
+// The gauge: bâclé, bon, parfait in the middle, bon, bâclé; the big one has its labels.
+function wallGauge(cursor,labels){
+ const g=mkEl("div",`wl-gauge${labels?"":" mini"}`);g.setAttribute("aria-hidden","true");
+ if(labels)for(const [x,t,dim] of [[15,"bâclé",1],[37,"bon"],[50,"parfait"],[63,"bon"],[85,"bâclé",1]]){const l=mkEl("span",`lab${dim?" dim":""}`,t);l.style.left=`${x}%`;g.append(l);}
+ if(cursor)g.append(cursor);return g;
+}
+function wallDraw(t=performance.now()){
+ if(!wlUi||!wl)return;
+ if(!wlBg){wlBg=document.createElement("canvas");wlBg.width=WU.CW;wlBg.height=WU.CH;WU.drawBricks(wlBg.getContext("2d"));}
+ const a=wlAnim,unroll=a&&a.kind!=="abimee"?{g:a.g,prev:a.prev,p:(t-a.t0)/450}:null,hit=a&&a.kind==="abimee"&&Math.floor((t-a.t0)/700*6)%2===0?a.g:null;
+ WU.drawWall(wlUi.ctx,wl.cells,wl.view,serverNow(),{bg:wlBg,sel:wl.sel,unroll,hit,flash:wlFlash?.idxs,flashOn:!!wlFlash&&(reduced||Math.floor(t/300)%2===0)});
+}
+// The brush's cursor and the animations, one frame at a time while something moves (reduced motion: the brush only).
+let wlStopping=false,wlStopT=0;
+function wallKick(){if(!wlLoop){wlLoop=true;requestAnimationFrame(wallTick);}}
+function wallTick(t){
+ if(wl?.brush&&!wlStopping){
+  const el=performance.now()-wl.brush.t0;
+  if(!wlOpen()||el>=WL.BRUSH_MS)wallStop();   // closing the sheet stops it where it is: the poster is spent anyway
+  else if(wlUi){wlUi.cursor.style.left=`${WU.gaugeX(wl.brush.seed,el)}%`;wlUi.timer.style.width=`${100-el/WL.BRUSH_MS*100}%`;}
+ }
+ if(wlAnim&&t-wlAnim.t0>(wlAnim.kind==="abimee"?700:450))wlAnim=null;
+ if(wlFlash&&t>wlFlash.until)wlFlash=null;
+ if(wlOpen())wallDraw(t);
+ if(wl?.brush&&!wlStopping||wlAnim||wlFlash)requestAnimationFrame(wallTick);else wlLoop=false;
+}
+function wallGo(d){
+ if(!wl)return;const n=WU.wallState(wl,{type:"view",d});if(n===wl)return;
+ wl=n;wallPaint();wlSay(`${WU.navLabel(wl.cells,wl.view,serverNow())}.`);
+}
+async function wallPost(body){
+ const who=me,r=await api("POST","/api/wall",body);
+ if(!S||me!==who)return null;
+ if(r.me)applyMe(r.me);
+ return r;
+}
+async function wallPaste(){
+ if(!wl||wl.brush||wl.sel==null||wlBusy||(wlLeft??1)<=0)return;
+ const g=wl.sel;wlBusy=true;if(wlOpen())wallPaint();let r;
+ try{r=await wallPost({op:"start",g});}finally{wlBusy=false;}
+ if(!r||!wl){if(wlOpen())wallPaint();return;}
+ if(!r.ok){toast(r.error,true);wlSay(r.error);wallLoad();if(wlOpen())wallPaint();return;}   // the server's own words (level, quota, one at a time)
+ const brush={id:r.id,seed:r.seed,g,t0:performance.now()};wl=WU.wallState(wl,{type:"start",brush});wlStopping=false;
+ // rAF sleeps in a hidden tab or on a locked phone: the 3 s stop is sent all the same (bâclé), not left to expire.
+ clearTimeout(wlStopT);wlStopT=setTimeout(()=>{if(wl?.brush===brush)wallStop();},WL.BRUSH_MS+50);
+ if(!wlOpen()){wallStop();return;}
+ wallPaint();wlUi?.stop.focus();wlSay("Le pinceau part. Arrête-le dans la zone dorée, avec Espace ou le bouton.");wallKick();
+}
+async function wallStop(){
+ const b=wl?.brush;if(!b||wlStopping)return;wlStopping=true;clearTimeout(wlStopT);wlStopT=0;
+ const ms=Math.round(Math.min(Math.max(performance.now()-b.t0,0),WL.BRUSH_MS));
+ let r;try{r=await wallPost({op:"stop",id:b.id,ms});}finally{wlStopping=false;}
+ if(!wl||wl.brush!==b)return;
+ if(!r?.ok){wl=WU.wallState(wl,{type:"fail"});if(r?.error){toast(r.error,true);wlSay(r.error);}wallLoad();if(wlOpen()){wallPaint();wlUi?.cv.focus();}return;}
+ wl=WU.wallState(wl,{type:"stop",res:{...r,ms,seed:b.seed},now:serverNow()});wlLeft=wl.left;wlCounts=wl.counts;
+ if(!reduced)wlAnim={g:r.g,prev:wl.result.prev,kind:r.outcome,t0:performance.now()};
+ wallLoad();
+ if(!wlOpen())return;
+ wallPaint();wallKick();wlSay(WU.resultLines(wl.result.res,wl.result.prev).join(" "));wlUi?.cv.focus();
+}
+// Everything that changes, in place: the buttons are never replaced, so the focus stays where it is.
+function wallPaint(){
+ if(sheetKind!=="wall")return;                       // also while openSheet is still showing it
+ const box=$("#sheet-body .wl");if(!box)return;
+ if(!wlUi||wlUi.box!==box){wlUi?.ro?.disconnect();wlUi=wallBuild(box);}
+ const u=wlUi,t=serverNow(),hour=wlHour(),title=`🖌️ ${WL.wallName(hour)}`;
+ if($("#sheet-title").textContent!==title)$("#sheet-title").textContent=title;
+ u.main.hidden=!wl;u.status.hidden=!!wl;
+ if(!wl){
+  u.status.textContent=wlErr||"Chargement du mur…";
+  if(wlErr&&!u.retry){u.retry=mkEl("div","btn-row");u.retry.append(smallButton("Réessayer","",()=>{wlErr="";u.retry.remove();u.retry=null;wallPaint();wallLoad();}));u.status.after(u.retry);}
+  return;
+ }
+ if(u.retry){u.retry.remove();u.retry=null;}
+ const sub=wl.closesAt?WU.countdown(wl.closesAt-t):"";
+ if($("#sheet-sub").textContent!==sub)$("#sheet-sub").textContent=sub;
+ if(wl.closesAt&&t>=wl.closesAt){wl={...wl,closesAt:null};wallLoad();}   // midnight: a new day, a new quota
+ u.count.textContent=`Gauche ${wl.counts.left|0} · Droite ${wl.counts.right|0}`;
+ const vol=wl.volunteers||{},vc=vol.left>0?"left":vol.right>0?"right":null,pk=[hour,vc,vol[vc],wl.title?.name].join("|");
+ if(u.pk!==pk){
+  u.pk=pk;
+  u.pills.replaceChildren(pill(WU.nightHint(hour),WL.isWallNight(hour)?"good":""),
+   ...(vc?[pill(`Renforts : ${plural(vol[vc],"bénévole")} pour ${WL.CAMP_NAME[vc]}`)]:[]),
+   ...(wl.title?.name?[pill(`🖌️ Colleur de la semaine : ${wl.title.name}`,"new")]:[]));
+ }
+ const busyB=!!wl.brush;
+ u.nav.textContent=WU.navLabel(wl.cells,wl.view,t);u.prev.disabled=busyB||wl.view<=0;u.next.disabled=busyB||wl.view>=wl.walls-1;
+ u.cv.setAttribute("aria-label",WU.wallAria(wl.cells,wl.view,t,wl.sel));
+ // The chosen cell's card: rebuilt only when what it says changes.
+ const cell=wl.sel!=null?wl.cells[wl.sel]??null:null,ik=`${wl.sel}|${JSON.stringify(cell)}|${Math.floor(t/60e3)}|${S.camp}`;
+ if(u.ik!==ik){
+  u.ik=ik;
+  if(wl.sel==null)u.info.replaceChildren(mkEl("span","fine","Touche une case du mur pour voir qui l'a collée."));
+  else{
+   const L=WU.cellInfo(cell,t,{name:me,camp:S.camp}),live=WL.liveCell(cell,t),head=mkEl("div","head"),h=mkEl("span");
+   h.append(mkEl("b","",L[0]));if(live)h.append(" ",mkCamp(live.camp));
+   head.append(h,mkEl("span","coord",`Mur ${WL.wallOf(wl.sel)+1} · ${WL.cellName(wl.sel)}`));
+   const rows=L.slice(1).map((x,i,a)=>mkEl("span",i===a.length-1?"fine":"",x));
+   if(live){const p=mkEl("span","wl-pips","●".repeat(live.sol)+"○".repeat(3-live.sol)+" ");p.setAttribute("aria-hidden","true");rows[1].prepend(p);}
+   u.info.replaceChildren(head,...rows);
+  }
+ }
+ const left=wl.left;
+ u.quota.textContent=WU.quotaText(left);
+ u.paste.disabled=busyB||wlBusy||left<=0||wl.sel==null;
+ u.why.textContent=left<=0?"":wl.sel==null?"Choisis d'abord une case sur le mur.":`Coller sur ${WL.cellLabel(wl.sel)} (Entrée sur le mur). Chaque essai compte, quel que soit le résultat.`;
+ u.action.hidden=u.why.hidden=busyB;u.brush.hidden=!busyB;
+ if(!busyB){u.cursor.style.left="";u.timer.style.width="100%";}
+ else if(!u.cursor.style.left)u.cursor.style.left=`${WU.gaugeX(wl.brush.seed,0)}%`;
+ // The result card: the quality, where the brush stopped, what happened, the XP, a new wall.
+ const R0=wl.result;
+ if(u.rs!==R0){
+  u.rs=R0;u.result.hidden=!R0;
+  if(R0){
+   const [head,what,xp,...walls]=WU.resultLines(R0.res,R0.prev),top=mkEl("div","wl-rhead");
+   top.append(mkEl("b",`q ${R0.res.quality}`,head),pill(xp,"new"));
+   let mini=null;
+   if(R0.res.ms<WL.BRUSH_MS){const c=mkEl("span","wl-cursor");c.style.left=`${WU.gaugeX(R0.res.seed,R0.res.ms)}%`;mini=wallGauge(c,false);}
+   u.result.replaceChildren(top,...(mini?[mini]:[]),mkEl("span","",what),...walls.map(x=>pill(x,"new")),
+    mkEl("span","fine",`Qualité ${WL.QUALITY_LABEL[R0.res.quality]} → solidité ${WL.SOLIDITY[R0.res.quality]}.`));
+  }
+ }
+ wallDraw();
+}
+
 // ---------- duel notifications (Web Push) ----------
 // Whether this device is notified is only what its push subscription says: the page stores nothing about it.
 const pushable=()=>"serviceWorker" in navigator&&"PushManager" in window&&"Notification" in window;
@@ -2818,7 +3036,7 @@ const authErr=$("#auth-error"),authErrHome=authErr.parentNode,authErrNext=authEr
 const homeAuthErr=()=>{authErrHome.insertBefore(authErr,authErrNext);for(const i of authEl.querySelectorAll("input[aria-invalid]"))i.removeAttribute("aria-invalid");};
 let regCamp="left";
 function showAuth(message=""){
- closeSheet();chat.reset();chatFlags(null);es?.close();es=null;S=null;anim=pong=mini=scene=null;newsPending=false;toastQ.length=0;announceQ.length=0;$("#announce").hidden=true;$("#push-ask").hidden=true;pushAskWanted=pushAsked=false;duelData=null;duelErr="";duelSeq++;pushOn=null;pushSynced=false;setNet(true);$("#tips").hidden=true;urnLast=null;wardSwap=false;urnHint=false;batonV=null;bd.close();
+ closeSheet();wl=null;wlLeft=wlCounts=null;chat.reset();chatFlags(null);es?.close();es=null;S=null;anim=pong=mini=scene=null;newsPending=false;toastQ.length=0;announceQ.length=0;$("#announce").hidden=true;$("#push-ask").hidden=true;pushAskWanted=pushAsked=false;duelData=null;duelErr="";duelSeq++;pushOn=null;pushSynced=false;setNet(true);$("#tips").hidden=true;urnLast=null;wardSwap=false;urnHint=false;batonV=null;bd.close();
  authEl.hidden=false;setBackgroundInert(true);
  newYear=null;newYearBannerOn=false;nyClosed=false;nyReplayEnd=0;nyView={scene:null,banner:false};nyBanner.hidden=true;nyClose.hidden=true;nySay.textContent="";   // nothing of the midnight toast outlives the session
  homeAuthErr();$("#auth-error").textContent=message;regQuizShow(false);$("#camp-note").textContent="";document.body.dataset.camp=regCamp;

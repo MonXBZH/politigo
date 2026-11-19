@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 export MSYS_NO_PATHCONV=1
 # The rules' own modules sit next to them in /app, as in the image (only those that exist: docker would make a folder).
 extra=()
-for m in wardrobe activities duel events snowball market; do if [ -f "web/$m.mjs" ]; then extra+=(-v "$(pwd -W 2>/dev/null || pwd)/web/$m.mjs:/app/$m.mjs:ro"); fi; done
+for m in wardrobe activities duel events snowball market wall; do if [ -f "web/$m.mjs" ]; then extra+=(-v "$(pwd -W 2>/dev/null || pwd)/web/$m.mjs:/app/$m.mjs:ro"); fi; done
 docker run --rm -e NODE_NO_WARNINGS=1 -e TZ=Europe/Paris "${extra[@]}" \
   -v "$(pwd -W 2>/dev/null || pwd)/web/rules.mjs:/app/rules.mjs:ro" \
   -v "$(pwd -W 2>/dev/null || pwd)/server/server.mjs:/app/server.mjs:ro" \
@@ -17,7 +17,9 @@ docker run --rm -e NODE_NO_WARNINGS=1 -e TZ=Europe/Paris "${extra[@]}" \
   -v "$(pwd -W 2>/dev/null || pwd)/server/snowfront.mjs:/app/snowfront.mjs:ro" \
   -v "$(pwd -W 2>/dev/null || pwd)/server/snowchallenges.mjs:/app/snowchallenges.mjs:ro" \
   -v "$(pwd -W 2>/dev/null || pwd)/server/marketstore.mjs:/app/marketstore.mjs:ro" \
+  -v "$(pwd -W 2>/dev/null || pwd)/server/wallstore.mjs:/app/wallstore.mjs:ro" \
   -v "$(pwd -W 2>/dev/null || pwd)/admin:/w/admin:ro" \
   -v "$(pwd -W 2>/dev/null || pwd)/web:/w/web:ro" \
   -v "$(pwd -W 2>/dev/null || pwd)/tests:/w/tests:ro" \
+  -v "$(pwd -W 2>/dev/null || pwd)/docs:/w/docs:ro" \
   -w /w node:24-alpine node --test --test-timeout=180000 --test-reporter=spec "${@:-tests/*.test.mjs}"
