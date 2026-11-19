@@ -128,3 +128,28 @@ test("removePlayer keeps posters as « ancien élu » and deletes day and title 
  assert.deepEqual(W.colleurs(20261118,"left"),[2]);
  assert.equal(W.title(NOW+7*24*HOUR),null);
 });
+
+test("a settle writes only the difference: one freed poster leaves the other rows alone, a shrink drops the rows past the end",()=>{
+ const {W,db}=fresh();
+ W.setCells(Array.from({length:WALL_CELLS},(_,i)=>cell({motif:i,at:i===0?NOW-48*HOUR:NOW-HOUR})));
+ W.paste(WALL_CELLS+1,cell({at:NOW-HOUR}));
+ db.exec("CREATE TABLE wlog(op TEXT,g INTEGER);CREATE TRIGGER wi AFTER INSERT ON wall_cells BEGIN INSERT INTO wlog VALUES('i',NEW.g);END;CREATE TRIGGER wd AFTER DELETE ON wall_cells BEGIN INSERT INTO wlog VALUES('d',OLD.g);END;CREATE TRIGGER wu AFTER UPDATE ON wall_cells BEGIN INSERT INTO wlog VALUES('u',NEW.g);END;");
+ const r=W.cells(NOW);
+ assert.equal(r[0],null);assert.equal(r.length,2*WALL_CELLS);
+ assert.deepEqual(db.prepare("SELECT op,g FROM wlog").all().map(x=>[x.op,x.g]),[["d",0]]);
+ assert.equal(db.prepare("SELECT COUNT(*) n FROM wall_cells").get().n,WALL_CELLS);   // 47 + 1 on wall 2
+ db.exec("DELETE FROM wlog");W.cells(NOW);   // nothing changed: nothing written
+ assert.equal(db.prepare("SELECT COUNT(*) n FROM wlog").get().n,0);
+ W.cells(NOW+49*HOUR);   // everything expired: wall 2 goes
+ assert.equal(db.prepare("SELECT COUNT(*) n FROM wall_cells").get().n,0);
+ assert.equal(db.prepare("SELECT COUNT(*) n FROM wall_cells WHERE g>=48").get().n,0);
+});
+
+test("closeNight keeps the given time, now when absent",()=>{
+ const {W,db}=fresh();
+ W.closeNight(1,{left:1,right:0,winners:["left"],paid:1,at:12345});
+ assert.equal(db.prepare("SELECT at FROM wall_nights WHERE day=1").get().at,12345);
+ assert.equal(W.history(1)[0].at,12345);
+ const t=Date.now();W.closeNight(2,{left:0,right:0,winners:[],paid:0});
+ assert.ok(db.prepare("SELECT at FROM wall_nights WHERE day=2").get().at>=t);
+});

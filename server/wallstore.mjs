@@ -28,7 +28,7 @@ CREATE INDEX IF NOT EXISTS wall_days_p ON wall_days(player_id);`);
   all:db.prepare("SELECT * FROM wall_cells ORDER BY g"),
   put:db.prepare("INSERT OR REPLACE INTO wall_cells(g,camp,by,name,vol,sol,at,taken_from,taken_at,motif) VALUES(?,?,?,?,?,?,?,?,?,?)"),
   del:db.prepare("DELETE FROM wall_cells WHERE g=?"),
-  clear:db.prepare("DELETE FROM wall_cells"),
+  trim:db.prepare("DELETE FROM wall_cells WHERE g>=?"),
   orphan:db.prepare("UPDATE wall_cells SET by=NULL,name='ancien élu' WHERE by=?"),
   note:db.prepare(`INSERT INTO wall_days(day,player_id,camp,pasted,useful,reached_at) VALUES(?,?,?,1,?,?)
    ON CONFLICT(day,player_id) DO UPDATE SET pasted=pasted+1,useful=useful+excluded.useful,reached_at=CASE WHEN excluded.useful>0 THEN excluded.reached_at ELSE reached_at END`),
@@ -54,15 +54,17 @@ CREATE INDEX IF NOT EXISTS wall_days_p ON wall_days(player_id);`);
   return a;
  };
  const write=c=>q.put.run(c.g,c.camp,c.by??null,c.name??null,c.vol?1:0,c.sol,c.at,c.takenFrom??null,c.takenAt??null,c.motif??0);
- const setCells=cells=>{
-  q.clear.run();
-  cells.forEach((c,g)=>{if(c)write({...c,g});});
+ // Writes only the difference with what is stored: the changed cells are put (or deleted when null), the rows past the new end go.
+ const same=(x,y)=>x===y||!!x&&!!y&&["camp","by","name","sol","at","motif","takenFrom","takenAt"].every(k=>(x[k]??null)===(y[k]??null))&&!!x.vol===!!y.vol;
+ const setCells=(cells,before=load())=>{
+  cells.forEach((c,g)=>{if(!same(c,before[g]??null)){if(c)write({...c,g});else q.del.run(g);}});
+  q.trim.run(cells.length);
  };
  return {
   // The settled walls at `now` (expired posters freed, walls opened or closed); the settled result is stored if it changed.
   cells(now){
    const before=load(),next=settleWalls(before,now).cells;
-   if(JSON.stringify(before)!==JSON.stringify(next))setCells(next);
+   setCells(next,before);
    return next;
   },
   paste(g,cell){if(cell)write({...cell,g});else q.del.run(g);},
@@ -78,7 +80,7 @@ CREATE INDEX IF NOT EXISTS wall_days_p ON wall_days(player_id);`);
   volunteerUsed:(day,camp)=>q.vol.get(day,camp)?.used??0,
   addVolunteerUsed(day,camp,n){q.addVol.run(day,camp,n|0);},
   nightClosed:day=>!!q.night.get(day),
-  closeNight(day,{left,right,winners,paid}){q.closeN.run(day,left,right,JSON.stringify(winners??[]),paid|0,Date.now());},
+  closeNight(day,{left,right,winners,paid,at}){q.closeN.run(day,left,right,JSON.stringify(winners??[]),paid|0,at??Date.now());},
   lastClosedDay:()=>q.last.get().d??null,
   // The weekly ranking: players with at least one useful paste that week, most first, the earliest to the score on a tie.
   week(weekKey){
