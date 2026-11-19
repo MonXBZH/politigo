@@ -2,7 +2,7 @@
 // the effects of those running at a given time. Pure and shared: the server applies the effects, the browser shows
 // them. No event ever touches the Flamme, the odds of the urn or real money.
 export const EVENT_MAX_MS=7*864e5,EVENT_MIN_MS=5*6e4,EVENT_NAME_MAX=50,EVENT_MSG_MAX=160;
-export const EVENT_GAMES=[["pong","Pong des arguments"],["debate","Débat chrono"],["manif","Manif"],["snowball","Bataille de neige"]];
+export const EVENT_GAMES=[["pong","Pong des arguments"],["debate","Débat chrono"],["manif","Manif"],["snowball","Bataille de neige"],["wall","Collage"]];
 export const EVENT_WHO=["all","left","right"],EVENT_REPEAT=["","day","week"];
 // Reminders on offer: minutes before the start, and how the console names them.
 export const EVENT_REMINDS=[[15,"15 minutes"],[60,"1 heure"],[1440,"1 jour"]];
@@ -95,7 +95,7 @@ export function cleanReminds(l){
 // mission bulletins and their daily cap multiplied by. free: {n,ids}, draws offered by those events (overlapping ones share them). off: % off the prices.
 // mailGap: minutes between letters (0: the usual). duels: extra challenges. duelMult: a win's gains. slow: gauges drain
 // divided by. immune: no political death.
-export const NO_FX=Object.freeze({xp:Object.freeze({pong:1,debate:1,manif:1,snowball:1}),missions:0,div:1,bulletins:1,free:null,off:0,mailGap:0,duels:0,duelMult:1,slow:1,immune:false});
+export const NO_FX=Object.freeze({xp:Object.freeze({pong:1,debate:1,manif:1,snowball:1,wall:1}),missions:0,div:1,bulletins:1,free:null,off:0,mailGap:0,duels:0,duelMult:1,slow:1,immune:false});
 const reaches=(e,camp)=>!camp||e.who==="all"||e.who===camp;
 // The events running at t, for a camp (none: everybody's). Rows: {id,type,params,starts,ends,who,...}.
 export const activeEvents=(list,camp,t)=>list.filter(e=>e.starts<=t&&t<e.ends&&reaches(e,camp));

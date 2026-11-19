@@ -29,6 +29,7 @@ test("the contract: one mini-game per camp plus the debate, with the agreed numb
  assert.deepEqual(MINI_RULES,{minSeconds:3,graceSeconds:75,tolerance:0.5});
  assert.deepEqual([R.PONG_RULES.bonusCap,MINI.debate.bonusCap,MINI.cortege.bonusCap,MINI.epervier.bonusCap],[10,50,35,35]);
  assert.deepEqual([R.PONG_RULES.xp,MINI.debate.xp,MINI.cortege.xp,MINI.epervier.xp],[25,0,35,35],"what starting a game pays");
+ assert.deepEqual([MINI.cortege.bonusRate,MINI.epervier.bonusRate],[0.25,3],"bonus a point (the Épervier evened up with the Cortège, 1.8.0)");
  assert.deepEqual([MINI.debate.maxScore,R.PONG_RULES.maxScore,MINI.cortege.maxScore,MINI.epervier.maxScore],[30,25,250,60],"hard caps");
  for(const k of ["cortege","epervier"]){
   assert.equal(Math.min(MINI[k].bonusCap,Math.floor(MINI[k].great*MINI[k].bonusRate)),MINI[k].bonusCap,`${k}: full bonus at the great score`);
@@ -133,7 +134,7 @@ test("a score that is too fast, too early, over the cap, malformed or for anothe
 
 test("valid scores give the right capped bonus for each game, with an audit",()=>{
  const cases=[["left",30000,144,35],["left",30000,50,12],["left",30000,3,0],["left",30000,4,1],["left",30000,119,29],
-  ["right",35000,6,12],["right",35000,14,28],["right",35000,19,35],["right",35000,0,0]];
+  ["right",35000,6,18],["right",35000,11,33],["right",35000,12,35],["right",35000,19,35],["right",35000,0,0]];
  for(const [camp,ms,score,bonus] of cases){
   const {S,r,gain}=run(camp,ms,score);
   assert.ok(r.ok,`${camp} ${score}`);assert.equal(r.bonus,bonus,`${camp} ${score}`);assert.equal(gain,bonus);
@@ -151,7 +152,7 @@ test("the journal text and the great flag",()=>{
  ({S}=run("left",30000,139));assert.equal(S.journal[0].d.great,false);
  ({S}=run("left",30000,MINI.cortege.suspect));assert.equal(S.journal[0].d.great,false,"a flagged score is never announced");
  ({S}=run("right",35000,1));
- assert.equal(S.journal[0].text,"L'Épervier : 1 point, bonus d'ordre public +2 XP.");
+ assert.equal(S.journal[0].text,"L'Épervier : 1 point, bonus d'ordre public +3 XP.");
  ({S}=run("right",35000,18));
  assert.equal(S.journal[0].text,"L'Épervier : 18 points, bonus d'ordre public +35 XP.");assert.equal(S.journal[0].d.great,true);
  ({S}=run("right",35000,17));assert.equal(S.journal[0].d.great,false);
@@ -248,7 +249,7 @@ test("over HTTP: a great score reaches the public feed, a small one does not",as
  assert.equal(a.status,200);assert.equal(b.status,200);
  await new Promise(r=>setTimeout(r,8700));   // 18 Épervier points need 8.5 s at a human pace
  const g=await great.act({type:"miniEnd",score:18,id:a.json.game.id}),p=await small.act({type:"miniEnd",score:3,id:b.json.game.id});
- assert.equal(g.status,200);assert.equal(g.json.bonus,35);assert.equal(p.status,200);assert.equal(p.json.bonus,6);
+ assert.equal(g.status,200);assert.equal(g.json.bonus,35);assert.equal(p.status,200);assert.equal(p.json.bonus,9);
  const feed=(await great.call("GET","/api/board")).json.feed;
  const mine=feed.filter(f=>f.kind==="mini");
  assert.ok(mine.some(f=>f.player==="Grande"&&/^L'Épervier : 18 points/.test(f.text)),"great score published");

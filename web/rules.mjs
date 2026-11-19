@@ -310,7 +310,7 @@ export const PONG_RULES={xp:25,ms:20000,intro:0,maxScore:25,suspect:22,minSecond
 export const MINI={
  debate:{label:"Débat chrono",camp:null,xp:0,ms:15000,intro:1300,maxScore:30,perSecond:2.5,bonusRate:2.5,bonusCap:50,great:24,suspect:31},
  cortege:{label:"Le Cortège",camp:"left",xp:35,ms:30000,intro:0,maxScore:250,perSecond:8,bonusRate:0.25,bonusCap:35,great:140,suspect:220},
- epervier:{label:"L'Épervier",camp:"right",xp:35,ms:35000,intro:0,maxScore:60,perSecond:2,bonusRate:2,bonusCap:35,great:18,suspect:40},
+ epervier:{label:"L'Épervier",camp:"right",xp:35,ms:35000,intro:0,maxScore:60,perSecond:2,bonusRate:3,bonusCap:35,great:18,suspect:40},
  // Trêve des confiseurs. The score is never taken from the browser: the server replays the taps (snowball.mjs), so the
  // replay is the referee and judge() only checks the id and the time. Its caps (maxScore, perSecond) are set far above
  // any real fight so that they never refuse a legitimate replayed score; over 160 (suspect) the fight is flagged
@@ -451,6 +451,7 @@ export function sanitize(s,now){
  o.diedAt=num(s.diedAt??o.journal.find(j=>j.k==="death")?.t,-1,o.vclock,-1);
  // 1.6.0: missions, mail, goals, Flamme, wardrobe (absent from older states: fresh ones).
  ACT.sanitizeActivities(s,o);o.wardrobe=WR.sanitizeWardrobe(s.wardrobe);
+ if(Number.isFinite(s.marketSeen))o.marketSeen=num(s.marketSeen,0,8.64e15,0);   // 1.9.0: the last visit of the Brocante
  return o;
 }
 function gameKeys(o,s){
@@ -576,7 +577,7 @@ function die(S,reason,camp=S.camp,random=Math.random){
  const day={goals:S.goals,mDay:S.missions.day,mN:S.missions.n,mPaid:S.missions.paid,mB:S.missions.b,mail:S.mail};
  // idleDeaths: deaths in a row of a life the player never touched. Not by the XP: the hour tick pays some on its own.
  const name=person(S).name,keep={journal:S.journal,jn:S.jn,deaths:S.deaths+1,idleDeaths:reason==="neglect"&&!S.played?(S.idleDeaths||0)+1:0,best:S.best,bestStreak:S.bestStreak,equipped:S.equipped,treatDay:S.treatDay,advent:S.advent,
-  wardrobe:S.wardrobe,flame:{...S.flame,pts:Math.round(S.flame.pts*ACT.FLAME.death*100)/100}};
+  wardrobe:S.wardrobe,flame:{...S.flame,pts:Math.round(S.flame.pts*ACT.FLAME.death*100)/100},...(S.marketSeen!==undefined?{marketSeen:S.marketSeen}:{})};
  const fresh=Object.assign(freshState(camp,S.vclock),keep,{lastReal:S.lastReal,diedAt:S.vclock});
  for(const k of Object.keys(S))delete S[k];
  Object.assign(S,fresh);

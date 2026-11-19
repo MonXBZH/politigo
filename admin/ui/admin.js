@@ -812,7 +812,7 @@ async function viewFeed(){
 
 // ===================================================================== Duels
 async function viewDuels(){
- const [{items},sus,snow]=await Promise.all([call("duels-list"),call("duels-suspects").catch(e=>({error:e.message})),call("snow-challenges").catch(e=>({error:e.message}))]);
+ const [{items},sus,snow,mkt,wall]=await Promise.all([call("duels-list"),call("duels-suspects").catch(e=>({error:e.message})),call("snow-challenges").catch(e=>({error:e.message})),call("market-list").catch(e=>({error:e.message})),call("wall-list").catch(e=>({error:e.message}))]);
  const susItems=Array.isArray(sus.items)?sus.items:Array.isArray(sus.suspects)?sus.suspects:[];
  const ids=x=>(Array.isArray(x.duels)?x.duels:[]).map(d=>typeof d==="object"?d:{id:d}).filter(d=>d.id!=null);
  return [head("Duels",refreshBtn()),
@@ -838,7 +838,61 @@ async function viewDuels(){
    h("tbody",{},snow.items.map(c=>h("tr",{},h("td",{class:"nowrap"},fmt(c.created)),h("td",{},who(c.challenger)),h("td",{},who(c.defender)),
     h("td",{class:"nowrap"},`${num(c.score)} – ${num(c.dScore)}${c.winner?` (${c.winner})`:""}${Number.isFinite(c.rawScore)&&c.rawScore!==c.dScore?` · rejoué ${num(c.rawScore)}`:""}`),h("td",{},tr(SNOW_STATUS,c.status)),h("td",{},flagBadges(c.dFlags)||"—"))))))
    :empty("Aucun défi de neige pour le moment.")),
- ];
+ brocanteCard(mkt),
+ collageCard(wall)];
+}
+// La Brocante: open listings (withdrawable), the latest trades and the pairs who traded often. Never an address: only "même réseau".
+const netPill=y=>y?h("span",{class:"badge warn"},"même réseau : oui"):h("span",{class:"muted small"},"non");
+const mkWho=a=>h("span",{},who(a),a?.camp?[" ",campBadge(a.camp)]:null);
+function mkGive(g){
+ const names=g?.names||g?.items||[],b=g?.bulletins>0?`${g.bulletins} bulletin${g.bulletins>1?"s":""}`:null;
+ return [...names,b].filter(Boolean).join(" + ")||"rien";
+}
+function mkWant(w){
+ if(!w)return "—";
+ if(w.kind==="offer")return "des offres";
+ if(w.kind==="bulletins")return `${w.bulletins} bulletin${w.bulletins>1?"s":""}`;
+ if(w.kind==="rarity")return `un objet ${RARITY[w.rarity]?.toLowerCase()||w.rarity}${w.bulletins>0?` + ${w.bulletins} bulletin${w.bulletins>1?"s":""}`:""}`;
+ return mkGive(w);
+}
+function brocanteCard(m){
+ const head2=cols=>h("thead",{},h("tr",{},cols.map(t=>h("th",{},t))));
+ return h("div",{class:"card"},h("h2",{},"Brocante"),
+  h("p",{class:"muted small"},"Les échanges entre joueurs. « Même réseau » indique que les deux comptes se sont connectés depuis la même connexion : un indice, pas une preuve (famille, classe, colocation)."),
+  m.error?h("p",{class:"err"},m.error):[
+   h("h3",{},"Annonces ouvertes"),
+   m.listings?.length?h("div",{class:"table-wrap"},h("table",{},head2(["Date","Auteur","Donne","Cherche","Offres",""]),
+    h("tbody",{},m.listings.map(l=>h("tr",{},h("td",{class:"nowrap"},fmt(l.created)),h("td",{},mkWho(l.author)),h("td",{class:"wrap"},mkGive(l.give)),h("td",{class:"wrap"},mkWant(l.want)),h("td",{},String(l.offers)),
+     h("td",{},can("market-withdraw")&&h("button",{class:"btn small danger",type:"button",onclick:e=>{const b=e.currentTarget;confirmBox("Retirer cette annonce ?",`${who(l.author)} : ${mkGive(l.give)}. L'annonce et ses offres en attente sont fermées, le joueur est prévenu dans son journal.`,"Retirer").then(ok=>ok&&act(b,()=>call("market-withdraw",{id:l.id}),"Annonce retirée."));}},"Retirer")))))))
+    :empty("Aucune annonce ouverte."),
+   h("h3",{},"Derniers échanges"),
+   m.trades?.length?h("div",{class:"table-wrap"},h("table",{},head2(["Date","Premier","A donné","Second","A donné","Même réseau"]),
+    h("tbody",{},m.trades.map(t=>h("tr",{},h("td",{class:"nowrap"},fmt(t.created)),h("td",{},mkWho(t.a)),h("td",{class:"wrap"},mkGive(t.aGave)),h("td",{},mkWho(t.b)),h("td",{class:"wrap"},mkGive(t.bGave)),h("td",{},netPill(t.sameNet)))))))
+    :empty("Aucun échange pour le moment."),
+   h("h3",{},"Paires répétées (30 j)"),
+   m.pairs?.length?h("div",{class:"table-wrap"},h("table",{},head2(["Joueurs","Échanges","Même réseau"]),
+    h("tbody",{},m.pairs.map(p=>h("tr",{},h("td",{},mkWho(p.a)," · ",mkWho(p.b)),h("td",{},String(p.n)),h("td",{},netPill(p.sameNet)))))))
+    :empty("Aucune paire n'a échangé plusieurs fois.")]);
+}
+
+// La Nuit du collage, read-only: the last nights, today's colleurs and volunteers, the walls, the title worn now.
+const nightDay=d=>`${String(d%100).padStart(2,"0")}/${String(Math.floor(d/100)%100).padStart(2,"0")}`;
+const nightWinner=w=>!Array.isArray(w)||!w.length?"personne":w.length>1?"égalité":w[0]==="left"?"la Gauche":"la Droite";
+const nightText=n=>`${nightDay(n.day)} · Gauche ${n.left} · Droite ${n.right} · ${nightWinner(n.winners)} · ${n.paid} payé${n.paid>1?"s":""}`;
+function collageCard(w){
+ const pair=o=>`Gauche ${num(o?.left)} · Droite ${num(o?.right)}`;
+ return h("div",{class:"card"},h("h2",{},"Collage — la Nuit du collage"),
+  h("p",{class:"muted small"},"Le mur d'affiches, en lecture seule : les colleurs actifs du jour, les volontaires qui renforcent le camp en infériorité, et le titre porté en ce moment."),
+  w.error?h("p",{class:"err"},w.error):[
+   h("div",{class:"list"},
+    h("div",{class:"row"},h("span",{class:"grow"},"Murs : ",h("b",{},num(w.walls)))),
+    h("div",{class:"row"},h("span",{class:"grow"},"Cases tenues : ",h("b",{},pair(w.counts)))),
+    h("div",{class:"row"},h("span",{class:"grow"},"Colleurs actifs aujourd'hui : ",h("b",{},pair(w.active)))),
+    h("div",{class:"row"},h("span",{class:"grow"},"Volontaires aujourd'hui : ",h("b",{},pair(w.volunteers)))),
+    h("div",{class:"row"},h("span",{class:"grow"},"Colleur de la semaine : ",w.title?h("span",{},h("b",{},w.title.name)," ",campBadge(w.title.camp)):"—"))),
+   h("h3",{},"Dernières nuits"),
+   w.nights?.length?h("div",{class:"list"},w.nights.map(n=>h("div",{class:"row"},h("span",{class:"grow nowrap"},nightText(n)))))
+    :empty("Aucune nuit comptée pour le moment.")]);
 }
 
 // ===================================================================== Réglages
@@ -906,7 +960,7 @@ async function viewBackup(){
   h("label",{for:"bk-hour"},"Heure (celle du conteneur)"),hour,rows.map(r=>r.el),h("div",{class:"btn-row"},saveBtn,runBtn),
   h("p",{class:"muted small"},"Les 5 dernières sauvegardes manuelles sont gardées. Les images du chat (chat-media) ne sont pas incluses, et ces copies restent sur la même machine que le jeu : télécharges-en une de temps en temps."));
  return [head("Sauvegarde",refreshBtn()),h("div",{class:"grid wide"},
-  h("div",{class:"card"},h("h2",{},"Base de données"),h("p",{class:"muted small"},"Une copie cohérente de la base (VACUUM INTO), prise à chaud, téléchargée puis effacée de la machine de la partie. Elle contient les empreintes des mots de passe : garde-la en lieu sûr."),
+  h("div",{class:"card"},h("h2",{},"Base de données"),h("p",{class:"muted small"},"Une copie cohérente de la base (VACUUM INTO), prise à chaud, téléchargée puis effacée de la machine de la partie. Elle contient les empreintes des mots de passe et l'empreinte réseau des joueurs, mais pas sa clé (netkey.txt, à côté de la base) : garde-la en lieu sûr."),
    h("div",{class:"btn-row"},dl("backup","Télécharger la base (.db)"))),
   h("div",{class:"card"},h("h2",{},"Clé des notifications"),h("p",{class:"muted small"},"vapid.json : sans elle, une base restaurée perd tous les abonnements aux notifications. C'est une clé privée : ne la partage jamais."),
    h("div",{class:"btn-row"},dl("backup-vapid","Télécharger vapid.json")))),
@@ -977,7 +1031,7 @@ function botReport(r,withName=true){
 async function viewBots(){
  const {items}=await call("bots");
  return [head("Détection de bots",refreshBtn()),
-  h("p",{class:"muted small"},"Indices sur 14 jours, jamais une preuve, et rien n'est sanctionné tout seul. Trois familles : le rythme (délais de réaction mesurés par le jeu et comparés aux autres joueurs, visites, pauses), le client (hors navigateur, sans écran ouvert, nouveautés jamais ouvertes) et les mini-jeux (résultats invraisemblables, scores trop constants, parties au plus tôt permis). Une alerte demande au moins deux familles ; la nuit ne compte qu'avec un autre indice. Le détail des points est dans chaque rapport. Aucune adresse IP n'est conservée. Heures dans le fuseau du jeu."),
+  h("p",{class:"muted small"},"Indices sur 14 jours, jamais une preuve, et rien n'est sanctionné tout seul. Trois familles : le rythme (délais de réaction mesurés par le jeu et comparés aux autres joueurs, visites, pauses), le client (hors navigateur, sans écran ouvert, nouveautés jamais ouvertes) et les mini-jeux (résultats invraisemblables, scores trop constants, parties au plus tôt permis). Une alerte demande au moins deux familles ; la nuit ne compte qu'avec un autre indice. Le détail des points est dans chaque rapport. Aucune adresse IP n'est conservée en clair. Heures dans le fuseau du jeu."),
   items.length?h("div",{class:"grid wide"},items.map(r=>h("div",{class:"card"},botReport(r)))):h("div",{class:"card"},empty("Aucune activité enregistrée."))];
 }
 

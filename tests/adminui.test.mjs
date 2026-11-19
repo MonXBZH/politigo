@@ -284,6 +284,48 @@ test("the console offers Noël and lists snow challenges for a moderator with th
  assert.equal((await n.call("prod","snow-challenges")).status,403);
 });
 
+test("the Brocante card: market-list under the Duels panel, market-withdraw a right of its own in Modo complet, the page and the backup text",async()=>{
+ const js=await fetch(`http://127.0.0.1:${ADMIN}/admin.js`).then(r=>r.text());
+ assert.match(js,/"Brocante"/);assert.match(js,/Paires répétées \(30 j\)/);assert.match(js,/même réseau : oui/);assert.match(js,/call\("market-list"\)/);assert.match(js,/call\("market-withdraw"/);
+ assert.match(js,/l'empreinte réseau des joueurs, mais pas sa clé/,"the backup warning: the fingerprints, not their key");assert.doesNotMatch(js,/l'empreinte réseau des joueurs et sa clé/);
+ const b=browser();assert.equal((await b.login()).status,200);
+ const cat=(await b.req("/api/mods")).json;
+ assert.ok(cat.actions.some(([id,label])=>id==="market-withdraw"&&label==="Retirer une annonce de la Brocante"));
+ assert.ok(cat.presets.find(p=>p.id==="full").actions.includes("market-withdraw"));
+ const ml=await b.call("prod","market-list");assert.equal(ml.status,200,JSON.stringify(ml.json));
+ assert.ok(Array.isArray(ml.json.trades)&&Array.isArray(ml.json.listings)&&Array.isArray(ml.json.pairs));
+ await player(API1,"Modo Brocante");
+ const id=(await b.call("prod","list")).json.players.find(p=>p.name==="Modo Brocante").id;
+ const ok=await b.req("/api/mods/save",{server:"prod",player:id,panels:["duels"],actions:[],servers:[]});assert.equal(ok.status,200,JSON.stringify(ok.json));
+ const m=browser();assert.equal((await m.req("/api/login",{name:"Modo Brocante",password:ok.json.password})).status,200);
+ assert.equal((await m.call("prod","market-list")).status,200);
+ assert.equal((await m.call("prod","market-withdraw",{id:1})).status,403,"viewing is not withdrawing");
+ assert.equal((await b.req("/api/mods/save",{id:ok.json.mod.id,panels:["duels"],actions:["market-withdraw"]})).status,200);
+ const m2=browser();assert.equal((await m2.req("/api/login",{name:"Modo Brocante",password:ok.json.password})).status,200);
+ assert.equal((await m2.call("prod","market-withdraw",{id:999999})).status,422,"allowed: reaches the game, which finds no such listing");
+ const no=await b.req("/api/mods/save",{id:ok.json.mod.id,panels:["chat"],actions:[]});assert.equal(no.status,200);
+ const n=browser();assert.equal((await n.req("/api/login",{name:"Modo Brocante",password:ok.json.password})).status,200);
+ assert.equal((await n.call("prod","market-list")).status,403);
+});
+
+test("the Nuit du collage card: wall-list under the Duels panel, read-only, the night row copy",async()=>{
+ const js=await fetch(`http://127.0.0.1:${ADMIN}/admin.js`).then(r=>r.text());
+ assert.match(js,/call\("wall-list"\)/);assert.match(js,/"Collage — la Nuit du collage"/);assert.match(js,/Colleur de la semaine/);
+ assert.match(js,/Gauche \$\{[^}]*\} · Droite \$\{[^}]*\} · \$\{[^}]*\} · \$\{[^}]*\} payé/,"the night row: Gauche n · Droite n · winner · n payés");
+ assert.match(js,/égalité/);assert.match(js,/personne/);assert.doesNotMatch(js,/call\("wall-[a-z]+",/,"read-only: no wall action");
+ const b=browser();assert.equal((await b.login()).status,200);
+ const r=await b.call("prod","wall-list");assert.equal(r.status,200,JSON.stringify(r.json));
+ assert.ok(Array.isArray(r.json.nights)&&r.json.counts&&r.json.active&&r.json.volunteers);
+ await player(API1,"Modo Collage");
+ const id=(await b.call("prod","list")).json.players.find(p=>p.name==="Modo Collage").id;
+ const ok=await b.req("/api/mods/save",{server:"prod",player:id,panels:["duels"],actions:[],servers:[]});assert.equal(ok.status,200,JSON.stringify(ok.json));
+ const m=browser();assert.equal((await m.req("/api/login",{name:"Modo Collage",password:ok.json.password})).status,200);
+ assert.equal((await m.call("prod","wall-list")).status,200);
+ assert.equal((await b.req("/api/mods/save",{id:ok.json.mod.id,panels:["chat"],actions:[]})).status,200);
+ const n=browser();assert.equal((await n.req("/api/login",{name:"Modo Collage",password:ok.json.password})).status,200);
+ assert.equal((await n.call("prod","wall-list")).status,403);
+});
+
 test("deleting a player: a right of its own, in no profile; moderators' accounts and protected ones are out of reach",async()=>{
  const b=browser();await b.login();
  const cat=(await b.req("/api/mods")).json;

@@ -15,6 +15,10 @@ import {createBatonDuel,screenOf,feedParts} from "./batonduel.mjs";
 import {noelMoment,noelYear,voeuxText,adventCells,adventGiftText,etProgress,
  cheersPhase,cheersClock,cheersNamesLine,cheersAnnounce,frontLine,newYearYear,newYearScreen,CHEERS_MS,CHEERS_REPLAY_MS,nyFrameDue} from "./noelui.mjs";
 import {endSummary,frontBar,challengeText,sentText,challengeLists,dareView,sendsOnDeath} from "./snowui.mjs";
+import {MARKET,tradable} from "./market.mjs";
+import {listingView,forMe,pickable,tradeRecap,offerCheck,freshIds,catalogue,candidates,kindWord} from "./marketui.mjs";
+import * as WL from "./wall.mjs";
+import * as WU from "./wallui.mjs";
 const {people,personalItems,stresses,shop,fxNames,XP,xpCost,xpFloor,stage}=R;
 const $=s=>document.querySelector(s);
 const motionQuery=matchMedia("(prefers-reduced-motion: reduce)");
@@ -28,6 +32,12 @@ let board=[],feed=[],journalShown=-1,journalRendered=-1,boardTab="score",urnHint
 let batonV=null,bd=null;
 // The snowball fight (Trêve des confiseurs): me.snowFront, the last fight's end screen, the challenges (GET /api/snow/challenges).
 let snowFront=null,snowLast=null,snowData=null,snowErr="",snowSeq=0,snowAsked=false;
+// La Brocante: GET /api/market (only while its sheet is open), the tab, the flow under way (trade, offer, deposit, mine,
+// done), the listings new to this visit, the Dossier's count (me.marketNew) and whether it is stale.
+let mkData=null,mkErr="",mkSeq=0,mkTab="all",mkFlow=null,mkFresh=new Set(),mkNewCount=0,mkStale=false,mkMeT=0,mkMeLast=0,mkLoadT=0,mkListedIds=new Set();
+// Collage / La Nuit du collage: the sheet's state (wallui.mjs wallState, GET /api/wall only while it is open), its
+// DOM, the posters left (me.wallLeft) and the last counts heard (for the Jeux tile), the animations.
+let wl=null,wlErr="",wlSeq=0,wlLoadT=0,wlUi=null,wlLeft=null,wlCounts=null,wlBusy=false,wlAnim=null,wlFlash=null,wlLoop=false,wlBg=null;
 const curIdx=()=>R.curIdx(S),hodOf=R.hodOf,isNight=()=>R.isNight(S),isAsleep=()=>R.isAsleep(S);
 // What the élu wears from the wardrobe (wardrobe.mjs): drawn over his own look by sprite().
 const worn=()=>S?.wardrobe?.worn||{outfit:null,object:null},dress=p=>({...p,outfit:worn().outfit,object:worn().object});
@@ -73,6 +83,10 @@ function applyMe(m,{replay=false}={}){
  const first=!S||me!==m.name;
  // The action answer and the live stream race each other: an older copy of the state never replaces a newer one.
  if(!first&&m.state.lastReal<S.lastReal)return;
+ if(me!==m.name){mkData=null;mkErr="";mkFlow=null;wl=null;wlCounts=null;}                  // another player: nothing of the last one's Brocante
+ if(Number.isFinite(m.marketNew))mkNewCount=mkOpen()?0:Math.max(0,m.marketNew);   // the Dossier's count (the open sheet has seen them)
+ if(Number.isFinite(m.wallLeft)){wlLeft=Math.max(0,m.wallLeft);if(wl&&me===m.name)wl={...wl,left:wlLeft};}   // the posters left today (an attempt under way counts)
+ if(Array.isArray(m.marketListed))mkListedIds=new Set(m.marketListed.filter(x=>typeof x==="string"));   // the Garde-robe's « En vitrine »
  chatFlags(m.chat);
  me=m.name;SPEED=m.speed||1;VERSION=m.version||"dev";R.setTimeZone(m.tz||"Europe/Paris");
  if("release" in m){RELEASE=m.release||null;SEEN=m.seenVersion||null;}
@@ -133,6 +147,7 @@ function playJournal(onlyMajor){
   // Reached on their own (a visit, a purchase…): said once. Missions, letters and draws answer the player's tap instead.
   else if(act.k==="goal"){playAnim("win",1500);toast(act.text);}
   else if(act.k==="flame")toast(`🔥 ${act.text}`);
+  else if(act.k==="market"){toast(`🧺 ${act.text}`);if(mkOpen())marketLoad();}   // a trade, a listing closed or withdrawn
   else if(level)toast(level.text);
  }else if(level)toast(level.text);
 }
@@ -1126,6 +1141,7 @@ cv.addEventListener("keydown",e=>{if(!pong&&!mini&&(e.key==="Enter"||e.key===" "
 document.addEventListener("keydown",e=>{
  if(!$("#sheet").hidden){
   if(e.key==="Escape"){closeSheet();return;}
+  if(sheetKind==="wall"&&wl?.brush&&(e.key===" "||e.code==="Space")){e.preventDefault();if(!e.repeat)wallStop();return;}   // a fresh Space stops the brush
   if(e.key==="Tab"){                                   // keep keyboard focus inside the open sheet
    // Only what is on screen: a hidden file input or a closed menu cannot take the focus.
    const f=[...$(".sheet-card").querySelectorAll("button:not(:disabled),select,input:not(:disabled),textarea:not(:disabled),[tabindex='0']")].filter(el=>el.getClientRects().length);
@@ -1223,6 +1239,10 @@ function refresh(){
   const why=[bt&&"duel du Bâton à jouer",dn&&`${dn} défi${dn>1?"s":""} en attente`,rep&&"rapport de mission à lire",mail&&(mail>1?`${mail} lettres d'électeurs`:"une lettre d'électeur"),rm&&"quitte ou double disponible"].filter(Boolean).join(", ");
   if(why)playBtn.setAttribute("aria-label",`Jouer (${why})`);else playBtn.removeAttribute("aria-label");
  }
+ // New listings at the Brocante since the last visit (me.marketNew): the same red dot on "Dossier".
+ const moreBtn=$(".pad-btn[data-sheet=more]"),mkSig=String(mkNewCount>0);
+ if(moreBtn.dataset.sig!==mkSig){moreBtn.dataset.sig=mkSig;moreBtn.classList.toggle("alert",mkNewCount>0);
+  if(mkNewCount>0)moreBtn.setAttribute("aria-label","Dossier (nouvelles annonces à la Brocante)");else moreBtn.removeAttribute("aria-label");}
  const label=`${p.name}, niveau ${S.lvl}. Satiété ${Math.round(S.sat)}, moral ${Math.round(S.moral)}, énergie ${Math.round(S.energy)}, hygiène ${Math.round(S.hyg)}. Entrée pour lui taper sur l'épaule.`;
  if(cv.getAttribute("aria-label")!==label)cv.setAttribute("aria-label",label);
 }
@@ -1297,6 +1317,8 @@ function connectLive(){
  on("duel",v=>{if(v&&typeof v==="object")duelEvent(v);});
  on("snowChallenge",v=>{if(v&&typeof v==="object")snowEvent(v);});
  on("snowFront",v=>snowFrontEvent(v));
+ on("market",v=>{if(v&&typeof v==="object")marketEvent(v);});
+ on("wall",v=>{if(v&&typeof v==="object")wallEvent(v);});
  on("announce",v=>{if(typeof v?.text!=="string"||!v.text.trim())return;announceQ.push({text:v.text.slice(0,240)});if(announceQ.length>3)announceQ.shift();showAnnounce();});
  // The Bâton de feu found its bearer: a banner for everyone else (the bearer has the legend).
  on("mythic",v=>{
@@ -1411,7 +1433,7 @@ function armedButton(label,armedLabel,cls,onConfirm){
 // 1.6.0: the missions (a report ready), the letter, the goals' progress, the wardrobe and the urn.
 const sheetSig=()=>[S.fm,curIdx(),R.actsToday(S),R.actsThisVisit(S),S.energy<20,S.coffees,S.breadIdx,S.lvl,S.best,S.equipped[person().name]||0,isAsleep(),S.camp,!rematchBlock(),season(),S.treatDay,
  S.missions?.cur?.id,A.missionReady(S),A.missionsToday(S),S.energy<A.MISSION_RULES.minEnergy,S.mail?.letter?.id,A.lettersWaiting(S),A.lettersToday(S),S.mail?.b,S.goals?.list?.map(x=>`${x.n}${x.done?"d":""}`).join(),
- running().map(e=>e.id).join(),S.wardrobe?.own?.length,worn().outfit,worn().object,S.wardrobe?.bulletins,S.wardrobe?.confetti,W.freeDrawToday(S),A.flameOf(S),urnHint,batonSig(),S.advent?.y,S.advent?.opened?.join("-")].join("|");
+ running().map(e=>e.id).join(),S.wardrobe?.own?.length,worn().outfit,worn().object,S.wardrobe?.bulletins,S.wardrobe?.confetti,W.freeDrawToday(S),A.flameOf(S),urnHint,batonSig(),S.advent?.y,S.advent?.opened?.join("-"),mkNewCount,[...mkListedIds].join(),wlLeft,wlCounts?.left,wlCounts?.right,WL.isWallNight(wlHour())].join("|");
 let shownSig="";
 function setBackgroundInert(on){for(const el of document.querySelectorAll(".topbar,.app,footer"))el.inert=on;lockScroll(on);}
 // The page behind an open sheet does not move: a swipe that reaches the end of a list (the chat) no longer scrolls the
@@ -1438,16 +1460,21 @@ function openSheet(kind,opener){
 }
 // Redraws the open sheet without losing the scroll position or the focused row.
 // force: what changed is not in the state (the duels list, the push subscription).
-function liveSheet(force=false){
+// picked: a redraw asked by the player's own choice in a <select> (focus comes back to it); others wait for the blur.
+function liveSheet(force=false,picked=false){
+ if(S&&sheetKind==="wall"&&!$("#sheet").hidden){wallPaint();return;}   // updated in place: the brush and the focus stay
  if(!S||!sheetKind||$("#sheet").hidden||(!force&&sheetSig()===shownSig))return;
  if(sheetKind==="test")return;                       // a test under way owes nothing to the state: never redrawn under the finger
  if(sheetKind==="chat")return;                       // built once and updated in place (chat.mjs): the composer keeps focus and text
  if(sheetKind==="help"||sheetKind==="history")return;   // text only: a redraw would fold back what the player unfolded
  // Never under the player's fingers: an armed "tap again" button or a half-typed password survives updates.
  if($("#sheet-body .armed, #sheet-body form"))return;
+ if(!picked&&document.activeElement?.tagName==="SELECT"&&$("#sheet-body").contains(document.activeElement))return;   // an open list of choices (the Brocante)
  const card=$(".sheet-card"),top=card.scrollTop,f=[...card.querySelectorAll("button,select,input")],i=f.indexOf(document.activeElement);
+ const n=picked?[...card.querySelectorAll("select")].indexOf(document.activeElement):-1;   // the n-th select: buttons around it may come and go
  renderSheet(sheetKind);card.scrollTop=top;
- if(i>=0){const g=[...card.querySelectorAll("button,select,input")];(g[i]&&!g[i].disabled?g[i]:card).focus();}
+ if(n>=0){const sel=card.querySelectorAll("select")[n];(sel&&!sel.disabled?sel:card).focus();}
+ else if(i>=0){const g=[...card.querySelectorAll("button,select,input")];(g[i]&&!g[i].disabled?g[i]:card).focus();}
 }
 function renderSheet(kind,opener){
  sheetKind=kind;if(opener)sheetOpener=opener;shownSig=sheetSig();
@@ -1492,7 +1519,8 @@ function renderSheet(kind,opener){
    ...(noel()?[boosted(itemButton("❄️ Bataille de boules de neige","45 s contre les élus de l'autre camp : vise, pare leurs boules, épargne les passants. Puis défie un joueur sur le même tirage.",
     `Saison${snowIn()?` · ${snowIn()} défi${snowIn()>1?"s":""}`:""}`,false,openSnow),true)]:[]),
    // Always open: even when he cannot duel now, the sheet shows the challenges, the results and why.
-   boosted(itemButton("Duels",`Défie un rival au Débat chrono : mêmes questions, meilleur score. ${R.DUEL.perDay+f.duels} défis par jour.`,`${dn?`${dn} défi${dn>1?"s":""}`:"PvP"}${f.duelMult>1?` (×${frNum(f.duelMult)})`:""}`,false,openDuels),f.duels>0||f.duelMult>1)
+   boosted(itemButton("Duels",`Défie un rival au Débat chrono : mêmes questions, meilleur score. ${R.DUEL.perDay+f.duels} défis par jour.`,`${dn?`${dn} défi${dn>1?"s":""}`:"PvP"}${f.duelMult>1?` (×${frNum(f.duelMult)})`:""}`,false,openDuels),f.duels>0||f.duelMult>1),
+   wallTile()
   ));
   renderBatonBlock(body);
   renderActivities(body);
@@ -1504,6 +1532,9 @@ function renderSheet(kind,opener){
  if(kind==="duels")renderDuels(body,set);
  if(kind==="snow")renderSnow(body,set);
  if(kind==="snowdare")renderSnowDare(body,set);
+ if(kind==="market")renderMarket(body,set);
+ if(kind==="marketDo")renderMarketDo(body,set);
+ if(kind==="wall")renderWall(body,set);
  if(kind==="test"){
   set("Test politique","Cinq questions pour les indécis. Sans effet sur la partie : le dernier mot reste le tien.");
   const box=document.createElement("div");box.className="quiz";box.id="sheet-quiz";body.append(box);
@@ -1553,7 +1584,9 @@ function renderSheet(kind,opener){
   const wearing=[wo.outfit,wo.object].filter(id=>id&&W.ITEMS[id]).map(id=>W.ITEMS[id].name).join(" et ");
   body.append(blockTitle("Garde-robe"),list(
    itemButton("Garde-robe",`${got} sur ${vis.length} tenues et objets${wearing?` · porte ${wearing}`:""}. Purement cosmétique.`,"Ouvrir",false,()=>openSheet("wardrobe")),
-   itemButton(urnName(S.camp),W.freeDrawToday(S)?"Ton tirage gratuit du jour t'attend.":`Tirage gratuit déjà pris aujourd'hui · ${plural(w.bulletins,"bulletin")} en poche.`,`🎟️ ${w.bulletins}`,false,()=>openSheet("urn"))));
+   itemButton(urnName(S.camp),W.freeDrawToday(S)?"Ton tirage gratuit du jour t'attend.":`Tirage gratuit déjà pris aujourd'hui · ${plural(w.bulletins,"bulletin")} en poche.`,`🎟️ ${w.bulletins}`,false,()=>openSheet("urn")),
+   marketRow()));
+  if(mkStale)marketMe();                              // the board changed since me.marketNew was read
   body.append(blockTitle("Objets personnels"),list(...personalItems[p.name].map((it,i)=>{
    const on=(S.equipped[p.name]||0)===i,held=on&&!wo.object;
    return itemButton(it.name,held?"Dans sa main":on?"Équipé, mais rangé : un objet de la garde-robe est dans sa main. Toucher pour le reprendre.":"Toucher pour équiper",on?"équipé":"",false,()=>equip(i),held);
@@ -1618,7 +1651,7 @@ function renderSheet(kind,opener){
   const nrow=document.createElement("div");nrow.className="btn-row";nrow.append(news,smallButton("Aide","",()=>openHelp(null)));
   body.append(ver,nrow);
   const about=document.createElement("p");about.className="fine";
-  about.textContent="PolitiGo est une satire. Personnages caricaturés et répliques inventées ; les faits rappelés sont publics, avec le stade de chaque procédure, et la présomption d'innocence s'applique. Aucun achat réel : la seule monnaie est le frais de mandat, gagné en restant en vie. Seuls ton pseudo et ta partie sont enregistrés.";
+  about.textContent="PolitiGo est une satire. Personnages caricaturés et répliques inventées ; les faits rappelés sont publics, avec le stade de chaque procédure, et la présomption d'innocence s'applique. Aucun achat réel : la seule monnaie est le frais de mandat, gagné en restant en vie. Seuls ton pseudo, ta partie et une empreinte non réversible de ta dernière connexion sont enregistrés.";
   body.append(about);
  }
 }
@@ -1751,7 +1784,9 @@ function wardCard(id,it,i){
  const idle=on?"Porté":own?(it.kind==="outfit"?"Porter":"Brandir"):swap?`Échanger · ${cost} 🎊`:"À gagner";
  st.className="st";st.textContent=idle;
  b.append(cv,rk,nm,st);
- b.setAttribute("aria-label",own?`${it.name}, ${label}. ${on?"Porté : toucher pour l'enlever.":"Toucher pour le porter."}`:swap?`${it.name}, ${label} : échanger ${cost} confettis contre lui.`:`${label}, pas encore gagné.`);
+ const vit=own&&mkListed().has(id);                  // in one of my open listings (me.marketListed)
+ if(vit){const v=document.createElement("span");v.className="mk-badge";v.textContent="En vitrine";b.append(v);}
+ b.setAttribute("aria-label",own?`${it.name}, ${label}${vit?", en vitrine à la Brocante":""}. ${on?"Porté : toucher pour l'enlever.":"Toucher pour le porter."}`:swap?`${it.name}, ${label} : échanger ${cost} confettis contre lui.`:`${label}, pas encore gagné.`);
  if(own)b.title=it.desc;
  if(!own&&!swap)b.setAttribute("aria-disabled","true");
  const p=ownLook(),off=i*331;
@@ -1896,7 +1931,7 @@ function renderUrn(body,set){
  const pity=document.createElement("div");pity.className="pity";
  for(const k of Object.keys(W.PITY)){
   const n=w.pity?.[k]||0,left=W.PITY[k]-n,row=document.createElement("div"),l=document.createElement("span"),v=document.createElement("b"),bar=document.createElement("div"),fill=document.createElement("i");
-  row.className="pity-row";l.textContent=`${W.RARITY_LABEL[k]} garanti${k==="epique"?" (ou mieux)":""}`;v.textContent=left<=1?"au prochain tirage":`dans ${left} tirages`;row.append(l,v);
+  row.className="pity-row";l.textContent=`${W.RARITY_LABEL[k]} garanti${k==="epique"?" (ou mieux)":k==="legendaire"&&W.poolItems(S.camp,"legendaire").some(id=>!w.own.includes(id))?" (un nouveau)":""}`;v.textContent=left<=1?"au prochain tirage":`dans ${left} tirages`;row.append(l,v);
   bar.className="bar";bar.setAttribute("aria-hidden","true");fill.style.width=`${Math.round(100*n/W.PITY[k])}%`;fill.style.background=W.RARITY_COLOR[k];bar.append(fill);   // CSSOM
   pity.append(row,bar);
  }
@@ -1925,7 +1960,9 @@ function renderPlayer(body,set){
  for(const [k,v] of [["Élu",r.candidate],["Niveau",String(r.lvl)],["Score",`${r.score} pts${rank?` · ${ordinal(rank)}`:""}`],["Duels",`${plural(r.dw|0,"gagné")} · ${plural(r.dl|0,"perdu")}`],["Tenue",r.outfit?item(r.outfit):"aucune"],["Objet",item(r.object)]]){
   const dt=document.createElement("dt"),dd=document.createElement("dd");dt.textContent=k;dd.textContent=v;kv.append(dt,dd);
  }
- body.append(stage,kv);
+ body.append(stage);
+ if(r.wallTitle){const b=document.createElement("p");b.className="wl-badge";b.append(pill("🖌️ Colleur de la semaine","new"));body.append(b);}   // last week's champion
+ body.append(kv);
  // The bearer's sheet: the Duel du Bâton (the challenge, or the arena while a duel is on).
  if(holder||batonDuel()&&[batonDuel().c,batonDuel().b].includes(r.name)){
   const d=batonDuel(),w=watchable(),row=document.createElement("div");row.className="btn-row";
@@ -2058,6 +2095,7 @@ async function markNewsSeen(){
 }
 function closeSheet(fromBack=false){
  if($("#sheet").hidden)return;
+ clearTimeout(wlLoadT);wlLoadT=0;                     // no wall reload for a closed sheet
  if(sheetKind==="news"&&newsAuto){newsAuto=false;SEEN=RELEASE;markNewsSeen();}
  if(!fromBack&&sheetInHistory){sheetInHistory=false;pendingBack=true;history.back();}
  $("#sheet").hidden=true;sheetKind=null;setBackgroundInert(false);chat.hide();$("#sheet").classList.remove("chat");
@@ -2302,6 +2340,331 @@ function snowFrontEvent(v){
  snowFront=v;
  if(sheetKind==="snow")liveSheet(true);
 }
+// ---------- La Brocante (market.mjs: the rules, marketui.mjs: what the cards say) ----------
+// Two sheets: "market" (the board, its tabs, the deposit button) and "marketDo" (the flow: trade, offer, deposit in two
+// steps, my listings and offers, the trade done). GET /api/market only while one of them is open: it marks the board
+// as seen. Closed, the live "board" notice only marks the Dossier's count stale (me.marketNew, asked again by /api/me
+// when the Dossier shows it). Every player's or item's text goes in through textContent.
+const MK_SHEETS=["market","marketDo"];
+const mkOpen=()=>MK_SHEETS.includes(sheetKind)&&!$("#sheet").hidden;
+const mkArr=v=>Array.isArray(v)?v.filter(x=>x&&typeof x==="object"):[];
+const mkBoard=()=>mkArr(mkData?.board),mkMine=()=>mkArr(mkData?.mine),mkOffers=()=>mkArr(mkData?.offers);
+const mkBlock=()=>typeof mkData?.block==="string"?mkData.block:"";
+const mkListed=()=>mkListedIds;                     // me.marketListed, refreshed by each GET /api/market too
+const mkCampWord=c=>c==="left"?"gauche":c==="right"?"droite":"";
+const mkEl=(tag,cls,text)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e;};
+// Reloads are coalesced: the POST's answer, the live trade notice, the journal line and the board broadcast make one GET.
+function marketLoad(){clearTimeout(mkLoadT);mkLoadT=setTimeout(()=>{mkLoadT=0;marketFetch();},250);}
+async function marketFetch(){
+ if(!S)return;
+ const seq=++mkSeq,who=me,r=await api("GET","/api/market");
+ if(seq!==mkSeq||!S||me!==who)return;
+ if(r.ok){mkData=r;mkErr="";mkListedIds=new Set(mkMine().flatMap(l=>mkArrIds(l.give?.items)));for(const id of freshIds(mkArr(r.board),r.newCount))mkFresh.add(id);mkNewCount=0;}else mkErr=r.error;
+ if(mkOpen())liveSheet(true);
+}
+function openMarket(){mkFresh=new Set();mkFlow=null;openSheet("market");clearTimeout(mkLoadT);mkLoadT=0;marketFetch();}
+const mkGo=flow=>{mkFlow=flow;openSheet("marketDo");};
+const mkBack=()=>{mkFlow=null;openSheet("market");};
+// Live: an open Brocante reloads (a board change, an offer, a trade). Closed, a board change asks /api/me again for
+// me.marketNew (the Dossier's dot and row), never /api/market (it would mark the board seen).
+function marketEvent(v){
+ if(mkOpen()){marketLoad();return;}
+ if(v.kind!=="board")return;                         // mine, offer, trade: the journal and the push say it
+ mkStale=true;marketMe();
+}
+// /api/me again for marketNew: a little later (not every screen at the same instant), one pending at a time, and at
+// most one every MK_ME_MS (a change inside that window waits for its end: the last one is never lost).
+const MK_ME_MS=20e3;
+function marketMe(){
+ mkStale=false;if(mkMeT)return;
+ const wait=Math.max(300+Math.random()*1700,mkMeLast+MK_ME_MS-Date.now());
+ mkMeT=setTimeout(async()=>{
+  if(!S||document.hidden){mkMeT=0;mkStale=true;return;}   // a hidden page gets /api/me when shown again
+  mkMeLast=Date.now();const who=me,r=await api("GET","/api/me");mkMeT=0;if(r.ok&&S&&me===who)applyMe(r);
+ },wait);
+}
+// The Dossier's row, with the count of listings new since the last visit.
+function marketRow(){
+ const n=mkNewCount,b=itemButton("🧺 La Brocante",n?`${n} nouvelle${n>1?"s":""} annonce${n>1?"s":""} depuis ta dernière visite.`:"Troquer avec les autres joueurs, des deux camps.",n?String(Math.min(n,99)):"Ouvrir",false,openMarket);
+ if(n){b.querySelector(".price").classList.add("count");b.setAttribute("aria-label",`La Brocante, ${n} nouvelle${n>1?"s":""} annonce${n>1?"s":""}`);}
+ return b;
+}
+// An item as a chip: its picture (objects drawn, outfits a tile), name, kind and rarity (never the rarity of what
+// does not trade).
+function mkThumb(id){
+ const it=W.ITEMS[id];
+ if(it?.kind==="object"){
+  const cv=mkEl("canvas","mk-thumb");cv.width=cv.height=32;cv.setAttribute("aria-hidden","true");
+  try{if(drawObject(cv.getContext("2d"),id,14,26,0))return cv;}catch{}
+ }
+ const t=mkEl("span","mk-thumb tile",it?.kind==="outfit"?"👔":"✦");t.setAttribute("aria-hidden","true");return t;
+}
+function mkChip(id){
+ const it=W.ITEMS[id],ok=tradable(id),c=mkEl("span","mk-chip"),n=mkEl("span","nm",it?.name??id);
+ c.style.setProperty("--r",ok?W.RARITY_COLOR[it.rarity]:"#8d84a0");   // CSSOM
+ n.append(mkEl("small","",`${it?.kind==="outfit"?"Tenue":"Objet"}${ok?` · ${W.RARITY_LABEL[it.rarity]}`:""}`));
+ c.append(mkThumb(id),n);return c;
+}
+const mkBul=(n,plus=true)=>mkEl("span","mk-bul",`${plus?"+ ":""}${n} 🗳️`);
+const mkCamp=c=>mkEl("span",`mk-camp ${c==="right"?"right":"left"}`,mkCampWord(c));
+const mkSide=(items,bul)=>{const s=mkEl("span","mk-side");s.append(...items.map(mkChip));if(bul)s.append(mkBul(bul,items.length>0));return s;};
+function mkRow(k,...kids){const r=mkEl("div","mk-row");r.append(mkEl("span","k",k),...kids);return r;}
+function mkWho(name,camp,...rest){const s=mkEl("span","mk-who");s.append(mkEl("b",camp==="right"?"right":camp==="left"?"left":"",name));if(camp)s.append(mkCamp(camp));s.append(...rest);return s;}
+// What a listing asks for, as chips: the items, a rarity, bulletins, or « Faites-moi une offre ».
+function mkWant(w){
+ const s=mkEl("span","mk-side");
+ if(w?.kind==="offer")s.append(mkEl("i","","Faites-moi une offre"));
+ else if(w?.kind==="bulletins")s.append(mkBul(w.bulletins,false));
+ else if(w?.kind==="rarity"){s.append(mkEl("b","",kindWord(w.slot,w.rarity)));if(w.bulletins)s.append(mkBul(w.bulletins));}
+ else if(w?.kind==="items"){s.append(...mkArrIds(w.items).map(mkChip));if(w.bulletins)s.append(mkBul(w.bulletins));}
+ return s;
+}
+const mkArrIds=v=>Array.isArray(v)?v.filter(x=>typeof x==="string"):[];
+const mkGive=g=>({items:mkArrIds(g?.items),bulletins:Number.isInteger(g?.bulletins)?g.bulletins:0});
+function mkCard(l){
+ const block=mkBlock(),v=listingView(l,S,block),oc=offerCheck(l,S,mkOffers(),block),d=mkEl("div","mk-lst");
+ const head=mkEl("div","mk-head"),side=mkEl("span","mk-when");
+ if(mkFresh.has(l.id))side.append(pill("nouveau","new"));
+ if(Number.isFinite(l.created))side.append(mkEl("small","",when(l.created)));
+ head.append(mkWho(v.who,v.camp),side);
+ d.append(head,mkRow("Propose",mkSide(v.gives.map(x=>x.id),v.giveBulletins)),mkRow("Cherche",mkWant(l.want)));
+ const row=mkEl("div","btn-row");
+ if(!v.offerOnly)row.append(smallButton("Troquer","go",()=>mkGo({type:"trade",id:l.id,pick:candidates(S,l.want)[0]??null}),!v.takeOk));
+ row.append(smallButton(oc.sent?"Offre envoyée ✓":"Faire une offre","",()=>mkGo({type:"offer",id:l.id,items:[],bul:0}),!oc.ok));
+ d.append(row);
+ if(!v.offerOnly)d.append(v.takeOk?mkEl("span","mk-ok","Tu as ce qu'il faut : l'échange se fait tout de suite."):mkEl("span","mk-why",v.takeWhy));
+ if(!oc.ok&&oc.why!==v.takeWhy)d.append(mkEl("span",oc.sent?"mk-ok":"mk-why",oc.why));
+ return d;
+}
+const MK_TABS=[["all","Toutes"],["outfit","Tenues"],["object","Objets"],["me","Pour moi"]];
+function renderMarket(body,set){
+ set("🧺 La Brocante",`Tout le monde regarde ; on échange dès le niveau ${R.DUEL.minLevel}.`);
+ if(!mkData){
+  body.append(fine(mkErr||"Chargement de la Brocante…"));
+  if(mkErr){const r=mkEl("div","btn-row");r.append(smallButton("Réessayer","",()=>{mkErr="";liveSheet(true);marketLoad();}));body.append(r);}
+  return;
+ }
+ if(mkErr)body.append(Object.assign(fine(mkErr),{className:"fine warn"}));
+ const block=mkBlock(),mine=mkMine(),sent=mkOffers().filter(o=>o.status==="pending").length,got=mine.reduce((n,l)=>n+mkArr(l.offers).length,0);
+ body.append(list(boosted(itemButton("Mes annonces et mes offres",`Annonces ${mine.length}/${MARKET.maxListings} · offres envoyées ${sent}/${MARKET.maxOffers}`,
+  got?`${got} reçue${got>1?"s":""}`:"Voir",false,()=>mkGo({type:"mine"})),got>0)));
+ const top=mkEl("div","mk-top"),tabs=mkEl("div","tabs small mk-tabs");tabs.setAttribute("role","group");tabs.setAttribute("aria-label","Annonces à afficher");
+ for(const [k,t] of MK_TABS){const b=mkEl("button","",t);b.type="button";b.setAttribute("aria-pressed",String(mkTab===k));b.addEventListener("click",()=>{mkTab=k;renderSheet("market");$("#sheet-body .mk-tabs [aria-pressed=true]")?.focus();});tabs.append(b);}
+ top.append(tabs);
+ if(mkFresh.size)top.append(pill(`${mkFresh.size} nouvelle${mkFresh.size>1?"s":""} annonce${mkFresh.size>1?"s":""}`,"new"));
+ body.append(top);
+ if(block)body.append(Object.assign(fine(`${block} Tu peux tout de même regarder les annonces.`),{className:"fine warn"}));
+ const kindOf=l=>mkArrIds(l.give?.items).map(id=>W.ITEMS[id]?.kind);
+ let shown=mkBoard();
+ if(mkTab==="outfit"||mkTab==="object")shown=shown.filter(l=>kindOf(l).includes(mkTab));
+ if(mkTab==="me")shown=forMe(shown,S,block);
+ const box=mkEl("div","mk-board");
+ if(shown.length)box.append(...shown.map(mkCard));
+ else box.append(mkEl("p","mk-hint",mkTab==="me"?(block?`Rien pour l'instant : ${block}`:"Rien que tu puisses troquer tout de suite. Essaie « Faire une offre » !"):
+  mkBoard().length?"Aucune annonce ici.":"Aucune annonce pour l'instant : dépose la première !"));
+ body.append(box);
+ const dep=block||(mine.length>=MARKET.maxListings?`${MARKET.maxListings} annonces ouvertes au plus : retires-en une d'abord.`:"");
+ const row=mkEl("div","btn-row");
+ row.append(smallButton("+ Déposer une annonce","go",()=>mkGo({type:"deposit",step:1,items:[],mode:"items",wantItems:[],rarity:"rare",slot:"outfit",bul:0}),!!dep));
+ body.append(row);
+ if(dep&&dep!==block)body.append(Object.assign(fine(dep),{className:"fine warn"}));
+ body.append(blockTitle("Règles"),fine(`Échanges aujourd'hui : ${Number(mkData.today)||0}/${MARKET.perDay}. Dès le niveau ${R.DUEL.minLevel} et un compte d'au moins 3 jours. `+
+  `Une annonce propose 1 à ${MARKET.maxItems} objets, sans durée limite ; bulletins de 0 à ${MARKET.maxBulletins}, jamais seuls contre rien. Aucun texte libre : que des choix. Certains objets très rares ne s'échangent pas.`));
+}
+
+// ---------- the Brocante's flow sheet ----------
+function renderMarketDo(body,set){
+ const f=mkFlow,back=(label="‹ La Brocante")=>{const r=mkEl("div","btn-row");r.append(smallButton(label,"",mkBack));return r;};
+ if(!f){set("🧺 La Brocante","");body.append(back());return;}
+ if(f.type==="done")return mkDone(body,set,f,back);
+ if(f.type==="mine")return mkMineSheet(body,set,back);
+ if(f.type==="deposit")return mkDeposit(body,set,f);
+ if(!mkData){set("🧺 La Brocante","");body.append(fine(mkErr||"Chargement de la Brocante…"),back());return;}
+ const l=mkBoard().find(x=>x.id===f.id);
+ if(!l){set("🧺 La Brocante","");body.append(Object.assign(fine("Cette annonce n'est plus disponible."),{className:"fine warn"}),back());return;}
+ if(f.type==="trade")return mkTrade(body,set,f,l);
+ if(f.type==="offer")return mkOffer(body,set,f,l);
+}
+function mkRecap(give,get){
+ const r=mkEl("div","mk-recap");
+ r.append(mkEl("span","block-title","Tu donnes"),give.items.length||give.bulletins?mkSide(give.items,give.bulletins):mkEl("i","fine","(à choisir)"),
+  mkEl("span","block-title","Tu reçois"),mkSide(get.items,get.bulletins));
+ return r;
+}
+// A grid of my items to tap: chosen (aria-pressed), unavailable with the reason, or badged « En vitrine ».
+function mkPicker(rows,chosen,full,onTap){
+ const g=mkEl("div","mk-pick");
+ for(const x of rows){
+  const on=chosen.includes(x.id),off=!x.ok||(!on&&full),b=mkEl("button");b.type="button";
+  b.setAttribute("aria-pressed",String(on));if(off)b.setAttribute("aria-disabled","true");
+  b.append(mkChip(x.id));
+  if(!x.ok)b.append(mkEl("span","mk-why",x.why));else if(x.why)b.append(mkEl("span","mk-badge",x.why));
+  b.addEventListener("click",()=>{if(!off)onTap(x.id);});g.append(b);
+ }
+ return g;
+}
+const mkToggle=(arr,id)=>arr.includes(id)?arr.filter(x=>x!==id):[...arr,id];
+function mkStepper(val,min,max,onSet){
+ const s=mkEl("div","mk-stepper"),v=mkEl("b","",`${val} 🗳️`);v.setAttribute("aria-live","polite");
+ const dn=smallButton("−","",()=>onSet(val-1),val<=min),up=smallButton("+","",()=>onSet(val+1),val>=max);
+ dn.setAttribute("aria-label","Un bulletin de moins");up.setAttribute("aria-label","Un bulletin de plus");
+ s.append(dn,v,up);return s;
+}
+const mkLine=(text,...kids)=>{const r=mkEl("div","mk-line");r.append(mkEl("span","fine",text),...kids);return r;};
+// « Troquer »: the pick (a rarity), the recap, what leaves the élu or closes a listing, then one tap to confirm.
+function mkTrade(body,set,f,l){
+ const v=listingView(l,S,mkBlock()),w=l.want??{};
+ set("Troquer",`Avec ${v.who}${v.campTag?` (${v.campTag})`:""}. L'échange est immédiat : l'annonce dit déjà ce qu'elle veut.`);
+ if(v.needsPick){
+  const listed=mkListed(),c=candidates(S,w);
+  body.append(fine(`L'annonce demande ${kindWord(w.slot,w.rarity)} : choisis laquelle tu donnes.`),
+   mkPicker(c.map(id=>({id,ok:true,why:listed.has(id)?"En vitrine":""})),f.pick?[f.pick]:[],false,id=>{f.pick=id;liveSheet(true);}));
+ }
+ const r=tradeRecap(l,S,f.pick,[...mkListed()]);
+ body.append(mkRecap(r.give,r.get));
+ if(r.worn.length)body.append(fine(`${r.worn.length>1?"Pièces portées":"Pièce portée"} : ${r.worn.join(", ")}. ${r.worn.length>1?"Elles quittent":"Elle quitte"} ton personnage (emplacement vide).`));
+ if(r.closes.length)body.append(Object.assign(fine(`${r.closes.join(", ")} : dans une de tes annonces, qui sera fermée.`),{className:"fine warn"}));
+ const row=mkEl("div","btn-row");
+ row.append(smallButton("Confirmer l'échange","go",()=>mkTake(l,r,v.who),!v.takeOk||!r.ready),smallButton("Annuler","",mkBack));
+ body.append(row);
+ if(!v.takeOk)body.append(Object.assign(fine(v.takeWhy),{className:"fine warn"}));
+}
+async function mkTake(l,r,who){
+ const res=await send({op:"take",id:l.id,give:r.give},"/api/market");
+ if(res?.ok&&mkOpen()){mkFlow={type:"done",who,give:r.give,get:r.get};liveSheet(true);}
+ if(mkOpen())marketLoad();
+}
+function mkDone(body,set,f,back){
+ set("Échange conclu",`${f.who} est prévenu·e : une notification et une ligne dans son journal.`);
+ const ok=mkEl("div","mk-done");ok.setAttribute("role","status");
+ ok.append(mkEl("b","","✅ C'est fait : chacun a reçu sa part."),mkRecap(f.give,f.get));
+ body.append(ok,fine("Ce que tu as reçu t'attend dans la Garde-robe."),back("Retour à la Brocante"));
+}
+// « Faire une offre »: 1 to 3 of my items, 0 to 20 bulletins with them; the author accepts or refuses.
+function mkOffer(body,set,f,l){
+ const v=listingView(l,S,mkBlock()),oc=offerCheck(l,S,mkOffers(),mkBlock()),max=Math.min(MARKET.maxBulletins,S.wardrobe.bulletins);
+ set("Faire une offre",`À ${v.who}${v.campTag?` (${v.campTag})`:""}, qui acceptera ou refusera.`);
+ f.bul=Math.max(0,Math.min(f.bul,max));
+ const pour=mkEl("div","mk-recap");pour.append(mkEl("span","block-title","Pour"),mkSide(v.gives.map(x=>x.id),v.giveBulletins),mkEl("span","fine",`Cherche : ${v.wantText}`));
+ body.append(pour,blockTitle(`Tu offres · ${f.items.length} / ${MARKET.maxItems} objets`),
+  mkPicker(pickable(S,"offer",[...mkListed()]),f.items,f.items.length>=MARKET.maxItems,id=>{f.items=mkToggle(f.items,id);liveSheet(true);}),
+  mkLine(`En plus (0 à ${MARKET.maxBulletins}, jamais seuls)`,mkStepper(f.bul,0,max,n=>{f.bul=n;liveSheet(true);})),
+  fine("Tes objets ne sont pas bloqués : ils seront revérifiés si l'offre est acceptée."));
+ const row=mkEl("div","btn-row");
+ row.append(smallButton("Envoyer l'offre","go",()=>mkSendOffer(l,f,v.who),!f.items.length||!oc.ok),smallButton("Annuler","",mkBack));
+ body.append(row);
+ if(!oc.ok)body.append(Object.assign(fine(oc.why),{className:"fine warn"}));
+ else if(!f.items.length)body.append(Object.assign(fine("Choisis au moins un objet."),{className:"fine warn"}));
+}
+async function mkSendOffer(l,f,who){
+ const r=await send({op:"offer",id:l.id,give:{items:f.items,bulletins:f.bul}},"/api/market");
+ if(r?.ok){toast(`🧺 Offre envoyée à ${who}.`,true);if(mkOpen())mkBack();}
+ if(mkOpen())marketLoad();
+}
+// « Déposer une annonce », in two steps: what I put in the window, then what I want (no text: only choices).
+const MK_MODES=[["items","Des objets précis"],["rarity","Une rareté"],["bulletins","Des bulletins"],["offer","Une offre"]];
+function mkDeposit(body,set,f){
+ const cancel=smallButton("Annuler","",mkBack);
+ if(f.step===1){
+  set("Déposer une annonce · 1/2",`Ce que tu mets en vitrine (1 à ${MARKET.maxItems}). Tu peux continuer à le porter.`);
+  const row=mkEl("div","btn-row");
+  row.append(smallButton("Suivant : ce que je cherche","go",()=>{f.step=2;liveSheet(true);},!f.items.length),cancel);
+  body.append(blockTitle(`Tu proposes · ${f.items.length} / ${MARKET.maxItems}`),
+   mkPicker(pickable(S,"list",[...mkListed()]),f.items,f.items.length>=MARKET.maxItems,id=>{f.items=mkToggle(f.items,id);liveSheet(true);}),row);
+  return;
+ }
+ set("Déposer une annonce · 2/2","Ce que tu cherches. Pas de texte : que des choix.");
+ const pro=mkEl("div","mk-recap");pro.append(mkEl("span","block-title","Tu proposes"),mkSide(f.items,0));
+ const modes=mkEl("div","mk-modes");modes.setAttribute("role","group");modes.setAttribute("aria-label","Ce que tu cherches");
+ for(const [k,t] of MK_MODES){const b=smallButton(t,"",()=>{f.mode=k;if(k==="bulletins"&&f.bul<1)f.bul=1;liveSheet(true);});b.setAttribute("aria-pressed",String(f.mode===k));modes.append(b);}
+ body.append(pro,modes);
+ const setBul=n=>{f.bul=n;liveSheet(true);};
+ if(f.mode==="items"){
+  const sel=mkEl("select");sel.setAttribute("aria-label","Ajouter un objet du catalogue");sel.disabled=f.wantItems.length>=MARKET.maxItems;
+  sel.append(Object.assign(mkEl("option","",sel.disabled?`${MARKET.maxItems} objets au plus`:"+ Ajouter un objet du catalogue…"),{value:""}));
+  for(const g of catalogue(S,[...f.items,...f.wantItems])){const og=mkEl("optgroup");og.label=g.label;og.append(...g.items.map(x=>Object.assign(mkEl("option","",x.label),{value:x.id})));sel.append(og);}
+  sel.addEventListener("change",()=>{const id=sel.value;if(id&&tradable(id)&&f.wantItems.length<MARKET.maxItems&&!f.wantItems.includes(id)){f.wantItems=[...f.wantItems,id];liveSheet(true,true);}});
+  const chosen=mkEl("div","mk-side");
+  for(const id of f.wantItems){const s=mkEl("span","mk-want-item"),x=smallButton("✕","mk-x",()=>{f.wantItems=f.wantItems.filter(i=>i!==id);liveSheet(true);});x.setAttribute("aria-label",`Enlever ${W.ITEMS[id]?.name??id}`);s.append(mkChip(id),x);chosen.append(s);}
+  body.append(sel,chosen);
+ }
+ if(f.mode==="rarity"){
+  const ks=mkEl("select"),rs=mkEl("select");ks.setAttribute("aria-label","Type");rs.setAttribute("aria-label","Rareté");
+  for(const [k,t] of [["outfit","une tenue"],["object","un objet"],["any","les deux"]])ks.append(Object.assign(mkEl("option","",t),{value:k,selected:f.slot===k}));
+  for(const r of W.RARITIES.filter(r=>!MARKET.excluded.includes(r)))rs.append(Object.assign(mkEl("option","",W.RARITY_LABEL[r]),{value:r,selected:f.rarity===r}));
+  ks.addEventListener("change",()=>{f.slot=ks.value;liveSheet(true,true);});rs.addEventListener("change",()=>{f.rarity=rs.value;liveSheet(true,true);});
+  const two=mkEl("div","mk-two");two.append(ks,rs);
+  body.append(two,fine(`Affiché : « ${kindWord(f.slot,f.rarity)} »`));
+ }
+ if(f.mode==="items"||f.mode==="rarity")body.append(mkLine(`+ bulletins (0 à ${MARKET.maxBulletins})`,mkStepper(f.bul,0,MARKET.maxBulletins,setBul)));
+ if(f.mode==="bulletins")body.append(mkLine(`Prix en bulletins (1 à ${MARKET.maxBulletins})`,mkStepper(Math.max(1,f.bul),1,MARKET.maxBulletins,setBul)));
+ if(f.mode==="offer")body.append(fine("Pas de « Troquer » sur ton annonce : les joueurs t'envoient des offres, tu acceptes ou refuses."));
+ const want=f.mode==="items"?{kind:"items",items:f.wantItems,bulletins:f.bul}:f.mode==="rarity"?{kind:"rarity",rarity:f.rarity,slot:f.slot,bulletins:f.bul}:
+  f.mode==="bulletins"?{kind:"bulletins",bulletins:Math.max(1,f.bul)}:{kind:"offer"};
+ const bad=f.mode==="items"&&!f.wantItems.length?"Choisis au moins un objet (ou passe en « Des bulletins »).":"";
+ const row=mkEl("div","btn-row");
+ row.append(smallButton("Déposer l'annonce","go",()=>mkList(f,want),!!bad),smallButton("‹ Retour","",()=>{f.step=1;liveSheet(true);}),cancel);
+ body.append(fine("Les bulletins accompagnent un objet ou en sont le prix ; jamais d'objets contre rien. Pas de durée limite."),row);
+ if(bad)body.append(Object.assign(fine(bad),{className:"fine warn"}));
+}
+async function mkList(f,want){
+ const r=await send({op:"list",give:{items:f.items,bulletins:0},want},"/api/market");
+ if(r?.ok){toast("🧺 Annonce déposée : elle est en vitrine à la Brocante.",true);if(mkOpen())mkBack();}
+ if(mkOpen())marketLoad();
+}
+// My listings (their offers: Accepter, Refuser; Retirer l'annonce) and my offers (Retirer), from the last GET.
+const MK_STATUS={accepted:"acceptée",refused:"refusée",closed:"fermée",withdrawn:"retirée"};
+function mkMineSheet(body,set,back){
+ set("Mes annonces",`${MARKET.maxListings} annonces ouvertes au plus, sans durée limite.`);
+ if(!mkData){body.append(fine(mkErr||"Chargement de la Brocante…"),back());return;}
+ const block=mkBlock(),mine=mkMine();
+ if(!mine.length)body.append(mkEl("p","mk-hint","Aucune annonce ouverte."));
+ for(const l of mine){
+  const d=mkEl("div","mk-lst"),head=mkEl("div","mk-head");
+  head.append(mkEl("span","fine",Number.isFinite(l.created)?`Déposée ${when(l.created)}`:"Annonce ouverte"),
+   armedButton("Retirer l'annonce","Confirmer le retrait","danger",()=>mkPost({op:"withdraw",id:l.id},"Annonce retirée.")));
+  d.append(head,mkRow("Propose",mkSide(mkGive(l.give).items,mkGive(l.give).bulletins)),mkRow("Cherche",mkWant(l.want)));
+  const offers=mkArr(l.offers);
+  d.append(offers.length?mkEl("span","block-title",`Offres reçues · ${offers.length}`):mkEl("span","fine","Pas encore d'offre."));
+  for(const o of offers){
+   const g=mkGive(o.give),dup=g.items.filter(id=>S.wardrobe.own.includes(id)),why=block||(dup.length?`Déjà dans ta garde-robe : ${dup.map(id=>W.ITEMS[id]?.name??id).join(", ")}`:"");
+   const who=typeof o.from?.name==="string"?o.from.name:"?",r=mkEl("div","mk-recap"),btns=mkEl("div","btn-row");
+   btns.append(why?smallButton("Accepter","go",()=>{},true):armedButton("Accepter","Confirmer l'échange","go",()=>mkAccept(o,l,who)),
+    armedButton("Refuser","Confirmer le refus","",()=>mkPost({op:"refuse",id:o.id},`Offre ${/^[aeiouyhàâéèêîôûœ]/i.test(who)?"d'":"de "}${who} refusée.`)));
+   r.append(mkWho(who,o.from?.camp,mkEl("span","fine"," propose :")),mkSide(g.items,g.bulletins),btns);
+   if(why)r.append(mkEl("span","mk-why",why));
+   d.append(r);
+  }
+  body.append(d);
+ }
+ body.append(blockTitle("Mes offres"),fine(`${MARKET.maxOffers} offres en attente au plus ; elles ne bloquent pas tes objets.`));
+ const all=mkOffers(),pend=all.filter(o=>o.status==="pending"),past=all.filter(o=>o.status!=="pending"&&MK_STATUS[o.status]).slice(0,5);
+ if(!pend.length)body.append(fine("Aucune offre en attente."));
+ for(const o of pend){
+  const d=mkEl("div","mk-lst"),head=mkEl("div","mk-head"),a=o.listing?.author,g=mkGive(o.give);
+  const to=mkEl("span","mk-who");to.append("À ",mkWho(typeof a?.name==="string"?a.name:"?",a?.camp),mkEl("span","fine"," · en attente"));
+  head.append(to,smallButton("Retirer","danger",()=>mkPost({op:"unoffer",id:o.id},"Offre retirée.")));
+  d.append(head,mkRow("J'offre",mkSide(g.items,g.bulletins)));
+  if(o.listing)d.append(mkRow("Pour",mkSide(mkGive(o.listing.give).items,mkGive(o.listing.give).bulletins)));
+  body.append(d);
+ }
+ if(past.length){
+  const ul=mkEl("ul","journal duel-log");
+  for(const o of past){const a=o.listing?.author?.name,li=mkEl("li",o.status==="accepted"?"win":o.status==="refused"?"loss":"",`Offre ${MK_STATUS[o.status]}${typeof a==="string"?` · annonce de ${a}`:""}`);ul.append(li);}
+  body.append(blockTitle("Dernières offres"),ul);
+ }
+ body.append(back());
+}
+async function mkPost(body,said){
+ const r=await send(body,"/api/market");
+ if(r?.ok)toast(`🧺 ${said}`,true);
+ if(mkOpen())marketLoad();
+}
+async function mkAccept(o,l,who){
+ const r=await send({op:"accept",id:o.id},"/api/market");
+ if(r?.ok&&mkOpen()){mkFlow={type:"done",who,give:mkGive(l.give),get:mkGive(o.give)};liveSheet(true);}
+ if(mkOpen())marketLoad();
+}
 // Live duel events. A result's journal entry (scores, XP) says more than the short notice: it is not overwritten.
 function duelEvent(v){
  const vs=typeof v.vs==="string"?v.vs:"Un rival",m=R.DUEL.chicken.moral;
@@ -2312,6 +2675,210 @@ function duelEvent(v){
  if(text&&(v.kind==="challenged"||Date.now()-duelJournalT>5000))toast(text);
  if(v.kind==="challenged"){notifyHidden(text,v.id);pushAsk();}
  duelsLoad();
+}
+
+// ---------- Collage / La Nuit du collage (wall.mjs: the rules, wallui.mjs: the drawing, the words, the state) ----------
+// One sheet, "wall", built once when it opens and then updated in place (never redrawn under the finger: a live
+// update or a reload keeps the wall on view, the chosen cell, the focus and a brush under way). GET /api/wall only while
+// it is open; closed, the live "wall" notice only keeps the counts for the Jeux tile. Names go in through textContent.
+const WALL_LEVEL=3;                                  // the server's default level: its own 422 says so when a test lowers it
+const wlOpen=()=>sheetKind==="wall"&&!$("#sheet").hidden;
+const wlHour=()=>hodOf(Math.floor(serverNow()/R.H));   // the Paris hour: « Collage » by day, « La Nuit du collage » 20 h – 8 h
+function wallLoad(){clearTimeout(wlLoadT);wlLoadT=setTimeout(()=>{wlLoadT=0;if(wlOpen())wallFetch();},250);}   // never once the sheet is closed
+async function wallFetch(){
+ if(!S)return;
+ const seq=++wlSeq,who=me,r=await api("GET","/api/wall");
+ if(seq!==wlSeq||!S||me!==who)return;
+ if(r.ok&&Array.isArray(r.cells)){wl=WU.wallState(wl,{type:"load",data:r,now:serverNow()});wlCounts=wl.counts;wlLeft=wl.left;wlErr="";}else wlErr=r.error||"Erreur du serveur.";
+ if(wlOpen())wallPaint();
+}
+function openWall(){wl=null;wlErr="";wlAnim=wlFlash=null;openSheet("wall");clearTimeout(wlLoadT);wlLoadT=0;wallFetch();}
+function wallTile(){
+ const t=WU.tile({counts:wlCounts,left:wlLeft??WL.DAILY_QUOTA,hour:wlHour(),lvl:S.lvl,minLevel:WALL_LEVEL});
+ return boosted(itemButton(t.title,t.sub,t.side,false,openWall),t.night||fx().xp.wall>1);   // the night bonus, a Double XP event
+}
+function wallEvent(v){
+ if(v.counts&&typeof v.counts==="object")wlCounts={left:v.counts.left|0,right:v.counts.right|0};
+ if(!wl||!wlOpen()||!Array.isArray(v.cells))return;
+ const ch=WU.changedCells(wl.cells,v.cells);
+ wl=WU.wallState(wl,{type:"live",cells:v.cells,counts:wlCounts,walls:v.walls});
+ if(ch.length){wlFlash={idxs:new Set(ch),until:performance.now()+2500};wallKick();}
+ wallPaint();
+}
+const wlSay=t=>{const a=wlUi?.say;if(!a)return;a.textContent="";setTimeout(()=>{a.textContent=t;},30);};
+function renderWall(body,set){
+ set(`🖌️ ${WL.wallName(wlHour())}`,"");
+ wlUi?.ro?.disconnect();wlUi=null;body.append(mkEl("div","wl"));wallPaint();
+}
+// The skeleton, once per opening: the score, the wall and its arrows, the legend, the cell's card, « Coller », the brush.
+function wallBuild(box){
+ const u={box},btn=(t,cls,fn,label)=>{const b=mkEl("button",`btn ${cls}`,t);b.type="button";if(label)b.setAttribute("aria-label",label);b.addEventListener("click",fn);return b;};
+ u.count=mkEl("b","wl-count");u.pills=mkEl("div","wl-pills");
+ u.cv=mkEl("canvas","wl-cv");u.cv.width=WU.CW;u.cv.height=WU.CH;u.cv.tabIndex=0;u.cv.setAttribute("role","img");u.cv.setAttribute("aria-describedby","wl-help");
+ u.ctx=u.cv.getContext("2d");u.wrap=mkEl("div","wl-wrap");u.wrap.append(u.cv);
+ u.prev=btn("◀","wl-navb",()=>wallGo(-1),"Mur précédent");u.next=btn("▶","wl-navb",()=>wallGo(1),"Mur suivant");u.nav=mkEl("span");
+ const nav=mkEl("div","wl-nav");nav.append(u.prev,u.nav,u.next);
+ const help=mkEl("p","sr","Un mur de 8 colonnes (A à H) sur 6 lignes. Flèches pour choisir une case, Page précédente et Page suivante pour changer de mur, Entrée pour coller, Espace pour arrêter le pinceau.");help.id="wl-help";
+ const leg=mkEl("div","wl-legend"),t0=serverNow();
+ for(const [cell,label] of WU.legendCells(S.camp,t0)){const k=mkEl("canvas");k.width=k.height=WU.ART;k.setAttribute("aria-hidden","true");WU.drawPoster(k.getContext("2d"),0,0,cell,t0);const sp=mkEl("span");sp.append(k,label);leg.append(sp);}
+ const pips=mkEl("span");pips.append(mkEl("b","wl-pips","▮▮▯"),"en bas : solidité (1 à 3)");leg.append(pips);
+ u.info=mkEl("div","wl-info");u.quota=mkEl("span","wl-quota");u.paste=btn("Coller","go",wallPaste);
+ u.action=mkEl("div","wl-action");u.action.append(u.quota,u.paste);u.why=mkEl("p","fine wl-why");
+ u.brush=mkEl("div","wl-brush");u.brush.hidden=true;
+ const bh=mkEl("div","wl-bhead");bh.append(mkEl("b","","Coup de pinceau"),mkEl("span","fine","Arrête le pinceau dans la zone dorée (Espace)."));
+ u.cursor=mkEl("span","wl-cursor");
+ const timer=mkEl("div","wl-timer");timer.setAttribute("aria-hidden","true");u.timer=mkEl("i");timer.append(u.timer);
+ u.stop=btn("Arrêter le pinceau","go",()=>wallStop());
+ u.stop.addEventListener("keydown",e=>{if(WU.brushKey(e)==="block")e.preventDefault();});   // a held Enter (the one that pasted) never stops it
+ u.brush.append(bh,wallGauge(u.cursor,true),timer,u.stop);
+ u.result=mkEl("div","wl-result");u.result.hidden=true;
+ u.say=mkEl("div","sr");u.say.setAttribute("aria-live","polite");
+ u.status=mkEl("p","fine");u.main=mkEl("div","wl-main");
+ u.main.append(u.count,u.pills,u.wrap,nav,help,leg,u.info,u.action,u.why,u.brush,u.result);
+ box.append(u.status,u.main,u.say);
+ u.cv.addEventListener("keydown",e=>{
+  if(!wl||wl.brush)return;
+  if(e.repeat&&(e.key==="Enter"||e.key==="PageUp"||e.key==="PageDown")){e.preventDefault();return;}   // a held key pastes or turns once
+  if(e.key==="PageUp"||e.key==="PageDown"){e.preventDefault();wallGo(e.key==="PageUp"?-1:1);}
+  else if(e.key==="Enter"){e.preventDefault();wallPaste();}
+  else{const n=WU.wallState(wl,{type:"key",key:e.key});if(n!==wl){e.preventDefault();wl=n;wallPaint();wlSay(WU.cellSummary(wl.cells,wl.sel,serverNow()));}}
+ });
+ u.cv.addEventListener("pointerdown",e=>{
+  if(!wl||wl.brush)return;
+  const r=u.cv.getBoundingClientRect(),i=WU.cellAt((e.clientX-r.left)/r.width,(e.clientY-r.top)/r.height);if(i<0)return;
+  wl=WU.wallState(wl,{type:"select",g:wl.view*WL.WALL_CELLS+i});wallPaint();wlSay(WU.cellSummary(wl.cells,wl.sel,serverNow()));
+ });
+ // Crisp pixels: a whole scale when the room allows it, else the full width (width:100% and a max-width: never wider).
+ u.ro=new ResizeObserver(()=>{
+  const st=getComputedStyle(u.wrap),avail=u.wrap.clientWidth-parseFloat(st.paddingLeft)-parseFloat(st.paddingRight),dpr=devicePixelRatio||1,k=avail*dpr/WU.CW;
+  u.cv.style.maxWidth=k>=3&&Math.floor(k)/k>=0.9?`${Math.floor(k)*WU.CW/dpr}px`:"none";
+ });
+ u.ro.observe(u.wrap);
+ return u;
+}
+// The gauge: bâclé, bon, parfait in the middle, bon, bâclé; the big one has its labels.
+function wallGauge(cursor,labels){
+ const g=mkEl("div",`wl-gauge${labels?"":" mini"}`);g.setAttribute("aria-hidden","true");
+ if(labels)for(const [x,t,dim] of [[15,"bâclé",1],[37,"bon"],[50,"parfait"],[63,"bon"],[85,"bâclé",1]]){const l=mkEl("span",`lab${dim?" dim":""}`,t);l.style.left=`${x}%`;g.append(l);}
+ if(cursor)g.append(cursor);return g;
+}
+function wallDraw(t=performance.now()){
+ if(!wlUi||!wl)return;
+ if(!wlBg){wlBg=document.createElement("canvas");wlBg.width=WU.CW;wlBg.height=WU.CH;WU.drawBricks(wlBg.getContext("2d"));}
+ const a=wlAnim,unroll=a&&a.kind!=="abimee"?{g:a.g,prev:a.prev,p:(t-a.t0)/450}:null,hit=a&&a.kind==="abimee"&&Math.floor((t-a.t0)/700*6)%2===0?a.g:null;
+ WU.drawWall(wlUi.ctx,wl.cells,wl.view,serverNow(),{bg:wlBg,sel:wl.sel,unroll,hit,flash:wlFlash?.idxs,flashOn:!!wlFlash&&(reduced||Math.floor(t/300)%2===0)});
+}
+// The brush's cursor and the animations, one frame at a time while something moves (reduced motion: the brush only).
+let wlStopping=false,wlStopT=0;
+function wallKick(){if(!wlLoop){wlLoop=true;requestAnimationFrame(wallTick);}}
+function wallTick(t){
+ if(wl?.brush&&!wlStopping){
+  const el=performance.now()-wl.brush.t0;
+  if(!wlOpen()||el>=WL.BRUSH_MS)wallStop();   // closing the sheet stops it where it is: the poster is spent anyway
+  else if(wlUi){wlUi.cursor.style.left=`${WU.gaugeX(wl.brush.seed,el)}%`;wlUi.timer.style.width=`${100-el/WL.BRUSH_MS*100}%`;}
+ }
+ if(wlAnim&&t-wlAnim.t0>(wlAnim.kind==="abimee"?700:450))wlAnim=null;
+ if(wlFlash&&t>wlFlash.until)wlFlash=null;
+ if(wlOpen())wallDraw(t);
+ if(wl?.brush&&!wlStopping||wlAnim||wlFlash)requestAnimationFrame(wallTick);else wlLoop=false;
+}
+function wallGo(d){
+ if(!wl)return;const n=WU.wallState(wl,{type:"view",d});if(n===wl)return;
+ wl=n;wallPaint();wlSay(`${WU.navLabel(wl.cells,wl.view,serverNow())}.`);
+}
+async function wallPost(body){
+ const who=me,r=await api("POST","/api/wall",body);
+ if(!S||me!==who)return null;
+ if(r.me)applyMe(r.me);
+ return r;
+}
+async function wallPaste(){
+ if(!wl||wl.brush||wl.sel==null||wlBusy||(wlLeft??1)<=0)return;
+ const g=wl.sel;wlBusy=true;if(wlOpen())wallPaint();let r;
+ try{r=await wallPost({op:"start",g});}finally{wlBusy=false;}
+ if(!r||!wl){if(wlOpen())wallPaint();return;}
+ if(!r.ok){toast(r.error,true);wlSay(r.error);wallLoad();if(wlOpen())wallPaint();return;}   // the server's own words (level, quota, one at a time)
+ const brush={id:r.id,seed:r.seed,g,t0:performance.now()};wl=WU.wallState(wl,{type:"start",brush});wlStopping=false;
+ // rAF sleeps in a hidden tab or on a locked phone: the 3 s stop is sent all the same (bâclé), not left to expire.
+ clearTimeout(wlStopT);wlStopT=setTimeout(()=>{if(wl?.brush===brush)wallStop();},WL.BRUSH_MS+50);
+ if(!wlOpen()){wallStop();return;}
+ wallPaint();wlUi?.stop.focus();wlSay("Le pinceau part. Arrête-le dans la zone dorée, avec Espace ou le bouton.");wallKick();
+}
+async function wallStop(){
+ const b=wl?.brush;if(!b||wlStopping)return;wlStopping=true;clearTimeout(wlStopT);wlStopT=0;
+ const ms=Math.round(Math.min(Math.max(performance.now()-b.t0,0),WL.BRUSH_MS));
+ let r;try{r=await wallPost({op:"stop",id:b.id,ms});}finally{wlStopping=false;}
+ if(!wl||wl.brush!==b)return;
+ if(!r?.ok){wl=WU.wallState(wl,{type:"fail"});if(r?.error){toast(r.error,true);wlSay(r.error);}wallLoad();if(wlOpen()){wallPaint();wlUi?.cv.focus();}return;}
+ wl=WU.wallState(wl,{type:"stop",res:{...r,ms,seed:b.seed},now:serverNow()});wlLeft=wl.left;wlCounts=wl.counts;
+ if(!reduced)wlAnim={g:r.g,prev:wl.result.prev,kind:r.outcome,t0:performance.now()};
+ wallLoad();
+ if(!wlOpen())return;
+ wallPaint();wallKick();wlSay(WU.resultLines(wl.result.res,wl.result.prev).join(" "));wlUi?.cv.focus();
+}
+// Everything that changes, in place: the buttons are never replaced, so the focus stays where it is.
+function wallPaint(){
+ if(sheetKind!=="wall")return;                       // also while openSheet is still showing it
+ const box=$("#sheet-body .wl");if(!box)return;
+ if(!wlUi||wlUi.box!==box){wlUi?.ro?.disconnect();wlUi=wallBuild(box);}
+ const u=wlUi,t=serverNow(),hour=wlHour(),title=`🖌️ ${WL.wallName(hour)}`;
+ if($("#sheet-title").textContent!==title)$("#sheet-title").textContent=title;
+ u.main.hidden=!wl;u.status.hidden=!!wl;
+ if(!wl){
+  u.status.textContent=wlErr||"Chargement du mur…";
+  if(wlErr&&!u.retry){u.retry=mkEl("div","btn-row");u.retry.append(smallButton("Réessayer","",()=>{wlErr="";u.retry.remove();u.retry=null;wallPaint();wallLoad();}));u.status.after(u.retry);}
+  return;
+ }
+ if(u.retry){u.retry.remove();u.retry=null;}
+ const sub=wl.closesAt?WU.countdown(wl.closesAt-t):"";
+ if($("#sheet-sub").textContent!==sub)$("#sheet-sub").textContent=sub;
+ if(wl.closesAt&&t>=wl.closesAt){wl={...wl,closesAt:null};wallLoad();}   // midnight: a new day, a new quota
+ u.count.textContent=`Gauche ${wl.counts.left|0} · Droite ${wl.counts.right|0}`;
+ const vol=wl.volunteers||{},vc=vol.left>0?"left":vol.right>0?"right":null,pk=[hour,vc,vol[vc],wl.title?.name].join("|");
+ if(u.pk!==pk){
+  u.pk=pk;
+  u.pills.replaceChildren(pill(WU.nightHint(hour),WL.isWallNight(hour)?"good":""),
+   ...(vc?[pill(`Renforts : ${plural(vol[vc],"bénévole")} pour ${WL.CAMP_NAME[vc]}`)]:[]),
+   ...(wl.title?.name?[pill(`🖌️ Colleur de la semaine : ${wl.title.name}`,"new")]:[]));
+ }
+ const busyB=!!wl.brush;
+ u.nav.textContent=WU.navLabel(wl.cells,wl.view,t);u.prev.disabled=busyB||wl.view<=0;u.next.disabled=busyB||wl.view>=wl.walls-1;
+ u.cv.setAttribute("aria-label",WU.wallAria(wl.cells,wl.view,t,wl.sel));
+ // The chosen cell's card: rebuilt only when what it says changes.
+ const cell=wl.sel!=null?wl.cells[wl.sel]??null:null,ik=`${wl.sel}|${JSON.stringify(cell)}|${Math.floor(t/60e3)}|${S.camp}`;
+ if(u.ik!==ik){
+  u.ik=ik;
+  if(wl.sel==null)u.info.replaceChildren(mkEl("span","fine","Touche une case du mur pour voir qui l'a collée."));
+  else{
+   const L=WU.cellInfo(cell,t,{name:me,camp:S.camp}),live=WL.liveCell(cell,t),head=mkEl("div","head"),h=mkEl("span");
+   h.append(mkEl("b","",L[0]));if(live)h.append(" ",mkCamp(live.camp));
+   head.append(h,mkEl("span","coord",`Mur ${WL.wallOf(wl.sel)+1} · ${WL.cellName(wl.sel)}`));
+   const rows=L.slice(1).map((x,i,a)=>mkEl("span",i===a.length-1?"fine":"",x));
+   if(live){const p=mkEl("span","wl-pips","●".repeat(live.sol)+"○".repeat(3-live.sol)+" ");p.setAttribute("aria-hidden","true");rows[1].prepend(p);}
+   u.info.replaceChildren(head,...rows);
+  }
+ }
+ const left=wl.left;
+ u.quota.textContent=WU.quotaText(left);
+ u.paste.disabled=busyB||wlBusy||left<=0||wl.sel==null;
+ u.why.textContent=left<=0?"":wl.sel==null?"Choisis d'abord une case sur le mur.":`Coller sur ${WL.cellLabel(wl.sel)} (Entrée sur le mur). Chaque essai compte, quel que soit le résultat.`;
+ u.action.hidden=u.why.hidden=busyB;u.brush.hidden=!busyB;
+ if(!busyB){u.cursor.style.left="";u.timer.style.width="100%";}
+ else if(!u.cursor.style.left)u.cursor.style.left=`${WU.gaugeX(wl.brush.seed,0)}%`;
+ // The result card: the quality, where the brush stopped, what happened, the XP, a new wall.
+ const R0=wl.result;
+ if(u.rs!==R0){
+  u.rs=R0;u.result.hidden=!R0;
+  if(R0){
+   const [head,what,xp,...walls]=WU.resultLines(R0.res,R0.prev),top=mkEl("div","wl-rhead");
+   top.append(mkEl("b",`q ${R0.res.quality}`,head),pill(xp,"new"));
+   let mini=null;
+   if(R0.res.ms<WL.BRUSH_MS){const c=mkEl("span","wl-cursor");c.style.left=`${WU.gaugeX(R0.res.seed,R0.res.ms)}%`;mini=wallGauge(c,false);}
+   u.result.replaceChildren(top,...(mini?[mini]:[]),mkEl("span","",what),...walls.map(x=>pill(x,"new")),
+    mkEl("span","fine",`Qualité ${WL.QUALITY_LABEL[R0.res.quality]} → solidité ${WL.SOLIDITY[R0.res.quality]}.`));
+  }
+ }
+ wallDraw();
 }
 
 // ---------- duel notifications (Web Push) ----------
@@ -2469,7 +3036,7 @@ const authErr=$("#auth-error"),authErrHome=authErr.parentNode,authErrNext=authEr
 const homeAuthErr=()=>{authErrHome.insertBefore(authErr,authErrNext);for(const i of authEl.querySelectorAll("input[aria-invalid]"))i.removeAttribute("aria-invalid");};
 let regCamp="left";
 function showAuth(message=""){
- closeSheet();chat.reset();chatFlags(null);es?.close();es=null;S=null;anim=pong=mini=scene=null;newsPending=false;toastQ.length=0;announceQ.length=0;$("#announce").hidden=true;$("#push-ask").hidden=true;pushAskWanted=pushAsked=false;duelData=null;duelErr="";duelSeq++;pushOn=null;pushSynced=false;setNet(true);$("#tips").hidden=true;urnLast=null;wardSwap=false;urnHint=false;batonV=null;bd.close();
+ closeSheet();wl=null;wlLeft=wlCounts=null;chat.reset();chatFlags(null);es?.close();es=null;S=null;anim=pong=mini=scene=null;newsPending=false;toastQ.length=0;announceQ.length=0;$("#announce").hidden=true;$("#push-ask").hidden=true;pushAskWanted=pushAsked=false;duelData=null;duelErr="";duelSeq++;pushOn=null;pushSynced=false;setNet(true);$("#tips").hidden=true;urnLast=null;wardSwap=false;urnHint=false;batonV=null;bd.close();
  authEl.hidden=false;setBackgroundInert(true);
  newYear=null;newYearBannerOn=false;nyClosed=false;nyReplayEnd=0;nyView={scene:null,banner:false};nyBanner.hidden=true;nyClose.hidden=true;nySay.textContent="";   // nothing of the midnight toast outlives the session
  homeAuthErr();$("#auth-error").textContent=message;regQuizShow(false);$("#camp-note").textContent="";document.body.dataset.camp=regCamp;

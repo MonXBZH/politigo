@@ -232,3 +232,137 @@ Objets personnels : Chat de compagnie miniature · Drapeau de meeting
 | Dossier des assistants européens | « Mes assistants travaillaient. Pour le parti. Donc pour l'Europe, non ? » | Affaire des assistants parlementaires européens du FN : condamnée en première instance en mars 2025 pour détournement de fonds publics, inéligibilité avec exécution provisoire ; appel. |
 | Exécution provisoire | « Inéligible ? Parfait, je deviens éleveuse de chats à plein temps. » | Son élevage de chats, longtemps mis en avant, et l'inéligibilité prononcée en 2025. |
 
+## Garde-robe : pièces qui évoquent des faits publics
+
+Les tenues et objets des raretés commune à légendaire (les plus rares se découvrent en jeu). Chaque description est une caricature : elle évoque un fait public connu, sans citation ni photo.
+
+| Pièce | Camp | Rareté | Fait public évoqué |
+|---|---|---|---|
+| Le Front populaire, 1936 | Gauche | Épique | Casquette gavroche, chemise ouverte, bretelles, valise des premiers congés payés. |
+| L'intellectuel rive gauche | Gauche | Épique | Col roulé noir, veste en velours côtelé, écharpe longue, pipe éteinte. |
+| Chasuble syndicale | Gauche | Rare | Gilet rouge couvert d'autocollants, sifflet autour du cou. |
+| Casquette de cheminot vintage | Gauche | Rare | Casquette et vareuse bleu nuit à boutons dorés. |
+| Cycliste urbain | Gauche | Rare | Casque, gilet réfléchissant, sacoches. |
+| Bleu de travail | Gauche | Commun | Combinaison bleue, manches retroussées. |
+| Bob de la Fête de l'Huma | Gauche | Commun | Bob rouge, tee-shirt de concert. |
+| Marinière made in France | Gauche | Commun | Le clin d'œil à la marinière de 2012. |
+| K-way vert | Gauche | Commun | Capuche relevée, prêt pour la marche climat. |
+| Le Communard, 1871 | Gauche | Légendaire | Képi de fédéré, vareuse de la Garde nationale, ceinture rouge : soixante-douze jours de Commune, et Le Temps des cerises pour la suite. |
+| Mai 68 | Gauche | Épique | Béret, parka, écharpe rouge et affiche de l'Atelier populaire : la plage est sous les pavés, paraît-il. |
+| Le Sans-culotte, 1793 | Gauche | Épique | Bonnet phrygien, carmagnole, pantalon rayé : pas de culotte, c'était tout le programme. |
+| Zadiste de Notre-Dame-des-Landes | Gauche | Rare | Ciré, bonnet, bottes de pluie : l'aéroport a été abandonné en 2018, pas les bottes. |
+| Hussard noir de la République | Gauche | Rare | Redingote noire, lavallière et ardoise : l'instituteur de l'école laïque, vu par Péguy. |
+| Blouse blanche en grève | Gauche | Rare | Blouse d'hôpital, « en grève » au marqueur, et le service assuré quand même. |
+| Tee-shirt du Che | Gauche | Commun | La photo de Korda, 1960, vendue par millions : le capitalisme a bien travaillé. |
+| Pull du Larzac | Gauche | Commun | Laine du causse, gilet de berger : dix ans de lutte, de 1971 à 1981, contre l'extension du camp. |
+| Salopette d'AMAP | Gauche | Commun | Salopette, chemise à carreaux, et le poireau du mardi dans la poche. |
+| Écharpe et tote bag | Gauche | Commun | Écharpe en lin, sac de librairie indépendante, et un essai de 400 pages à finir. |
+| Le Général, 1958 | Droite | Épique | Képi à deux étoiles, uniforme kaki, gants : un clin d'œil à la Ve République. |
+| Vénerie | Droite | Épique | Redingote rouge de chasse à courre, bombe noire, trompe de chasse. |
+| Costume trois pièces | Droite | Rare | Gris anthracite, pochette, montre à gousset. |
+| Golfeur | Droite | Rare | Gilet à losanges, casquette plate, gant blanc. |
+| Panama de la Côte d'Azur | Droite | Rare | Panama, costume de lin blanc, lunettes de soleil. |
+| Pull sur les épaules | Droite | Commun | Polo, pull noué sur les épaules, chino. |
+| Doudoune sans manches | Droite | Commun | La version « start-up nation », chemise bleu ciel. |
+| Veste de chasse | Droite | Commun | Veste huilée, col en velours. |
+| Blazer de club nautique | Droite | Commun | Boutons dorés, écusson. |
+| L'Empereur, 1804 | Droite | Légendaire | Bicorne en bataille, redingote grise, main dans le gilet : le soleil d'Austerlitz se lève et les abeilles d'or volent autour de lui. |
+| L'Incroyable, 1795 | Droite | Épique | Cravate jusqu'au menton, habit à grands revers, canne noueuse : sous le Directoire, on bannit même le R de Révolution. |
+| L'Immortel | Droite | Épique | L'habit vert est noir, brodé de feuilles d'olivier depuis 1801. Bicorne, épée, et immortel jusqu'à nouvel ordre. |
+| Trader de la Défense | Droite | Rare | Chemise à rayures, bretelles rouges, deux téléphones : un pour acheter, un pour rassurer. |
+| Agriculteur en colère | Droite | Rare | Cotte verte, casquette de coopérative, et une botte de paille devant la préfecture. |
+| Casoar de Saint-Cyr | Droite | Rare | Shako, gants blancs, plumet rouge et blanc depuis 1855 : surtout ne pas dire plumet, on dit casoar. |
+| Pantalon rouge | Droite | Commun | Chino rouge, chemise claire, mocassins à glands : sans chaussettes, de Neuilly à l'île de Ré. |
+| Loden du dimanche | Droite | Commun | Le manteau vert des grandes occasions, sorti pour la messe de 11 h. |
+| Serre-tête de Versailles | Droite | Commun | Serre-tête en velours, col Claudine, petit pull marine : rendez-vous sur le parvis. |
+| Combi de Courchevel | Droite | Commun | Combinaison fluo de 1985, masque sur les yeux, forfait à l'élastique : la droite décomplexée, en altitude. |
+| Gilet jaune 2018 · Macron démission ! | Les deux | Rare | Le gilet fluo des ronds-points de 2018, « Macron démission ! » écrit au marqueur dans le dos. |
+| Mégaphone | Les deux | Commun | Pour couvrir la voix de l'adversaire, et parfois la sienne. |
+| Cocarde | Les deux | Commun | Bleu, blanc, rouge : tout le monde la revendique. |
+| Baguette | Les deux | Commun | Tradition, bien cuite, patrimoine immatériel de l'Unesco depuis 2022. |
+| Parapluie | Les deux | Commun | Contre la pluie, les œufs et les questions de journalistes. |
+| Bulletin de vote géant | Les deux | Commun | Il ne rentre dans aucune urne, c'est tout l'intérêt. |
+| Micro de plateau télé | Les deux | Rare | Un micro-cravate et dix secondes pour placer la petite phrase. |
+| Perche à selfie | Les deux | Rare | Le bain de foule, vu d'en haut et en story. |
+| Sondage en chute | Les deux | Rare | Une courbe qui ne demande qu'à remonter. Un jour. |
+| Urne transparente | Les deux | Épique | Obligatoire depuis 1988 : on voit tout, même le vide. |
+| Méga saucisse en mousse | Les deux | Épique | Le trophée des fêtes de parti, de l'Huma au barbecue de rentrée. |
+| Clé de l'Élysée | Les deux | Légendaire | Elle ouvre le 55, rue du Faubourg-Saint-Honoré. En théorie. |
+| Écharpe présidentielle | Les deux | Légendaire | Plutôt l'écharpe tricolore des élus, version grand soir. |
+| Merguez de manif | Gauche | Commun | Grillée sur le parcours, entre République et Nation. |
+| Brassard syndical | Gauche | Commun | Service d'ordre du cortège, ne pas déranger. |
+| Tract froissé | Gauche | Commun | Distribué à 7 h devant l'usine, relu à 7 h 01. |
+| Fumigène rouge | Gauche | Rare | Pour la photo de une, de préférence à contre-jour. |
+| Banderole « Retraite à 60 ans » | Gauche | Rare | Ressortie à chaque réforme depuis 1982. |
+| Vélo cargo miniature | Gauche | Rare | Trois enfants, un chien et le programme du parti. |
+| Le Capital en poche | Gauche | Épique | Livre I, cornée à la page de la plus-value. |
+| La grosse saucisse de Fabien Roussel | Gauche | Épique | Un clin d'œil à la parodie musicale façon Linkin Park : la saucisse brandie comme un micro. |
+| Drapeau soviétique | Gauche | Épique | Faucille, marteau et nostalgie d'un pays qui n'existe plus depuis 1991. |
+| Marteau doré | Gauche | Légendaire | Celui de la faucille, plaqué or : la contradiction est assumée. |
+| La carte du parti d'en face | Gauche | Légendaire | Une carte d'adhérent de l'autre camp, glissée dans la poche. Pour voir. |
+| La rose du Panthéon | Gauche | Légendaire | 21 mai 1981 : une rose à la main dans la crypte, et la gauche à l'Élysée pour la première fois sous la Ve. |
+| Le Petit Livre rouge | Gauche | Épique | La lecture obligée des maoïstes de 1968, depuis rangée à côté des regrets. |
+| Le procès-verbal de Reims | Gauche | Épique | Novembre 2008 : 42 voix d'écart au premier compte, 102 au dernier, et un parti entier pour commenter. |
+| Thermos de piquet de grève | Gauche | Rare | Café brûlant, 5 h du matin, devant le dépôt. |
+| Caisse de grève | Gauche | Rare | Une boîte de conserve fendue, qui tient parfois plus longtemps que le gouvernement. |
+| Badge « Touche pas à mon pote » | Gauche | Rare | La petite main jaune de 1985, sur tous les blousons des lycées. |
+| Sifflet de manif | Gauche | Commun | Deux notes, trois heures de cortège, plus de voix le lendemain. |
+| Pancarte en carton | Gauche | Commun | Un carton de pizza, un feutre, et un jeu de mots qui a coûté deux heures de réunion. |
+| Gourde en inox | Gauche | Commun | Réutilisable, cabossée, couverte d'autocollants, et jamais lavée. |
+| Cahier de doléances | Gauche | Commun | Écrit en 1789, rouvert en 2019 : on note, on archive, on verra. |
+| Croissant au beurre | Droite | Commun | Pur beurre, de l'artisan du coin, jamais industriel. |
+| Mallette | Droite | Commun | Elle contient des dossiers. Que des dossiers. |
+| Code civil | Droite | Commun | 1804, le best-seller de Napoléon. |
+| Pain au chocolat | Droite | Rare | Surtout pas une chocolatine. |
+| Club de golf | Droite | Rare | Un fer 7 pour les rendez-vous d'affaires. |
+| Calculatrice « dette publique » | Droite | Rare | Elle affiche 3 000 milliards et refuse d'aller plus loin. |
+| Kärcher miniature | Droite | Épique | Le nettoyeur haute pression de 2005, en format de poche. |
+| Drapeau tricolore XXL | Droite | Épique | Pour le meeting, le 14 Juillet et le match de rugby. |
+| Sceptre de la Ve République | Droite | Légendaire | Un pouvoir fort, un sceptre lourd, une Constitution de 1958. |
+| La carte du parti d'en face | Droite | Légendaire | Une carte d'adhérent de l'autre camp, glissée dans la poche. Pour voir. |
+| La croix de Lorraine | Droite | Légendaire | Choisie en juillet 1940 pour la France libre, ici en or : le gaullisme a fait du chemin. |
+| Micro de la BBC, 1940 | Droite | Épique | 18 juin : peu de Français l'ont entendu ce soir-là, beaucoup s'en sont souvenus ensuite. |
+| La montre des 50 ans | Droite | Épique | « Si à 50 ans on n'a pas de Rolex… » : février 2009, et la phrase colle encore au poignet. |
+| Menu du Fouquet's | Droite | Rare | Le soir du 6 mai 2007, la carte a fait plus parler que le discours. |
+| Housse de costume | Droite | Rare | 13 000 euros de costumes offerts, révélés en 2017, rendus depuis : il reste la housse. |
+| Cigare du banquet | Droite | Rare | Allumé au dessert, éteint au deuxième tour. |
+| Chevalière | Droite | Commun | Au petit doigt, gravée d'armoiries que personne n'a vérifiées. |
+| Le journal plié | Droite | Commun | Sous le bras, ouvert aux pages saumon, celles de la Bourse. |
+| Coupe de champagne | Droite | Commun | Tiède et sans bulles à la troisième estimation de 20 h. |
+| Clé de la résidence secondaire | Droite | Commun | À La Baule ou à l'île de Ré, on ne sait plus laquelle. |
+| L'Hologramme, 2017 | Gauche | Légendaire | Une silhouette bleue qui grésille, en meeting à Lyon et à Aubervilliers en même temps. L'année suivante : « La République, c'est moi ! » |
+| La Gauche caviar | Gauche | Épique | Smoking, toque en fourrure, cuillère en nacre : le programme social se discute entre la poire et le fromage. |
+| Le Frondeur, 2014 | Gauche | Rare | Costume du PS, et une motion de censure dans la poche intérieure, jamais déposée. |
+| Sans cravate, 2017 | Gauche | Rare | Chemise ouverte et maillot de foot dans l'hémicycle : la cravate a été la première victime de la législature. |
+| L'AG étudiante | Gauche | Commun | Keffieh, sweat de la fac, et la motion n° 47 sur l'ordre du jour de la motion n° 46. |
+| Le Bobo du canal Saint-Martin | Gauche | Commun | Moustache, fixie, IPA artisanale : on vote à gauche, on paie 2 000 € de loyer. |
+| Le Maire de Levallois | Droite | Légendaire | Costume croisé, lunettes fumées, un moulin normand derrière lui, et toujours un mot aimable pour les juges. |
+| Le Trocadéro, 2017 | Droite | Épique | Imper trempé, parapluie retourné : rien ne l'empêchera d'être candidat. La pluie, si. |
+| Le Chouan, 1793 | Droite | Épique | Sacré-Cœur brodé, chapeau rond, fourche : la Vendée n'a jamais vraiment signé. |
+| Le Footing présidentiel | Droite | Rare | Tee-shirt NYPD, short, Ray-Ban, et quatre caméras qui courent devant. |
+| La Manif pour tous | Droite | Rare | Sweat rose et bleu, drapeau avec un papa et une maman : la loi est passée en 2013, le sweat est resté. |
+| L'Énarque | Droite | Commun | Costume bleu, bac+5, réponse à tout : l'ENA a fermé en 2022, l'énarque est toujours là. |
+| « En même temps » | Les deux | Épique | Un costume coupé en deux, moitié loden, moitié bleu de travail : il se voit de chaque camp, c'est tout le principe. |
+| Le Marcheur | Les deux | Rare | Baskets blanches, chemise ouverte, badge « Disruptons la République ». |
+| Le compte en Suisse | Gauche | Légendaire | Un ministre du Budget chargé de la fraude fiscale, avec un compte à Genève. « Je n'ai pas, je n'ai jamais eu. » Jérôme Cahuzac, décembre 2012, devant l'Assemblée. |
+| La phobie administrative | Gauche | Légendaire | Septembre 2014 : Thomas Thévenoud quitte le gouvernement au bout de 9 jours, des impôts impayés derrière lui et un diagnostic inédit. Une pile de courriers du fisc, jamais ouverts. |
+| Le bouquet de roses fanées | Gauche | Épique | Cueilli à Épinay en 1971, livré en 2022 à 1,75 %. |
+| La primaire populaire | Gauche | Rare | 2022 : une primaire pour désigner le candidat unique de la gauche. Il y en a eu sept. |
+| L'accord de la Nupes | Gauche | Rare | Signé en mai 2022, recollé au scotch après chaque tweet. |
+| La motion de synthèse | Gauche | Commun | Huit pages pour ne froisser personne. Personne ne l'a lue. |
+| La pétition en ligne | Gauche | Commun | 1 247 signatures, dont 400 en double et une de Mickey Mouse. |
+| Le bracelet électronique en or | Droite | Légendaire | Février 2025 : Nicolas Sarkozy est le premier ancien président de la Ve à porter un bracelet électronique. Celui-ci est plaqué or, pour rester dans le style. |
+| Le bouclier fiscal | Droite | Légendaire | Forgé en 2007, rangé en 2011 : il protégeait surtout ceux qui n'avaient rien à craindre. |
+| Le pain au chocolat volé | Droite | Épique | Octobre 2012 : un candidat raconte qu'on l'arrache aux enfants à la sortie du collège. Le collège, on le cherche encore. |
+| Le lingot d'or | Droite | Rare | Rangé dans le coffre, à côté du rapport sur la dette. |
+| Le rapport de la Cour des comptes | Droite | Rare | Lu par les journalistes, classé par les ministres. |
+| Le gilet de quart | Droite | Commun | Le même qu'au club nautique, porté au Salon de l'agriculture. |
+| La carte de fidélité du Fouquet's | Droite | Commun | Tamponnée une fois, en mai 2007. Plus jamais sortie en public. |
+| La Dissolution | Les deux | Légendaire | Un gros bouton rouge, 9 juin 2024, 21 h. « Appuyer pour clarifier. » |
+| Le siège éjectable de Matignon | Les deux | Légendaire | Le meuble le plus usé de la République. Ceinture non fournie. |
+| Le 49.3 | Les deux | Épique | Un tampon encreur : plus de cent coups depuis 1958, et toujours le même bruit sourd. |
+| Le homard de l'Hôtel de Lassay | Les deux | Épique | Des dîners de travail révélés en 2019 : le homard a fait tomber un ministre, pas l'inverse. |
+| La promesse de campagne | Les deux | Rare | Garantie jusqu'au second tour. Pièces et main-d'œuvre non comprises. |
+| Les éléments de langage | Les deux | Commun | Une fiche A4 envoyée à 7 h, récitée par 40 élus à 8 h. |
+| Le tweet supprimé | Les deux | Commun | Posté à 2 h du matin, effacé à 2 h 04, capturé à 2 h 01. |
+

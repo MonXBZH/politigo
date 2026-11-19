@@ -3,6 +3,7 @@
 //   docker run --rm -v "$PWD:/w" -w /w node:24-alpine node tools/make-sources.mjs
 import {writeFileSync} from "node:fs";
 import * as R from "../web/rules.mjs";
+import {ITEMS,RARITY_LABEL} from "../web/wardrobe.mjs";
 
 const camps={left:"Collection gauche",right:"Collection droite"};
 const cell=s=>String(s).replace(/\|/g,"\\|");
@@ -28,5 +29,20 @@ for(const side of R.CAMPS){
   md+="\n";
  });
 }
+// The wardrobe: only the common to legendary pieces (never ultra or mythique: no spoiler), each with the public fact its look winks at.
+const SHOWN=["commun","rare","epique","legendaire"];
+md+=`## Garde-robe : pièces qui évoquent des faits publics
+
+Les tenues et objets des raretés commune à légendaire (les plus rares se découvrent en jeu). Chaque description est une caricature : elle évoque un fait public connu, sans citation ni photo.
+
+`;
+md+=`| Pièce | Camp | Rareté | Fait public évoqué |
+|---|---|---|---|
+`;
+const campOf={left:"Gauche",right:"Droite",all:"Les deux"};
+for(const it of Object.values(ITEMS).filter(it=>SHOWN.includes(it.rarity)))md+=`| ${cell(it.name)} | ${campOf[it.pool]||it.pool} | ${RARITY_LABEL[it.rarity]} | ${cell(it.desc)} |
+`;
+md+=`
+`;
 writeFileSync(new URL("../docs/SOURCES.md",import.meta.url),md);
 console.log("docs/SOURCES.md written");

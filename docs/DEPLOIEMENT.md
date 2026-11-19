@@ -35,7 +35,7 @@ docker compose up -d --build
 | `POLITIGO_BIND` | l'IP interne du serveur Docker (le reverse proxy est sur une autre machine) |
 | `POLITIGO_PORT` | `8080` |
 | `COOKIE_SECURE` | `1` (cookies de session HTTPS uniquement) |
-| `PROXY_HOPS` | `2` (le reverse proxy + le nginx de la pile) |
+| `PROXY_HOPS` | `2` (le reverse proxy + le nginx de la pile). Doit correspondre à la vraie chaîne de proxys : sinon tous les joueurs ont la même adresse (limites de requêtes partagées) et la même empreinte réseau (« même réseau » toujours « oui » à la Brocante) |
 | `POLITIGO_SPEED` | `1` (temps réel ; plus grand uniquement sur un serveur de test) |
 | `POLITIGO_PUSH` | facultatif. Vide : notifications de duel activées ; **`off`** : désactivées (voir « Duels et notifications ») |
 | `POLITIGO_PUSH_CONTACT` | facultatif. Adresse `mailto:` ou `https:` transmise aux services de notification ; vide : la page GitHub du projet |
@@ -189,7 +189,8 @@ Si l'un de ses `location` utilise `add_header`, recopier la ligne HSTS dedans : 
 ## 3. Exploitation
 
 - **Sauvegarde** : le volume `politigo_politigo-data` contient `politigo.db` (comptes, parties, duels, fil, chat), `vapid.json`
-  (la clé des notifications : à sauvegarder avec la base, sinon les téléphones abonnés ne reçoivent plus rien) et `chat-media/`
+  (la clé des notifications : à sauvegarder avec la base, sinon les téléphones abonnés ne reçoivent plus rien), `netkey.txt`
+  (la clé de l'empreinte « même réseau » de la Brocante : perdue, elle est refaite et les empreintes suivent en une heure) et `chat-media/`
   (les images du chat, effacées au bout de 7 jours). L'interface d'administration télécharge aussi une copie cohérente de la base
   (page Sauvegarde). Exemple en ligne de commande :
   `docker run --rm -v politigo_politigo-data:/d -v "$PWD":/b alpine tar czf /b/politigo-$(date +%F).tgz -C /d .`
@@ -314,7 +315,26 @@ Une seule console peut gérer plusieurs parties, sur cette machine ou ailleurs (
   **Duels suspects** : paires de comptes créés ensemble qui se défient, rafales de comptes différents à quelques secondes
   d'intervalle, même perdant face au même gagnant, et joueur qui bat l'un après l'autre plusieurs rivaux qui ne jouent
   presque pas (une ferme de comptes). Chaque tour de duel compte aussi dans la détection de bots. Un duel terminé peut être **annulé** : XP, niveau, moral et énergie des deux
-  joueurs reviennent à leur valeur d'avant le duel. Aucune adresse IP n'est enregistrée.
+  joueurs reviennent à leur valeur d'avant le duel. Aucune adresse IP n'est enregistrée en clair.
+- **Brocante** (carte Brocante de la console) : les annonces ouvertes, avec leur auteur et ce qu'elles proposent et cherchent, et l'historique des
+  échanges (date, les deux joueurs, ce qui a changé de mains). La carte montre aussi les paires qui échangent à répétition sur
+  30 jours et « même réseau : oui / non ». Ce signal vient d'une empreinte HMAC-SHA256 de la dernière adresse de connexion de chaque
+  joueur (une seule valeur par joueur, écrasée à chaque connexion, effacée avec le compte, jamais l'adresse elle-même ni un historique) :
+  il n'interdit rien, l'administrateur tranche (suspendre existe déjà). Une adresse IPv6 compte pour son préfixe /64 (un même
+  foyer change souvent d'adresse dans ce préfixe). La clé secrète de l'empreinte est le fichier `netkey.txt` du volume des données,
+  à côté de la base (droits 0600), créé au premier démarrage : elle n'est **pas** dans la base, donc pas dans ses sauvegardes
+  (une 1.9.0 de test qui la gardait dans les réglages l'en efface au démarrage). Sans ce fichier (volume refait, base restaurée
+  ailleurs), une nouvelle clé est créée et les empreintes se refont à la connexion suivante de chaque joueur (au plus une heure pour un joueur en ligne) :
+  « même réseau » est aveugle entre-temps. `PROXY_HOPS` doit correspondre à la vraie chaîne de proxys devant l'API : sinon chaque
+  joueur est vu avec l'adresse d'un proxy, tous ont la même empreinte et « même réseau » répond toujours « oui ».
+  Le droit « Retirer une annonce de la Brocante » (inclus dans « Modo complet ») retire une annonce ; elle n'est jamais supprimée
+  d'elle-même, seulement masquée quand son auteur est absent depuis plus de 14 jours, suspendu, sous le niveau 5 ou à sa limite du jour.
+- **Collage** (carte Collage de la console, sous le droit du panneau Duels, en lecture seule) : les 30 dernières nuits (camp gagnant, cases,
+  colleurs), les colleurs et les bénévoles du jour, les murs et le titre de Colleur de la semaine. Le jeu n'enregistre rien de nouveau
+  sur les personnes : les poses sont rattachées au pseudo comme le reste de la partie. Points d'exploitation : les murs sont comptés
+  au premier passage du serveur après minuit, soit jusqu'à une trentaine de secondes de retard ; après une interruption, seule la
+  dernière nuit manquée est clôturée (les plus anciennes sont sautées, ce que note le journal des actions) et les vagues de bénévoles
+  manquées sont perdues, pas rattrapées. Le niveau minimal se règle avec `POLITIGO_WALL_MIN_LEVEL` (voir les réglages de test).
 - **À traiter** : sur toutes les parties, vérifiées toutes les 20 s, les messages signalés du chat, les duels signalés par
   l'anti-triche, les joueurs au score de bot de 50/100 ou plus et les groupes de duels suspects. Le nombre s'affiche dans
   le menu et dans le titre de l'onglet, un son marque chaque nouvelle alerte, et une notification système s'affiche quand
@@ -566,6 +586,10 @@ Le panneau **Events** de l'administration crée et gère des événements à dur
   défaut ; le défié a toujours 24 h) ; elle ne peut que le réduire.
 - **Réglages de test** (jamais en production) : `POLITIGO_DUEL_MIN_LEVEL` et `POLITIGO_DUEL_MIN_AGE_H` abaissent le niveau
   et l'ancienneté du compte exigés pour les duels (ils ne peuvent que les baisser), pour tester avec des comptes neufs.
+  `POLITIGO_MARKET_MIN_AGE_H` fait de même pour l'ancienneté exigée à la Brocante (3 jours par défaut ; elle ne peut que la baisser).
+  `POLITIGO_WALL_MIN_LEVEL` fait de même pour le niveau exigé au Collage (3 par défaut ; elle ne peut que le baisser).
+  `POLITIGO_WALL_CLOSE_AT` (instant en ms depuis 1970) déplace le décompte de minuit de La Nuit du collage, pour tester une nuit
+  sans attendre : réglage de test uniquement, le serveur refuse de démarrer avec elle si `POLITIGO_VERSION` n'est ni vide ni `dev`.
 
 ## 4. Sécurité en bref
 

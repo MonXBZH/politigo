@@ -110,11 +110,54 @@ export const ITEMS={
  chevaliere:B("right","commun","Chevalière","Au petit doigt, gravée d'armoiries que personne n'a vérifiées."),
  figaroplie:B("right","commun","Le journal plié","Sous le bras, ouvert aux pages saumon, celles de la Bourse."),
  champagne:B("right","commun","Coupe de champagne","Tiède et sans bulles à la troisième estimation de 20 h."),
- clevilla:B("right","commun","Clé de la résidence secondaire","À La Baule ou à l'île de Ré, on ne sait plus laquelle.")
+ clevilla:B("right","commun","Clé de la résidence secondaire","À La Baule ou à l'île de Ré, on ne sait plus laquelle."),
+ // ================================================================ 1.9.0: the satire wave
+ // ---------------------------------------------------------------- outfits, left
+ hologramme:O("left","legendaire","L'Hologramme, 2017","Une silhouette bleue qui grésille, en meeting à Lyon et à Aubervilliers en même temps. L'année suivante : « La République, c'est moi ! »"),
+ caviar:O("left","epique","La Gauche caviar","Smoking, toque en fourrure, cuillère en nacre : le programme social se discute entre la poire et le fromage."),
+ frondeur:O("left","rare","Le Frondeur, 2014","Costume du PS, et une motion de censure dans la poche intérieure, jamais déposée."),
+ sanscravate:O("left","rare","Sans cravate, 2017","Chemise ouverte et maillot de foot dans l'hémicycle : la cravate a été la première victime de la législature."),
+ agetudiante:O("left","commun","L'AG étudiante","Keffieh, sweat de la fac, et la motion n° 47 sur l'ordre du jour de la motion n° 46."),
+ bobo:O("left","commun","Le Bobo du canal Saint-Martin","Moustache, fixie, IPA artisanale : on vote à gauche, on paie 2 000 € de loyer."),
+ // ---------------------------------------------------------------- outfits, right
+ levallois:O("right","legendaire","Le Maire de Levallois","Costume croisé, lunettes fumées, un moulin normand derrière lui, et toujours un mot aimable pour les juges."),
+ trocadero:O("right","epique","Le Trocadéro, 2017","Imper trempé, parapluie retourné : rien ne l'empêchera d'être candidat. La pluie, si."),
+ chouan:O("right","epique","Le Chouan, 1793","Sacré-Cœur brodé, chapeau rond, fourche : la Vendée n'a jamais vraiment signé."),
+ footing:O("right","rare","Le Footing présidentiel","Tee-shirt NYPD, short, Ray-Ban, et quatre caméras qui courent devant."),
+ manifpourtous:O("right","rare","La Manif pour tous","Sweat rose et bleu, drapeau avec un papa et une maman : la loi est passée en 2013, le sweat est resté."),
+ enarque:O("right","commun","L'Énarque","Costume bleu, bac+5, réponse à tout : l'ENA a fermé en 2022, l'énarque est toujours là."),
+ // ---------------------------------------------------------------- outfits, both camps
+ enmemetemps:O("all","epique","« En même temps »","Un costume coupé en deux, moitié loden, moitié bleu de travail : il se voit de chaque camp, c'est tout le principe."),
+ marcheur:O("all","rare","Le Marcheur","Baskets blanches, chemise ouverte, badge « Disruptons la République »."),
+ // ---------------------------------------------------------------- objects, left
+ comptesuisse:B("left","legendaire","Le compte en Suisse","Un ministre du Budget chargé de la fraude fiscale, avec un compte à Genève. « Je n'ai pas, je n'ai jamais eu. » Jérôme Cahuzac, décembre 2012, devant l'Assemblée."),
+ phobie:B("left","legendaire","La phobie administrative","Septembre 2014 : Thomas Thévenoud quitte le gouvernement au bout de 9 jours, des impôts impayés derrière lui et un diagnostic inédit. Une pile de courriers du fisc, jamais ouverts."),
+ rosesfanees:B("left","epique","Le bouquet de roses fanées","Cueilli à Épinay en 1971, livré en 2022 à 1,75 %."),
+ primairepop:B("left","rare","La primaire populaire","2022 : une primaire pour désigner le candidat unique de la gauche. Il y en a eu sept."),
+ nupes:B("left","rare","L'accord de la Nupes","Signé en mai 2022, recollé au scotch après chaque tweet."),
+ synthese:B("left","commun","La motion de synthèse","Huit pages pour ne froisser personne. Personne ne l'a lue."),
+ petition:B("left","commun","La pétition en ligne","1 247 signatures, dont 400 en double et une de Mickey Mouse."),
+ // ---------------------------------------------------------------- objects, right
+ bracelet:B("right","legendaire","Le bracelet électronique en or","Février 2025 : Nicolas Sarkozy est le premier ancien président de la Ve à porter un bracelet électronique. Celui-ci est plaqué or, pour rester dans le style."),
+ bouclier:B("right","legendaire","Le bouclier fiscal","Forgé en 2007, rangé en 2011 : il protégeait surtout ceux qui n'avaient rien à craindre."),
+ painvole:B("right","epique","Le pain au chocolat volé","Octobre 2012 : un candidat raconte qu'on l'arrache aux enfants à la sortie du collège. Le collège, on le cherche encore."),
+ lingot:B("right","rare","Le lingot d'or","Rangé dans le coffre, à côté du rapport sur la dette."),
+ courcomptes:B("right","rare","Le rapport de la Cour des comptes","Lu par les journalistes, classé par les ministres."),
+ giletquart:B("right","commun","Le gilet de quart","Le même qu'au club nautique, porté au Salon de l'agriculture."),
+ cartefouquets:B("right","commun","La carte de fidélité du Fouquet's","Tamponnée une fois, en mai 2007. Plus jamais sortie en public."),
+ // ---------------------------------------------------------------- objects, both camps
+ dissolution:B("all","legendaire","La Dissolution","Un gros bouton rouge, 9 juin 2024, 21 h. « Appuyer pour clarifier. »"),
+ matignon:B("all","legendaire","Le siège éjectable de Matignon","Le meuble le plus usé de la République. Ceinture non fournie."),
+ art493:B("all","epique","Le 49.3","Un tampon encreur : plus de cent coups depuis 1958, et toujours le même bruit sourd."),
+ homard:B("all","epique","Le homard de l'Hôtel de Lassay","Des dîners de travail révélés en 2019 : le homard a fait tomber un ministre, pas l'inverse."),
+ promesse:B("all","rare","La promesse de campagne","Garantie jusqu'au second tour. Pièces et main-d'œuvre non comprises."),
+ elements:B("all","commun","Les éléments de langage","Une fiche A4 envoyée à 7 h, récitée par 40 élus à 8 h."),
+ tweet:B("all","commun","Le tweet supprimé","Posté à 2 h du matin, effacé à 2 h 04, capturé à 2 h 01.")
 };
 export const URN_NAME={left:"La Tombola de la Fête",right:"La Loterie du Gala"};
 // Odds in %, from the bottom up; pity: the draw count without such a rarity that forces it (epique also counts
-// anything better, legendaire counts legendaire and ultra).
+// anything better; legendaire counts only legendaire, so the ultra, one per camp, never wipes it). The forced légendaire
+// is one the player does not own yet, while there is one left.
 export const ODDS={commun:60,rare:28,epique:9.5,legendaire:2,ultra:0.5};
 export const PITY={epique:10,legendaire:50,ultra:80};
 export const CONFETTI={commun:5,rare:10,epique:25,legendaire:50,ultra:100,mythique:100};
@@ -184,12 +227,13 @@ export function draw(S,pay,{random=Math.random,mythic=null,fx=null}={}){
   logEntry(S,"draw",`${urn} : ${ITEMS[id].name} ! Une lueur orange envahit la salle.`,{id,rarity:"mythique",mythic:true});
   return {ok:true,item:{id,kind:ITEMS[id].kind,rarity:"mythique"},dup:false,confetti:0,mythic:true};
  }
- let r=rollRarity(random);const n={epique:W.pity.epique+1,legendaire:W.pity.legendaire+1,ultra:W.pity.ultra+1};
+ let r=rollRarity(random),forced=false;const n={epique:W.pity.epique+1,legendaire:W.pity.legendaire+1,ultra:W.pity.ultra+1};
  if(n.ultra>=PITY.ultra)r="ultra";
- else if(n.legendaire>=PITY.legendaire&&rank(r)<rank("legendaire"))r="legendaire";
+ else if(n.legendaire>=PITY.legendaire&&rank(r)<rank("legendaire")){r="legendaire";forced=true;}
  else if(n.epique>=PITY.epique&&rank(r)<rank("epique"))r="epique";
- for(const k of Object.keys(PITY))W.pity[k]=rank(r)>=rank(k)?0:n[k];
- const ids=poolItems(S.camp,r),id=ids[Math.min(ids.length-1,Math.floor(random()*ids.length))],it=ITEMS[id],g=gain(S,id);
+ const resets=k=>k==="legendaire"?r==="legendaire":rank(r)>=rank(k);
+ for(const k of Object.keys(PITY))W.pity[k]=resets(k)?0:Math.min(PITY[k]-1,n[k]);
+ const all=poolItems(S.camp,r),fresh=forced?all.filter(i=>!W.own.includes(i)):[],ids=fresh.length?fresh:all,id=ids[Math.min(ids.length-1,Math.floor(random()*ids.length))],it=ITEMS[id],g=gain(S,id);
  logEntry(S,"draw",`${urn} : ${it.name} (${RARITY_LABEL[r]})${g.dup?`, déjà dans la garde-robe : +${g.confetti} confettis`:" rejoint la garde-robe"}.`,{id,rarity:r,dup:g.dup});
  const out={ok:true,item:{id,kind:it.kind,rarity:r},dup:g.dup,confetti:g.confetti};
  if(id==="transfugeL"||id==="transfugeR")out.transfuge=true;

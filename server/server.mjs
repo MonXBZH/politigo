@@ -18,6 +18,10 @@ import * as W from "./wardrobe.mjs";
 import * as D from "./duel.mjs";
 import * as SF from "./snowfront.mjs";
 import {createChallenges} from "./snowchallenges.mjs";
+import * as MK from "./market.mjs";
+import {createMarket,netPrefix} from "./marketstore.mjs";
+import * as WL from "./wall.mjs";
+import {createWall} from "./wallstore.mjs";
 
 const env=process.env;
 process.umask(0o077);
@@ -72,6 +76,12 @@ const knob=(v,def)=>{const n=Number(v);return v!==undefined&&v!==""&&Number.isFi
 const DUEL_MIN_LEVEL=knob(env.POLITIGO_DUEL_MIN_LEVEL,R.DUEL.minLevel),DUEL_MIN_AGE=knob(env.POLITIGO_DUEL_MIN_AGE_H,R.DUEL.minAgeMs/R.H)*R.H;
 // Said at every start: a test setting left on a real server opens duels to fresh accounts (and to alts).
 if(DUEL_MIN_LEVEL!==R.DUEL.minLevel||DUEL_MIN_AGE!==R.DUEL.minAgeMs)console.warn(`Duel test settings active: level ${DUEL_MIN_LEVEL}+, accounts ${DUEL_MIN_AGE/R.H} h old+ (normal: ${R.DUEL.minLevel}, ${R.DUEL.minAgeMs/R.H} h).`);
+// La Brocante: the duels' level, and an account age of its own (3 days), which the knob can only lower (tests).
+const MARKET_MIN_AGE=knob(env.POLITIGO_MARKET_MIN_AGE_H,MK.MARKET.minAgeMs/R.H)*R.H;
+if(MARKET_MIN_AGE!==MK.MARKET.minAgeMs)console.warn(`Brocante test setting active: accounts ${MARKET_MIN_AGE/R.H} h old+ (normal: ${MK.MARKET.minAgeMs/R.H} h).`);
+// La Nuit du collage opens at level 3; the knob can only lower it (tests).
+const WALL_LEVEL=3,WALL_MIN_LEVEL=knob(env.POLITIGO_WALL_MIN_LEVEL,WALL_LEVEL);
+if(WALL_MIN_LEVEL!==WALL_LEVEL)console.warn(`Collage test setting active: level ${WALL_MIN_LEVEL}+ (normal: ${WALL_LEVEL}).`);
 // The Duel du Bâton on a test server: its rounds' clock runs this many times faster, and a deferred duel is replayed this
 // long after the bearer's part instead of at the next 21:00. Never set on a real server (said at start).
 const BATON_K=Math.max(1,Math.min(20,Math.floor(Number(env.POLITIGO_BATON_SPEED))||1));
@@ -99,6 +109,16 @@ if(env.POLITIGO_NEWYEAR_AT!==undefined&&env.POLITIGO_NEWYEAR_AT!==""){
  if(!Number.isSafeInteger(n)||n<=0){console.error("POLITIGO_NEWYEAR_AT must be an instant in ms since 1970.");process.exit(1);}
  NEWYEAR_AT=n;console.warn(`New Year test setting active: midnight at ${new Date(n).toISOString()}.`);
 }
+// La Nuit du collage's close moved to an instant, in ms: a test setting (refused on a released image, like the New Year's).
+// It closes the night of that instant's day once, at that instant; the real midnights then go on as usual.
+let WALL_CLOSE_AT=null;
+if(env.POLITIGO_WALL_CLOSE_AT!==undefined&&env.POLITIGO_WALL_CLOSE_AT!==""){
+ const rawVersion=env.POLITIGO_VERSION??"";
+ if(rawVersion!==""&&rawVersion!=="dev"){console.error("POLITIGO_WALL_CLOSE_AT is a test setting: refused unless POLITIGO_VERSION is unset or \"dev\". Remove it.");process.exit(1);}
+ const n=Number(env.POLITIGO_WALL_CLOSE_AT);
+ if(!Number.isSafeInteger(n)||n<=0){console.error("POLITIGO_WALL_CLOSE_AT must be an instant in ms since 1970.");process.exit(1);}
+ WALL_CLOSE_AT=n;console.warn(`Collage test setting active: night close at ${new Date(n).toISOString()}.`);
+}
 // The timed events still to come or running (the table holds them all): read by every action and every clock tick.
 let EVENTS=[];
 const fxOf=p=>t=>E.effectsOf(EVENTS,p.state.camp,t);
@@ -113,7 +133,14 @@ if(!/^(mailto:|https:\/\/)[^\s]{3,200}$/.test(PUSH_CONTACT)){console.error("POLI
 const db=new DatabaseSync(DB_PATH,{timeout:5000});
 // A database created by an older version (before the umask) is made private too; another owner's file is left alone.
 for(const f of [DB_PATH,DB_PATH+"-wal",DB_PATH+"-shm"]){try{chmodSync(f,0o600);}catch{}}
-db.exec(`PRAGMA journal_mode=WAL;PRAGMA foreign_keys=ON;
+// Two servers opening the same file at once (a restart overlapping the old process, the tests): switching to WAL and
+// creating the schema can answer "database is locked" at once, without the busy wait. Every statement below is
+// idempotent, so it is simply run again for a few seconds.
+function bootExec(sql){
+ const end=Date.now()+10e3,pause=new Int32Array(new SharedArrayBuffer(4));
+ for(;;){try{db.exec(sql);return;}catch(e){if(![5,6].includes(e.errcode)||Date.now()>end)throw e;Atomics.wait(pause,0,0,25+Math.floor(Math.random()*50));}}
+}
+bootExec(`PRAGMA journal_mode=WAL;PRAGMA foreign_keys=ON;
 CREATE TABLE IF NOT EXISTS players(id INTEGER PRIMARY KEY,name TEXT NOT NULL,name_key TEXT NOT NULL UNIQUE,pass TEXT NOT NULL,
  created INTEGER NOT NULL,state TEXT NOT NULL,score INTEGER NOT NULL DEFAULT 0,updated INTEGER NOT NULL,seen_version TEXT);
 CREATE TABLE IF NOT EXISTS sessions(token_hash TEXT PRIMARY KEY,player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,expires INTEGER NOT NULL);
@@ -181,7 +208,7 @@ if(!db.prepare("PRAGMA table_info(admin_log)").all().some(c=>c.name==="actor")){
 }
 // Databases from before the changelog (or the suspensions) lack the column: NULL means "has read nothing yet".
 // Another process starting on the same file at the same moment may have added it first: that is fine too.
-for(const [col,type] of [["seen_version","TEXT"],["suspended","INTEGER NOT NULL DEFAULT 0"],["last_seen","INTEGER"],["protected","INTEGER NOT NULL DEFAULT 0"],["abandon_ignored","INTEGER NOT NULL DEFAULT 0"]]){
+for(const [col,type] of [["seen_version","TEXT"],["suspended","INTEGER NOT NULL DEFAULT 0"],["last_seen","INTEGER"],["protected","INTEGER NOT NULL DEFAULT 0"],["abandon_ignored","INTEGER NOT NULL DEFAULT 0"],["net_fp","TEXT"]]){
  if(db.prepare("PRAGMA table_info(players)").all().some(c=>c.name===col))continue;
  try{db.exec(`ALTER TABLE players ADD COLUMN ${col} ${type}`);}catch(e){if(!/duplicate column/i.test(e.message))throw e;}
 }
@@ -241,7 +268,8 @@ const q={
  savePlayer:db.prepare("UPDATE players SET state=?,score=?,updated=? WHERE id=?"),
  playerByKey:db.prepare("SELECT id,pass FROM players WHERE name_key=?"),
  deletePlayer:db.prepare("DELETE FROM players WHERE id=?"),
- allPlayers:db.prepare("SELECT id,name,created,state,seen_version,suspended,last_seen,protected,abandon_ignored FROM players"),
+ allPlayers:db.prepare("SELECT id,name,created,state,seen_version,suspended,last_seen,protected,abandon_ignored,net_fp FROM players"),
+ setNetFp:db.prepare("UPDATE players SET net_fp=? WHERE id=?"),
  setLastSeen:db.prepare("UPDATE players SET last_seen=?,abandon_ignored=0 WHERE id=?"),
  setProtected:db.prepare("UPDATE players SET protected=? WHERE id=?"),
  setIgnored:db.prepare("UPDATE players SET abandon_ignored=? WHERE id=?"),
@@ -394,7 +422,7 @@ const players=new Map();
    // Ahead of real time on a real-time server: left as is (no replay), but said, since it should not happen.
    if(SPEED===1&&state.vclock-now>10*60e3)console.error(`player ${row.id}: game clock ${Math.round((state.vclock-now)/60e3)} min ahead of real time`);
   }catch(e){console.error(`player ${row.id}: clock not resynced`,e);state.lastReal=now;}
-  players.set(row.id,{id:row.id,name:row.name,created:row.created,state,seen:row.seen_version??null,suspended:!!row.suspended,lastSeen:row.last_seen,protected:!!row.protected,ignored:!!row.abandon_ignored});
+  players.set(row.id,{id:row.id,name:row.name,created:row.created,state,seen:row.seen_version??null,suspended:!!row.suspended,lastSeen:row.last_seen,protected:!!row.protected,ignored:!!row.abandon_ignored,netFp:row.net_fp||""});
  }
  if(longest>=60000)console.log(`Clocks back on the real hour: ${resynced} player(s), up to ${Math.round(longest/60000)} min skipped, gauges untouched.`);
 }
@@ -550,13 +578,36 @@ function auth(req){
  const p=row&&players.get(row.player_id);
  if(!p)throw new HttpError(401,"Connexion requise.");
  if(p.suspended)throw new HttpError(403,SUSPENDED);   // sessions are deleted at suspension: this is the belt and braces
- touchSeen(p);
+ touchSeen(p,Date.now(),clientIp(req));
  return p;
 }
 // The last connection, for the console alone: at most one write an hour per player. Coming back clears an "ignored".
 const SEEN_EVERY=36e5;
-function touchSeen(p,now=Date.now()){
+// "Same network" (La Brocante): one HMAC-SHA256 of the network of the player's last address (netPrefix: the IPv4, or the
+// IPv6 /64) under a key made once and kept in a 0600 file next to the database, never in it: a copy of the database
+// carries the fingerprints, not their key. Never the address itself, never a history, never sent to anyone; "" when unknown.
+const NETKEY_FILE=join(dirname(DB_PATH),"netkey.txt");
+function loadNetKey(){
+ const temp=why=>{console.error(`${NETKEY_FILE}: ${why}, using a temporary key ("same network" fingerprints change at every start)`);return crypto.randomBytes(32);};
+ const read=()=>{const k=readFileSync(NETKEY_FILE,"utf8").trim();return /^[0-9a-f]{64}$/.test(k)?Buffer.from(k,"hex"):null;};
+ // A file that is there but damaged is left untouched (it may be repaired by hand).
+ try{return read()??temp("no usable key (file left untouched)");}catch(e){if(e.code!=="ENOENT")return temp(e.message);}
+ // Created with O_EXCL: of two processes starting together, one writes it and both read the same key back.
+ try{writeFileSync(NETKEY_FILE,crypto.randomBytes(32).toString("hex")+"\n",{mode:0o600,flag:"wx"});}catch(e){if(e.code!=="EEXIST")return temp(`not saved (${e.message})`);}
+ try{return read()??temp("no usable key after creation");}catch(e){return temp(e.message);}
+}
+const NET_KEY=loadNetKey();
+// The 1.9.0 betas kept the key in the settings: gone (the fingerprints made with it are rewritten at the next login or hour).
+try{db.prepare("DELETE FROM settings WHERE key='netkey'").run();}catch(e){console.error("legacy network key not deleted:",e.message);}
+function netFp(ip){const n=netPrefix(ip);return n?crypto.createHmac("sha256",NET_KEY).update(n).digest("hex"):"";}
+const sameNet=(a,b)=>!!a&&!!b&&a===b;
+function noteNet(p,ip){
+ try{const f=netFp(ip);if(!f||p.netFp===f)return;q.setNetFp.run(f,p.id);p.netFp=f;}
+ catch(e){console.error(`player ${p.id}: network not saved (${e?.code||e?.name})`);}   // neither the address nor the fingerprint is logged
+}
+function touchSeen(p,now=Date.now(),ip=null){
  if(now-(p.lastSeen??0)<SEEN_EVERY)return;
+ if(ip)noteNet(p,ip);
  p.lastSeen=now;p.ignored=false;
  try{q.setLastSeen.run(now,p.id);}catch(e){console.error(`player ${p.id}: last connection not saved`,e);}
 }
@@ -576,11 +627,13 @@ const onlineIds=()=>new Set([...clients].map(c=>c.playerId));
 const isOnline=id=>[...clients].some(c=>c.playerId===id);
 function boardRows(){
  const on=onlineIds(),tally=new Map(q.duelTally.all().map(r=>[r.id,r]));
+ // The Colleur de la semaine wears his title on his card the whole following week.
+ let colleur=null;try{colleur=WS.title(Date.now())?.playerId??null;}catch(e){console.error("board, wall title:",e);}
  return [...players.values()].filter(p=>!p.suspended).map(p=>{const S=p.state,worn=S.wardrobe?.worn,t=tally.get(p.id);return {
   name:p.name,camp:S.camp,candidate:R.person(S).name,lvl:S.lvl,score:R.score(S),form:S.form,
   streak:S.streak,bestStreak:S.bestStreak,deaths:S.deaths,asleep:R.isAsleep(S),online:on.has(p.id),
   // What the portraits wear, and the duel record of the last month (closed duels are purged after 30 days).
-  outfit:worn?.outfit??null,object:worn?.object??null,dw:Number(t?.dw??0),dl:Number(t?.dl??0)};})
+  outfit:worn?.outfit??null,object:worn?.object??null,dw:Number(t?.dw??0),dl:Number(t?.dl??0),...(p.id===colleur?{wallTitle:true}:{})};})
  .sort((a,b)=>b.score-a.score||b.lvl-a.lvl||a.name.localeCompare(b.name,"fr"));
 }
 const clients=new Set();         // live SSE connections: {res, playerId}
@@ -621,7 +674,7 @@ function flushBoard(){
 }
 // The debate's seed deals its answers: it never leaves the server (the other games' seeds only shape what is drawn).
 const publicState=S=>S.mini?.k==="debate"&&"seed" in S.mini?{...S,mini:Object.fromEntries(Object.entries(S.mini).filter(([k])=>k!=="seed"))}:S;
-function mePayload(p){return {name:p.name,state:publicState(p.state),speed:SPEED,tz:R.timeZone(),serverNow:Date.now(),event:EVENT_MODE,events:publicEvents(Date.now()),version:VERSION,release:RELEASE,seenVersion:p.seen??null,chat:chatRooms(),urnHint:urnHintOf(p),baton:batonWon?batonView(p):null,...noelView(p,Date.now())};}
+function mePayload(p){return {name:p.name,state:publicState(p.state),speed:SPEED,tz:R.timeZone(),serverNow:Date.now(),event:EVENT_MODE,events:publicEvents(Date.now()),version:VERSION,release:RELEASE,seenVersion:p.seen??null,chat:chatRooms(),urnHint:urnHintOf(p),baton:batonWon?batonView(p):null,marketNew:marketNewOf(p,Date.now()),marketListed:marketListedOf(p),wallLeft:wallLeftOf(p,Date.now()),...noelView(p,Date.now())};}
 
 // ===================================================================== TRÊVE: THE FRONT DE NEIGE AND THE NEW YEAR TOAST
 // Every snowball fight the server replayed adds its score to its player's camp (snowfront.mjs), unless flagged as a
@@ -858,6 +911,7 @@ setInterval(()=>{
  if(now-lastChores>=60e3){lastChores=now;try{chores(now);}catch(e){console.error("sweep, chores:",e);}}
  try{sweepDuels(now);}catch(e){console.error("sweep, duels:",e);}
  try{chat.sweep(now);}catch(e){console.error("sweep, chat:",e);}
+ try{wallTick(now);}catch(e){console.error("sweep, wall:",e);}
  try{flushDeferred();}catch(e){console.error("sweep, deferred pushes:",e);}   // games that expired or were closed above
  lastSweep=now;
 },SWEEP_MS).unref();
@@ -1595,6 +1649,433 @@ async function batonRoute(req,res){
 // ===================================================================== CHAT (server/chat.mjs)
 const chat=createChat({db,dataDir:dirname(DB_PATH),players,clients,sse,auth,limited,HttpError,send,readJson,checkOrigin,clientIp,rooms:chatRooms});
 
+// ===================================================================== LA BROCANTE (market.mjs: the rules, marketstore.mjs: the rows)
+// The items stay in each wardrobe (the truth); listings and offers only describe them. A trade is checked in full, then
+// written in one transaction: both games, the listing traded, the offers closed, the day's counts, the history. Nothing
+// awaits between the checks and the COMMIT: of two requests for one listing, the second finds it gone.
+const M=createMarket(db);
+const MK_GONE="Cette annonce n'est plus disponible.",MK_GONE_O="Cette offre n'est plus disponible.",MK_OFFERS_SHOWN=20,MK_OFFERS_DAY=10,MK_LISTINGS_DAY=10;
+// A visit of the Brocante is written at most every 30 s; /api/me's count is kept 10 s; the board's live refresh is
+// one trailing event per 3 s whatever the number of changes.
+const MK_SEEN_WRITE=30e3,MK_NEW_MS=10e3,MK_BOARD_MS=3e3;
+// "" when this player may trade now. tradeBlock weighs the age against the rules' 3 days: a lowered knob shifts it.
+function marketBlock(p,now){
+ return MK.tradeBlock(p.state,{minLevel:DUEL_MIN_LEVEL,ageMs:now-p.created+MK.MARKET.minAgeMs-MARKET_MIN_AGE,today:M.today(p.id,dayNow(now))});
+}
+// An author whose listings are off the board: gone, suspended, away 14 days, or unable to trade now (level, age, the
+// day's limit). Hidden, never closed: they come back with the author. To a taker, the same answer as a gone listing.
+function authorHidden(o,now){return !o||o.suspended||(o.lastSeen??0)<now-MK.MARKET.awayMs||!!marketBlock(o,now);}
+const mkWho=id=>{const o=players.get(id);return {name:o?.name??GONE,camp:o?.state.camp??null};};
+const itemName=id=>W.ITEMS[id]?.name??id,itemNames=ids=>ids.map(itemName).join(", ");
+// "Chasuble syndicale, Mégaphone et 4 bulletins".
+function giveText(g){
+ const parts=g.items.map(itemName);if(g.bulletins)parts.push(`${g.bulletins} bulletin${g.bulletins>1?"s":""}`);
+ return parts.length>1?`${parts.slice(0,-1).join(", ")} et ${parts.at(-1)}`:parts[0]??"rien";
+}
+const deName=n=>/^[aeiouyhàâäéèêëîïôöûüœ]/i.test(n)?`d'${n}`:`de ${n}`;
+// What a player gives (a listing, an offer, a take), with the reason a malformed one is refused. Never names what is excluded.
+function readGive(x,needItem){
+ const bad="Choisis ce que tu donnes.";
+ if(!x||typeof x!=="object"||Array.isArray(x)||(x.items!==undefined&&!Array.isArray(x.items)))throw new HttpError(422,bad);
+ const items=[...new Set(x.items??[])],b=x.bulletins??0,max=MK.MARKET.maxItems;
+ if(items.length>max||(needItem&&!items.length))throw new HttpError(422,`Choisis de 1 à ${max} objets.`);
+ if(items.some(i=>typeof i!=="string"||!Object.hasOwn(W.ITEMS,i)))throw new HttpError(422,"Objet inconnu.");
+ if(!items.every(MK.tradable))throw new HttpError(422,"Certains objets très rares ne s'échangent pas.");
+ if(!Number.isInteger(b)||b<0||b>MK.MARKET.maxBulletins)throw new HttpError(422,`Bulletins : de 0 à ${MK.MARKET.maxBulletins} par côté.`);
+ const g=MK.cleanGive({items,bulletins:b},{needItem});if(!g)throw new HttpError(422,bad);
+ return g;
+}
+// A listing that offers an item no longer tradable (the catalogue changed), or that cannot be read: gone for good.
+const mkDead=l=>!Array.isArray(l?.give?.items)||!l.give.items.every(MK.tradable);
+// Closed, its author and offerers told; never throws (it runs while a board is read).
+function mkCloseDead(l){
+ try{const who=M.closeListing(l.id);if(who){marketCast([l.player_id,...who],"mine");marketBoardChanged();}}
+ catch(e){console.error(`market: listing ${l.id} not closed`,e);}
+}
+// A listing is on the board when its author is, still holds what it offers (else refused at the take) and does not ask
+// by name for something already his (a draw, a gift: it could never be taken). Hidden, not closed; a dead one is closed.
+function listingShown(l,ok,now){
+ if(mkDead(l)){mkCloseDead(l);return false;}
+ if(!ok.has(l.player_id))ok.set(l.player_id,!authorHidden(players.get(l.player_id),now));
+ if(!ok.get(l.player_id))return false;
+ const S=players.get(l.player_id).state,w=l.want;
+ return !MK.missing(S,l.give)&&!(w?.kind==="items"&&Array.isArray(w.items)&&MK.dupes(S,w.items).length);
+}
+const listingOut=(l,mine)=>({id:l.id,author:mkWho(l.player_id),give:l.give,want:l.want,created:l.created,mine});
+// The board (others' visible listings), mine with their pending offers, my offers (pending, and the latest decided).
+function marketView(p,now){
+ const seen=Number(p.state.marketSeen)||0,open=M.openListings(),ok=new Map();
+ const live=id=>{const o=players.get(id);return !!o&&!o.suspended;};
+ const board=open.filter(l=>l.player_id!==p.id&&listingShown(l,ok,now)).map(l=>listingOut(l,false));
+ const mine=open.filter(l=>l.player_id===p.id).map(l=>({...listingOut(l,true),
+  offers:M.pendingOffersOn(l.id).filter(o=>live(o.player_id)).map(o=>({id:o.id,from:mkWho(o.player_id),give:o.give,created:o.created}))}));
+ const offers=M.offersBy(p.id,MK_OFFERS_SHOWN).map(o=>{const l=M.listing(o.listing_id);
+  return {id:o.id,listingId:o.listing_id,give:o.give,status:o.status,created:o.created,listing:l?{author:mkWho(l.player_id),give:l.give,want:l.want}:null};});
+ return {board,mine,offers,block:marketBlock(p,now),today:M.today(p.id,dayNow(now)),newCount:board.filter(l=>l.created>seen).length};
+}
+// For /api/me: the visible listings by others since the last visit of the Brocante (0 rather than a broken payload).
+// Kept MK_NEW_MS per player; forgotten at the player's visit and at every change of the board.
+const mkNew=new Map();   // playerId -> {t,n}
+function marketNewOf(p,now){
+ const c=mkNew.get(p.id);if(c&&now>=c.t&&now-c.t<MK_NEW_MS)return c.n;
+ try{
+  const seen=Number(p.state.marketSeen)||0,ok=new Map();
+  const n=M.openListings().filter(l=>l.player_id!==p.id&&l.created>seen&&listingShown(l,ok,now)).length;
+  mkNew.set(p.id,{t:now,n});return n;
+ }catch{return 0;}
+}
+// For /api/me: my items in my open listings (the Garde-robe's « En vitrine »); [] rather than a broken payload.
+function marketListedOf(p){try{return [...new Set(M.openOf(p.id).flatMap(l=>l.give?.items??[]))];}catch{return [];}}
+// Live: "kind" to the players concerned, at once.
+function marketCast(ids,kind){const to=new Set(ids);for(const c of clients)if(to.has(c.playerId))sse(c.res,"market",{kind});}
+// The board changed: every screen hears it once, MK_BOARD_MS after the first change (the ones in between ride along).
+let mkBoardTimer=null;
+function marketBoardChanged(){
+ mkNew.clear();
+ if(mkBoardTimer)return;
+ mkBoardTimer=setTimeout(()=>{mkBoardTimer=null;try{broadcast("market",{kind:"board"});}catch(e){console.error("market board:",e);}},MK_BOARD_MS);mkBoardTimer.unref?.();
+}
+const marketPush=(id,text)=>notify(id,{title:"PolitiGo",body:`🧺 Brocante : ${text}`,tag:"market",url:"/"});
+// The trade itself: the author gives the listing, the taker (or the offerer) gives tGives. Every condition is checked
+// again here, then both games and the rows move in one transaction; on any error nothing moved (both states restored).
+function doTrade(l,o,taker,tGives,now){
+ const author=players.get(l.player_id),cur=M.listing(l.id);
+ if(!author||author.suspended||!players.has(taker.id)||taker.suspended||cur?.status!=="open")throw new HttpError(409,MK_GONE);
+ if(author.id===taker.id)throw new HttpError(422,"C'est ta propre annonce.");
+ if(o&&(M.offerOf(o.id)?.status!=="pending"||o.listing_id!==l.id))throw new HttpError(409,MK_GONE_O);
+ if(mkDead(cur)){mkCloseDead(cur);throw new HttpError(409,MK_GONE);}   // closed before any write, never written then rolled back
+ if(marketBlock(author,now)||marketBlock(taker,now))throw new HttpError(422,"Échange impossible pour l'instant.");
+ const aGives=cur.give;
+ // The author no longer holds it (never through the game: a state reset on load): closed when an item is gone.
+ if(MK.missing(author.state,aGives)){
+  const lost=aGives.items.filter(i=>!author.state.wardrobe.own.includes(i));
+  if(lost.length){try{const c=M.closeUsing(author.id,lost);marketCast([author.id,...c.told],"mine");marketBoardChanged();}catch(e){console.error(`market: listing ${l.id} not closed`,e);}}
+  throw new HttpError(409,MK_GONE);
+ }
+ const miss=MK.missing(taker.state,tGives);if(miss)throw new HttpError(409,miss+".");
+ if(MK.dupes(taker.state,aGives.items).length||MK.dupes(author.state,tGives.items).length)throw new HttpError(409,"Échange impossible : objet déjà possédé.");
+ const keep=[author.state,taker.state],same=sameNet(author.netFp,taker.netFp),aT=giveText(aGives),bT=giveText(tGives);
+ const closedLine=(S,n)=>{if(n)R.logEntry(S,"market",`Brocante : ${n>1?`${n} de tes annonces sont fermées`:"une de tes annonces est fermée"}, l'objet a changé de mains.`);};
+ // The staff's own checks wait for the COMMIT (as in transferBaton), then run for both.
+ batonBusy=true;let told=[];
+ try{
+ db.exec("BEGIN");
+ try{
+  try{M.trade({listingId:l.id,offerId:o?.id??null,aId:author.id,bId:taker.id,aGave:aGives,bGave:tGives,sameNet:same,now});}
+  catch(e){const m=e?.message;throw m==="Offre indisponible."?new HttpError(409,MK_GONE_O):m==="Annonce indisponible."?new HttpError(409,MK_GONE):e;}   // a failed write stays a 500
+  // Closed with the trade: each side's listings and offers holding what it gave, and its listings asking by name for
+  // what it received (they could never be taken now).
+  const ca=M.closeUsing(author.id,aGives.items),cb=M.closeUsing(taker.id,tGives.items),wa=M.closeWanting(author.id,tGives.items),wb=M.closeWanting(taker.id,aGives.items);
+  told=[ca,cb,wa,wb].flatMap(c=>c.told).filter(id=>id!==author.id&&id!==taker.id);
+  update(author,SA=>{
+   update(taker,SB=>{
+    try{MK.applyTrade(SA,aGives,SB,tGives);}catch(e){throw new HttpError(409,/\.$/.test(e.message)?e.message:e.message+".");}
+    closedLine(SB,cb.listings.length+wb.listings.length);R.logEntry(SB,"market",`Brocante : ${bT} contre ${aT} ${deName(author.name)}.`,{listing:l.id});
+   });
+   closedLine(SA,ca.listings.length+wa.listings.length);R.logEntry(SA,"market",`Brocante : ${aT} contre ${bT} ${deName(taker.name)}.`,{listing:l.id});
+  });
+  db.exec("COMMIT");
+ }catch(e){
+  try{db.exec("ROLLBACK");}catch{}author.state=keep[0];taker.state=keep[1];
+  try{pushMe(author);pushMe(taker);}catch{}   // an inner update may already have shown its side
+  throw e;
+ }
+ }finally{batonBusy=false;}
+ for(const pl of [author,taker]){try{batonCheck(pl,now);}catch(e){console.error(`player ${pl.id}: Bâton check failed`,e);}}
+ marketCast([author.id,taker.id],"trade");if(told.length)marketCast(told,"offer");marketBoardChanged();
+ if(o)marketPush(taker.id,`${author.name} a accepté ton offre : ${bT} contre ${aT}.`);
+ else marketPush(author.id,`ton annonce a trouvé preneur, ${aT} contre ${bT} ${deName(taker.name)}.`);
+ if(author.state.camp!==taker.state.camp)feedLine(author.name,"market",`🔄 ${author.name} a troqué ${aT} contre ${bT} ${deName(taker.name)}`);
+ audit("server","market-trade",author.name,`${aT} contre ${bT} ${deName(taker.name)} · même réseau : ${same?"oui":"non"}`);
+}
+// POST /api/market {op, …}: list {give, want}, withdraw {id}, take {id, give}, offer {id, give}, unoffer {id},
+// accept {id} and refuse {id} (an offer's id). Anyone signed in may look (GET); trading needs marketBlock to be "".
+async function marketRoute(req,res){
+ const p=auth(req);
+ if(limited("market:"+p.id,10,60e3))throw new HttpError(429,"Doucement : réessaie dans un instant.");
+ const b=await readJson(req);
+ if(!players.has(p.id))throw new HttpError(401,"Connexion requise.");   // deleted while the body was arriving
+ if(p.suspended)throw new HttpError(403,SUSPENDED);   // suspended while it was arriving
+ const now=Date.now(),op=typeof b.op==="string"?b.op:"?";
+ const idOf=v=>{if(!Number.isSafeInteger(v)||v<1)throw new HttpError(400,"Identifiant inconnu.");return v;};
+ const gate=()=>{const why=marketBlock(p,now);if(why)throw new HttpError(403,why);};
+ const openListing=id=>{const l=M.listing(id);if(!l||l.status!=="open")throw new HttpError(409,MK_GONE);return l;};
+ // Someone else's listing, on the board: a hidden one answers as a gone one (never why: no window on the author).
+ const others=l=>{
+  if(l.player_id===p.id)throw new HttpError(422,"C'est ta propre annonce.");
+  if(!listingShown(l,new Map(),now))throw new HttpError(409,MK_GONE);return players.get(l.player_id);
+ };
+ // What p would receive and what the other would receive: never something already owned (the other's, unnamed).
+ const noDupes=(o,give,l)=>{
+  const d=MK.dupes(p.state,l.give.items);if(d.length)throw new HttpError(422,`Tu as déjà : ${itemNames(d)}.`);
+  if(MK.dupes(o.state,give.items).length)throw new HttpError(422,"Échange impossible : objet déjà possédé.");
+ };
+ const holds=give=>{const m=MK.missing(p.state,give);if(m)throw new HttpError(422,m+".");};
+ if(op==="list"){
+  gate();
+  const give=readGive(b.give,true),want=MK.cleanWant(b.want);
+  if(!want)throw new HttpError(422,`Dis ce que tu cherches : des objets, une rareté, des bulletins (1 à ${MK.MARKET.maxBulletins}) ou une offre.`);
+  holds(give);
+  if(want.kind==="items"){const d=MK.dupes(p.state,want.items);if(d.length)throw new HttpError(422,`Tu as déjà : ${itemNames(d)}.`);}
+  const listed=new Set(M.openOf(p.id).flatMap(l=>l.give?.items??[])),twice=give.items.filter(i=>listed.has(i));
+  if(twice.length)throw new HttpError(422,`Déjà en vitrine dans une autre annonce : ${itemNames(twice)}.`);
+  // Deposit, withdraw, deposit again: 10 listings a server day, whatever became of them.
+  const day=dayNow(now);
+  if(M.listedSince(p.id,now-26*R.H).filter(t=>dayNow(t)===day).length>=MK_LISTINGS_DAY)throw new HttpError(422,`${MK_LISTINGS_DAY} annonces par jour : reviens demain.`);
+  if(M.openCount(p.id)>=MK.MARKET.maxListings)throw new HttpError(422,`${MK.MARKET.maxListings} annonces ouvertes au plus : retires-en une d'abord.`);
+  const id=M.list(p.id,give,want,now);
+  marketCast([p.id],"mine");marketBoardChanged();
+  return send(res,200,{ok:true,id});
+ }
+ if(op==="withdraw"){
+  const l=M.listing(idOf(b.id));if(!l||l.player_id!==p.id)throw new HttpError(409,MK_GONE);   // someone else's: as a missing one
+  const offerers=M.pendingOffersOn(l.id).map(o=>o.player_id);
+  if(!M.withdraw(l.id,p.id))throw new HttpError(409,MK_GONE);
+  marketCast([p.id,...offerers],"mine");marketBoardChanged();
+  return send(res,200,{ok:true});
+ }
+ if(op==="take"){
+  gate();
+  const l=openListing(idOf(b.id)),o=others(l);
+  if(l.want?.kind==="offer")throw new HttpError(422,"Cette annonce attend des offres : fais une offre.");
+  const give=readGive(b.give,false);
+  if(!MK.satisfies(l.want,give))throw new HttpError(422,"Ce n'est pas ce que demande l'annonce.");
+  holds(give);noDupes(o,give,l);
+  doTrade(l,null,p,give,now);
+  return send(res,200,{ok:true});
+ }
+ if(op==="offer"){
+  gate();
+  const l=openListing(idOf(b.id)),o=others(l),give=readGive(b.give,true);
+  holds(give);noDupes(o,give,l);
+  if(M.pendingOn(l.id,p.id))throw new HttpError(409,"Tu as déjà une offre en attente sur cette annonce.");
+  // No harassment by offer, withdraw, offer again: a refusal is final for that listing, 10 offers a server day, and
+  // the author is pushed once a day per offerer and listing.
+  if(M.refusedOn(l.id,p.id))throw new HttpError(422,"Ton offre sur cette annonce a déjà été refusée.");
+  const day=dayNow(now);
+  if(M.createdSince(p.id,now-26*R.H).filter(t=>dayNow(t)===day).length>=MK_OFFERS_DAY)throw new HttpError(422,`${MK_OFFERS_DAY} offres par jour au plus : reviens demain.`);
+  if(M.pendingCount(p.id)>=MK.MARKET.maxOffers)throw new HttpError(422,`${MK.MARKET.maxOffers} offres en attente au plus.`);
+  const first=!M.offersOf(l.id,p.id).some(x=>dayNow(x.created)===day);
+  const id=M.offer(l.id,p.id,give,now);
+  if(first)marketPush(o.id,`${p.name} te propose ${giveText(give)} pour ton annonce (${giveText(l.give)}).`);
+  marketCast([o.id,p.id],"offer");
+  return send(res,200,{ok:true,id});
+ }
+ if(op==="unoffer"){
+  const o=M.offerOf(idOf(b.id));if(!o||o.player_id!==p.id)throw new HttpError(409,MK_GONE_O);   // someone else's: as a missing one
+  if(!M.setOffer(o.id,"withdrawn"))throw new HttpError(409,MK_GONE_O);
+  const l=M.listing(o.listing_id);marketCast([p.id,...(l?[l.player_id]:[])],"offer");
+  return send(res,200,{ok:true});
+ }
+ if(op==="accept"||op==="refuse"){
+  const o=M.offerOf(idOf(b.id)),l=o&&M.listing(o.listing_id);
+  if(!l||l.player_id!==p.id)throw new HttpError(409,MK_GONE_O);   // not on my listing: as a missing one
+  if(l.status!=="open")throw new HttpError(409,MK_GONE);
+  if(o.status!=="pending")throw new HttpError(409,MK_GONE_O);
+  const from=players.get(o.player_id);
+  if(op==="refuse"){
+   if(!M.setOffer(o.id,"refused"))throw new HttpError(409,MK_GONE_O);
+   if(from){marketPush(from.id,`${p.name} a refusé ton offre (${giveText(o.give)}).`);marketCast([from.id,p.id],"offer");}
+   return send(res,200,{ok:true});
+  }
+  gate();
+  if(!from)throw new HttpError(409,MK_GONE_O);   // a deleted offerer's offers are closed with the account
+  // An offerer who cannot trade right now: refused, the offer stays pending.
+  if(from.suspended||marketBlock(from,now))throw new HttpError(422,`${from.name} ne peut pas échanger pour l'instant : son offre reste en attente.`);
+  // An offer that can never go through any more is closed.
+  const close=why=>{M.setOffer(o.id,"closed");marketCast([from.id,p.id],"offer");return new HttpError(409,`L'offre ne tient plus : ${why}.`);};
+  if(mkDead(o))throw close("un des objets proposés ne s'échange plus");
+  if(MK.missing(from.state,o.give))throw close(`${from.name} n'a plus ce qu'il proposait`);
+  let d=MK.dupes(from.state,l.give.items);if(d.length)throw close(`${from.name} a déjà ${itemNames(d)}`);
+  d=MK.dupes(p.state,o.give.items);if(d.length)throw close(`tu as déjà ${itemNames(d)}`);
+  doTrade(l,o,from,o.give,now);
+  return send(res,200,{ok:true});
+ }
+ throw new HttpError(400,"Opération inconnue.");
+}
+
+// ===================================================================== LA NUIT DU COLLAGE (wall.mjs: the rules, wallstore.mjs: the rows)
+// One brush stroke per poster: "start" opens an attempt (in memory, one per player, its seed never re-drawn), "stop"
+// pastes it on the live cell in one transaction (cells, the day's row, the XP and the journal). The quality is the
+// server's: a time longer than what really elapsed (+1 s), too quick or nonsense is « bâclé ». An attempt not stopped
+// within WALL_ATTEMPT_MS pastes nothing but its poster is spent (quota only, never active). Open 24/7: night and nap never block.
+const WS=createWall(db);
+const WALL_ATTEMPT_MS=10e3,WALL_CAST_MS=3e3,WALL_GONE="Ce coup de pinceau n'est plus valable.";
+const wallAttempts=new Map();   // playerId -> {id, seed, g, t0, timer}
+const wallHour=now=>R.hodOf(Math.floor(now/R.H));
+const WALL_WORD={posee:"posée",rafraichie:"rafraîchie",abimee:"abîmée",prise:"prise"};
+// An attempt past its time: forgotten, its poster spent (on the day it expires) without making its player active. Never throws.
+function wallExpire(p,a,now){
+ if(wallAttempts.get(p.id)!==a)return;
+ wallAttempts.delete(p.id);clearTimeout(a.timer);
+ try{if(players.has(p.id))WS.spend(dayNow(now),p.id,p.state.camp);}catch(e){console.error(`wall: expired attempt of player ${p.id} not noted`,e);}
+ try{if(players.has(p.id))pushMe(p);}catch{}
+}
+const wallLive=(p,now)=>{const a=wallAttempts.get(p.id);if(a&&now-a.t0>WALL_ATTEMPT_MS)wallExpire(p,a,now);return wallAttempts.get(p.id)??null;};
+// Posters left today: the quota, less the noted ones and the attempt in progress (0 rather than a broken payload).
+function wallLeftOf(p,now){try{return Math.max(0,WL.DAILY_QUOTA-WS.used(dayNow(now),p.id)-(wallLive(p,now)?1:0));}catch{return 0;}}
+const wallCounts=(cells,now)=>{const n=WL.countWall(cells,now);return {left:n.left,right:n.right};};
+// The next Paris midnight, when the night is counted.
+const wallClosesAt=now=>{const w=wall(now);return wallToUtc(w.year,w.month,w.day+1,0,0);};
+function wallView(p,now){
+ const st=WS.settle(now),cells=st.cells,day=dayNow(now),active=WS.active(day),a=wallLive(p,now),t=WS.title(now),tp=t&&players.get(t.playerId);
+ if(st.changed)wallChanged();   // a poster reached its 48 h since the last tick: the other screens hear it too
+ return {cells,walls:WL.wallCount(cells),now,counts:wallCounts(cells,now),active,volunteers:WL.volunteerCounts(active),left:wallLeftOf(p,now),
+  attempt:a?{id:a.id,seed:a.seed,g:a.g,t0:a.t0}:null,title:tp?{name:tp.name,camp:tp.state.camp}:null,closesAt:wallClosesAt(now)};
+}
+// The walls changed: every screen hears it once, WALL_CAST_MS after the first change (the ones in between ride along).
+let wallTimer=null;
+function wallChanged(){
+ if(wallTimer)return;
+ wallTimer=setTimeout(()=>{wallTimer=null;try{const now=Date.now(),cells=WS.cells(now);broadcast("wall",{cells,counts:wallCounts(cells,now),walls:WL.wallCount(cells)});}catch(e){console.error("wall cast:",e);}},WALL_CAST_MS);
+ wallTimer.unref?.();
+}
+// POST /api/wall {op:"start", g} → {id, seed, t0}; {op:"stop", id, ms} → {quality, outcome, cell, xp, left, opened?}.
+async function wallRoute(req,res){
+ const p=auth(req);
+ if(limited("wall:"+p.id,30,60e3))throw new HttpError(429,"Doucement : réessaie dans un instant.");
+ const b=await readJson(req);
+ if(!players.has(p.id))throw new HttpError(401,"Connexion requise.");   // deleted while the body was arriving
+ if(p.suspended)throw new HttpError(403,SUSPENDED);   // suspended while it was arriving
+ const now=Date.now(),op=typeof b.op==="string"?b.op:"?";
+ if(op==="start"){
+  if(wallLive(p,now))throw new HttpError(409,"Un coup de pinceau est déjà en cours.");
+  const why=WL.wallBlock(p.state,{minLevel:WALL_MIN_LEVEL,used:WS.used(dayNow(now),p.id)});if(why)throw new HttpError(422,why);
+  const cells=WS.cells(now),g=b.g;
+  if(!Number.isInteger(g)||g<0||g>=cells.length)throw new HttpError(400,"Case inconnue.");
+  const a={id:crypto.randomBytes(12).toString("base64url"),seed:crypto.randomInt(0,2**32),g,t0:now,timer:null};
+  a.timer=setTimeout(()=>wallExpire(p,a,Date.now()),WALL_ATTEMPT_MS+50);a.timer.unref?.();
+  wallAttempts.set(p.id,a);
+  try{pushMe(p);}catch{}
+  return send(res,200,{ok:true,id:a.id,seed:a.seed,t0:a.t0});
+ }
+ if(op==="stop"){
+  // Someone else's id, an unknown one, a second stop: the same answer, and nobody's attempt is touched.
+  const a=wallAttempts.get(p.id);
+  if(!a||typeof b.id!=="string"||b.id!==a.id)throw new HttpError(409,WALL_GONE);
+  if(now-a.t0>WALL_ATTEMPT_MS){wallExpire(p,a,now);throw new HttpError(409,WALL_GONE);}
+  wallAttempts.delete(p.id);clearTimeout(a.timer);
+  const ms=typeof b.ms==="number"?b.ms:NaN,q=WL.brushTimeOk(ms,now-a.t0)?WL.brushQuality(a.seed,ms):"bacle";
+  const camp=p.state.camp,hour=wallHour(now),xp=WL.wallXp(q,hour,fxOf(p)(now).xp.wall),day=dayNow(now);
+  const keep=p.state;let r=null,opened,gone=false;
+  batonBusy=true;db.exec("BEGIN");
+  try{
+   const cells=WS.cells(now);
+   if(a.g>=cells.length)gone=true;   // its wall vanished meanwhile (emptied by wear): the poster is spent all the same
+   else{
+    r=WL.pasteEffect(cells[a.g],{camp,quality:q,by:p.id,name:p.name,now,motif:a.seed%1000});
+    const next=cells.slice();next[a.g]=r.cell;
+    const settled=WL.settleWalls(next,now).cells,n=WL.wallCount(settled);
+    if(n>WL.wallCount(cells))opened=n-1;
+    WS.setCells(settled,cells);
+   }
+   if(r)WS.noteColleur(day,p.id,camp,WL.isUseful(r.outcome),now);else WS.spend(day,p.id,camp);
+   if(r)update(p,S=>{R.advance(S,now,SPEED,rand,fxOf(p));R.addXp(S,xp);
+    R.logEntry(S,"wall",`${WL.isWallNight(hour)?"Nuit du collage":"Collage"} : affiche ${WALL_WORD[r.outcome]} en ${WL.cellLabel(a.g)} (${WL.QUALITY_LABEL[q]}, +${xp} XP).`,{g:a.g,outcome:r.outcome,quality:q});});
+   db.exec("COMMIT");
+  }catch(e){try{db.exec("ROLLBACK");}catch{}p.state=keep;try{pushMe(p);}catch{}throw e;}
+  finally{batonBusy=false;}
+  try{batonCheck(p,now);}catch(e){console.error(`player ${p.id}: Bâton check failed`,e);}
+  if(gone){try{pushMe(p);}catch{}throw new HttpError(409,"Ce mur a disparu : l'affiche n'a pas été posée.");}
+  wallChanged();
+  return send(res,200,{ok:true,quality:q,outcome:r.outcome,g:a.g,cell:r.cell,xp,left:wallLeftOf(p,now),...(opened!==undefined?{opened}:{})});
+ }
+ throw new HttpError(400,"Opération inconnue.");
+}
+// ---- The wall's clock (every sweep): the wear, the volunteers' waves, the night at Paris midnight, the week on Monday.
+// Each is done once, kept in a setting: wall_wave = "day:wave", wall_night_closed = the last closed day, wall_week_closed
+// = the last closed week. After a downtime only the latest due wave, the last night and the last week are done.
+const WALL_NIGHT_JOURNAL="🖌️ Nuit du collage : ton camp a tenu le mur. +1 bulletin.";
+// The day key n days from a day key, by the calendar (a 23 h or 25 h day never skips nor repeats one); the days between two.
+const dayUtc=k=>Date.UTC(Math.floor(k/10000),Math.floor(k/100)%100-1,k%100);
+const dayShift=(k,n)=>{const d=new Date(dayUtc(k)+n*864e5);return d.getUTCFullYear()*10000+(d.getUTCMonth()+1)*100+d.getUTCDate();};
+const dayGap=(a,b)=>Math.round((dayUtc(b)-dayUtc(a))/864e5);
+function wallTick(now){
+ const day=dayNow(now),step=(what,fn)=>{try{fn();}catch(e){console.error(`wall tick, ${what}:`,e);}};
+ step("wear",()=>{if(WS.settle(now).changed)wallChanged();});
+ step("volunteers",()=>{
+  let i=-1;const h=wallHour(now);for(const [k,wh] of WL.WAVE_HOURS.entries())if(h>=wh)i=k;
+  if(i<0)return;
+  const [d,w]=String(getSetting("wall_wave")??"").split(":").map(Number);
+  if(d===day&&w>=i)return;
+  wallWave(day,i,now);
+ });
+ step("night",()=>{
+  const last=Number(getSetting("wall_night_closed"))||0,prev=dayShift(day,-1);
+  if(last<prev){
+   const gap=last?dayGap(last,prev)-1:0;   // the nights between the last closed one and yesterday: skipped
+   if(gap>0)audit("server","wall-night-skip",`${dayShift(last,1)}-${dayShift(prev,-1)}`,`${gap} nuit${gap>1?"s":""} non close${gap>1?"s":""} (serveur arrêté) : seule la dernière compte`);
+   if(WS.nightClosed(prev))setSetting("wall_night_closed",String(prev));else closeWallNight(prev,now);
+  }
+  if(WALL_CLOSE_AT!==null&&now>=WALL_CLOSE_AT){const d=dayNow(WALL_CLOSE_AT);if(!WS.nightClosed(d))closeWallNight(d,now);}
+ });
+ step("week",()=>{
+  const wk=WL.weekOf(day)-1;
+  if((Number(getSetting("wall_week_closed"))||0)<wk)closeWallWeek(wk);
+ });
+}
+// One wave: each minority volunteer pastes one « bon » poster (planWave: a volunteer appearing late only gets the waves
+// left, one per wave), by nobody, no XP, never an active colleur. The cells, the count and the setting in one transaction.
+function wallWave(day,i,now){
+ const before=WS.cells(now),vc=WL.volunteerCounts(WS.active(day)),done={left:0,right:0};
+ let cells=before;
+ for(const camp of WL.CAMPS){
+  const n=vc[camp];if(!n)continue;
+  const {posters}=WL.planWave(Array(n).fill(WL.WAVE_HOURS.length-i),n,i);
+  const r=WL.runVolunteers(cells,{camp,posters,now,seed:WL.hash32("wall-wave",day,i,camp)});
+  cells=r.wall;done[camp]=r.actions.length;
+ }
+ db.exec("BEGIN");
+ try{
+  if(done.left||done.right)WS.setCells(cells,before);
+  for(const camp of WL.CAMPS)if(done[camp])WS.addVolunteerUsed(day,camp,done[camp]);
+  setSetting("wall_wave",`${day}:${i}`);
+  db.exec("COMMIT");
+ }catch(e){try{db.exec("ROLLBACK");}catch{}throw e;}
+ if(done.left||done.right){console.log(`Collage: volunteers' wave ${i} of ${day}, left ${done.left}, right ${done.right}`);wallChanged();}
+}
+// The night: the walls counted now, the winners (scoreNight: only a camp with an active human colleur that day), one
+// bulletin to each of the winning camps' colleurs of the day, the night's row and the setting in ONE transaction, as
+// closeFront: an error pays nobody, puts the live states back and is retried at the next tick. Then the feed line (none
+// when nobody wins) and, when anybody pasted that day, the admin log.
+function closeWallNight(day,now){
+ const cells=WS.cells(now),n=WL.countWall(cells,now),counts={left:n.left,right:n.right},active=WS.active(day);
+ const {winners}=WL.scoreNight(counts,active),can=WL.CAMPS.filter(c=>active[c]>0),keep=new Map();let paid=0;
+ batonBusy=true;db.exec("BEGIN");
+ try{
+  for(const camp of winners)for(const id of WS.colleurs(day,camp)){
+   const p=players.get(id);if(!p||p.suspended)continue;
+   keep.set(id,p.state);let credited=false;
+   update(p,S=>{const w=S.wardrobe;if(!w)return false;credited=true;const b=Number.isFinite(w.bulletins)?w.bulletins:0;w.bulletins=Math.min(9999,b+1);
+    R.logEntry(S,"wall",WALL_NIGHT_JOURNAL,{bulletins:1});});
+   if(credited)paid++;
+  }
+  WS.closeNight(day,{...counts,winners,paid,at:now});
+  setSetting("wall_night_closed",String(Math.max(day,Number(getSetting("wall_night_closed"))||0)));
+  db.exec("COMMIT");
+ }catch(e){
+  try{db.exec("ROLLBACK");}catch{}
+  for(const [id,st] of keep){const p=players.get(id);if(p)p.state=st;}
+  console.error(`Collage night ${day} NOT closed (retried at the next tick):`,e);return;
+ }finally{batonBusy=false;}
+ console.log(`Collage night ${day} closed: left ${counts.left}, right ${counts.right}, winners ${winners.join("+")||"none"}, ${paid} player(s) paid`);
+ const line=WL.nightLine(winners,counts,can);if(line)feedLine("PolitiGo","wall",line);
+ if(can.length)audit("server","wall-night",String(day),`Gauche ${counts.left} · Droite ${counts.right} · ${winners.length===2?"égalité":winners.length?`${WL.CAMP_NAME[winners[0]]} gagne`:"personne ne gagne"} · +1 bulletin à ${paid} joueur${paid>1?"s":""}`);
+}
+// The week: its champion (most poses on an empty cell and captures, the earliest to the score on a tie) wears the title
+// the following week. A week nobody pasted usefully closes quietly.
+function closeWallWeek(wk){
+ const champ=WS.week(wk).find(r=>players.has(r.playerId))??null;
+ db.exec("BEGIN");
+ try{if(champ)WS.setTitle(wk,champ.playerId);setSetting("wall_week_closed",String(wk));db.exec("COMMIT");}
+ catch(e){try{db.exec("ROLLBACK");}catch{}throw e;}
+ publishBoard();   // last week's title leaves its card, this one's arrives
+ if(!champ)return;
+ const name=players.get(champ.playerId).name,n=champ.useful;
+ feedLine("PolitiGo","wall",`🖌️ Colleur de la semaine : ${name} (${n} collage${n>1?"s":""} utile${n>1?"s":""}).`);
+ audit("server","wall-week",name,`Semaine ${wk} · ${n} collage${n>1?"s":""} utile${n>1?"s":""}`);
+}
+
 // ===================================================================== ROUTES
 async function route(req,res){
  // Only the path matters, and an odd request target ("//", "//host") is just not found, never a 500.
@@ -1639,7 +2120,7 @@ async function route(req,res){
   db.exec("BEGIN IMMEDIATE");
   try{seat();({lastInsertRowid}=q.insertPlayer.run(Number(getSetting("playerFloor"))||0,name,nameKey(name),pass,now,JSON.stringify(state),R.score(state),now,RELEASE));db.exec("COMMIT");}
   catch(e){db.exec("ROLLBACK");giveBack();throw e;}
-  const p={id:Number(lastInsertRowid),name,created:now,state,seen:RELEASE};players.set(p.id,p);touchSeen(p,now);   // a new player has nothing to catch up on
+  const p={id:Number(lastInsertRowid),name,created:now,state,seen:RELEASE,netFp:""};players.set(p.id,p);noteNet(p,ip);touchSeen(p,now);   // a new player has nothing to catch up on
   // The account exists from here on: a failed announcement must not turn the sign-up into an error.
   try{const feed=newFeedEntries(p,0);if(feed.length)broadcast("feed",feed);publishBoard();}catch(e){console.error("register: announce failed",e);}
   return send(res,201,mePayload(p),{"Set-Cookie":startSession(p.id)});
@@ -1657,7 +2138,7 @@ async function route(req,res){
   const p=row&&players.get(row.id);
   if(!p||!okPw||q.playerByKey.get(key)?.pass!==row.pass)throw new HttpError(401,"Pseudo ou mot de passe incorrect.");
   if(p.suspended)throw new HttpError(403,SUSPENDED);   // only said to whoever knows the password
-  touchSeen(p);
+  noteNet(p,ip);touchSeen(p);
   return send(res,200,mePayload(p),{"Set-Cookie":startSession(p.id)});
  }
  if(path==="/api/logout"&&method==="POST"){
@@ -1717,6 +2198,20 @@ async function route(req,res){
   const p=auth(req);if(limited("snowchs:"+p.id,30,10e3))throw new HttpError(429,"Doucement : réessaie dans un instant.");
   return send(res,200,{ok:true,...snowChallengesView(p,Date.now())});
  }
+ if(path==="/api/market"&&method==="GET"){
+  const p=auth(req);if(limited("marketget:"+p.id,30,10e3))throw new HttpError(429,"Doucement : réessaie dans un instant.");
+  const now=Date.now(),v=marketView(p,now);
+  // The "new listings" count starts again from here (no journal line); in memory at once, written at most every 30 s.
+  update(p,S=>{const write=!(now-(Number(S.marketSeen)||0)<MK_SEEN_WRITE);S.marketSeen=now;return write?undefined:false;});
+  mkNew.delete(p.id);
+  return send(res,200,{ok:true,...v});
+ }
+ if(path==="/api/market"&&method==="POST")return marketRoute(req,res).finally(()=>{if(deferred.size)flushDeferred();});
+ if(path==="/api/wall"&&method==="GET"){
+  const p=auth(req);if(limited("wallget:"+p.id,30,10e3))throw new HttpError(429,"Doucement : réessaie dans un instant.");
+  return send(res,200,{ok:true,...wallView(p,Date.now())});
+ }
+ if(path==="/api/wall"&&method==="POST")return wallRoute(req,res).finally(()=>{if(deferred.size)flushDeferred();});
  if(path==="/api/debate"&&method==="POST")return debateRoute(req,res).finally(()=>{if(deferred.size)flushDeferred();});
  if(path==="/api/duels"&&method==="GET"){
   const p=auth(req),now=Date.now();
@@ -1813,7 +2308,7 @@ const adminActor=new AsyncLocalStorage();
 // The weighty commands keep a quota of their own: a flood of small ones (a chat-mute sent a thousand times) cannot
 // push the evidence out. The same command repeated (same author, target and detail, within AUDIT_SAME) is one row "×N".
 const AUDIT_KEY=["player-delete","player-protect","suspend","rename","reset-password","signout","invite-regenerate","registrations-set","chat-set","event-set",
- "mythic-reset","mythic-release","duel-annul","baton-judge","backup","backup-note"];
+ "mythic-reset","mythic-release","duel-annul","baton-judge","backup","backup-note","market-withdraw"];
 const AUDIT_KEEP=1000,AUDIT_KEEP_KEY=2000,AUDIT_SAME=10*6e4,AUDIT_IN=`cmd IN (${AUDIT_KEY.map(c=>`'${c}'`).join(",")})`;
 const auditQ={
  trimRest:db.prepare(`DELETE FROM admin_log WHERE NOT ${AUDIT_IN} AND id<=(SELECT id FROM admin_log WHERE NOT ${AUDIT_IN} ORDER BY id DESC LIMIT 1 OFFSET ${AUDIT_KEEP})`),
@@ -2346,6 +2841,7 @@ function chores(now){
  q.purgeDuels.run(now-30*864e5);q.purgeTombstones.run(now-7*864e5);q.purgeAcks.run(now-ALERT_DAYS*864e5);
  for(const dir of new Set([ADMIN_SOCKET&&dirname(ADMIN_SOCKET),dirname(DB_PATH)].filter(Boolean)))sweepBackups(dir,now);
  try{snowChTick(now);}catch(e){console.error("chores, snow challenges:",e);}
+ try{M.purge(now-30*864e5);}catch(e){console.error("chores, market purge:",e);}   // decided offers, dead listings; never trades
 }
 // Backup copies older than 10 min that nothing took away: cut short by a full disk (its journal too), or left next to
 // the database by a stop in the middle of a transfer over the network link.
@@ -2373,12 +2869,18 @@ function removePlayer(p){
  }
  try{snowChCancelOf(p.id,now);}catch(e){console.error("snow challenges, deleting a player:",e);}
  db.exec("BEGIN");
- try{q.freeMythicsOf.run(p.id);q.deleteSchedulesTo.run(p.id);q.deletePlayer.run(p.id);q.tombstone.run(nameKey(p.name),p.created,now);q.deleteFeedOf.run(p.name);setSetting("playerFloor",String(Math.max(p.id,Number(getSetting("playerFloor"))||0)));db.exec("COMMIT");}catch(e){db.exec("ROLLBACK");throw e;}
+ // Their listings and pending offers close with the account (the rows stay for the trade history), both ways.
+ const hadListings=M.openCount(p.id)>0;let told=[];
+ // Their posters stay on the walls, nameless (« ancien élu »); their day and title rows go.
+ try{told=M.removePlayer(p.id);WS.removePlayer(p.id);q.freeMythicsOf.run(p.id);q.deleteSchedulesTo.run(p.id);q.deletePlayer.run(p.id);q.tombstone.run(nameKey(p.name),p.created,now);q.deleteFeedOf.run(p.name);setSetting("playerFloor",String(Math.max(p.id,Number(getSetting("playerFloor"))||0)));db.exec("COMMIT");}catch(e){db.exec("ROLLBACK");throw e;}
  players.delete(p.id);deferred.delete(p.id);soloTurns.delete(p.id);cleanCache.delete(p.id);   // a staff they held is back in the urn
  try{broadcast("feedInit",q.recentFeed.all(40));}catch(e){console.error("feed after deleting a player:",e);}
  try{after?.();}catch(e){console.error("chat, after deleting a player:",e);}
  try{chat.playerDeleted(p.id);}catch(e){console.error("chat, deleted player:",e);}
  for(const c of [...clients])if(c.playerId===p.id)closeStream(c,true);
+ mkNew.delete(p.id);if(hadListings)marketBoardChanged();
+ {const a=wallAttempts.get(p.id);if(a){clearTimeout(a.timer);wallAttempts.delete(p.id);}}wallChanged();
+ if(told.length)marketCast(told,"offer");   // the other side of the listings and offers closed with the account
  publishBoard(true);   // gone from every board at once
 }
 function closeStreamsOf(id){for(const c of [...clients])if(c.playerId===id)closeStream(c);}
@@ -2419,10 +2921,12 @@ function suspend(p,on){
   for(const d of q.openDuelsOf.all(p.id,p.id)){try{voidDuel(d,now);}catch(e){console.error(`suspend, duel ${d.id}:`,e);}}
   for(const r of bq.open.all())if(r.challenger===p.id||r.bearer===p.id){try{voidBaton(bLoad(r),now);}catch(e){console.error(`suspend, baton duel ${r.id}:`,e);}}
   try{snowChCancelOf(p.id,now);}catch(e){console.error(`suspend, snow challenges of ${p.id}:`,e);}
+  if(M.openCount(p.id))marketBoardChanged();   // their listings leave the board (hidden, not closed)
+  {const a=wallAttempts.get(p.id);if(a){clearTimeout(a.timer);wallAttempts.delete(p.id);}}   // a brush stroke in progress pastes nothing
   publishBoard(true);
  }else{
   // Back on the real hour: the suspension is skipped, not played.
-  q.setSuspended.run(0,p.id);p.suspended=false;
+  q.setSuspended.run(0,p.id);p.suspended=false;if(M.openCount(p.id))marketBoardChanged();
   update(p,S=>{R.resync(S,now,"suspension");});
  }
 }
@@ -2669,6 +3173,42 @@ async function adminCommand(b){
  // Read-only: the recent snowball challenges, the defender's score and the flags of their fight (counted 0 when a bot's).
  if(cmd==="snow-challenges")return {items:snowCh.recent(limitOf(b.limit,50,200)).map(r=>({id:r.id,challenger:nameOf(r.challenger),defender:nameOf(r.defender),
   score:r.score,dScore:r.dScore,rawScore:r.dRaw,status:r.status,created:r.created,expires:r.expires,closed:r.closed,winner:r.status==="done"&&r.winner!==null?nameOf(r.winner):null,dFlags:r.dFlags??[]}))};
+ // The Brocante, read-only: the latest trades, the open listings (with their pending offers) and the pairs of players who
+ // traded at least twice in 30 days. Same network is a yes/no: never an address nor a fingerprint.
+ if(cmd==="market-list"){
+  const who=id=>({name:nameOf(id),camp:players.get(id)?.state.camp??null});
+  const named=g=>g&&Array.isArray(g.items)?{...g,names:g.items.map(i=>W.ITEMS[i]?.name??i)}:g;   // the console shows names, not ids
+  const trades=M.recent(limitOf(b.limit,50,200)).map(t=>({id:t.id,created:t.created,a:who(t.a_id),b:who(t.b_id),aGave:named(t.a_gave),bGave:named(t.b_gave),sameNet:!!t.same_net}));
+  const listings=M.openListings().map(l=>({id:l.id,created:l.created,author:who(l.player_id),give:named(l.give),want:named(l.want),offers:M.pendingOffersOn(l.id).length}));
+  const byPair=new Map();
+  for(const t of M.tradesSince(now-30*864e5)){
+   const k=t.a_id<t.b_id?`${t.a_id}:${t.b_id}`:`${t.b_id}:${t.a_id}`,e=byPair.get(k)??{a:who(Math.min(t.a_id,t.b_id)),b:who(Math.max(t.a_id,t.b_id)),n:0,sameNet:false};
+   e.n++;if(t.same_net)e.sameNet=true;byPair.set(k,e);
+  }
+  const pairs=[...byPair.values()].filter(e=>e.n>=2).sort((x,y)=>y.n-x.n).slice(0,20);
+  return {trades,listings,pairs};
+ }
+ // The Nuit du collage, read-only: the last 30 nights, today's colleurs and volunteers, the walls and their counts, the
+ // title worn now. Names only: never an id, an address or a fingerprint.
+ if(cmd==="wall-list"){
+  const cells=WS.cells(now),active=WS.active(dayNow(now)),t=WS.title(now),tp=t&&players.get(t.playerId);
+  return {nights:WS.history(30),walls:WL.wallCount(cells),counts:wallCounts(cells,now),active,volunteers:WL.volunteerCounts(active),title:tp?{name:tp.name,camp:tp.state.camp}:null};
+ }
+ if(cmd==="market-withdraw"){
+  const l=Number.isSafeInteger(b.id)&&M.listing(b.id);
+  if(!l||l.status!=="open")throw new HttpError(404,"Annonce introuvable ou déjà fermée.");
+  guard(l.player_id);
+  const offerers=M.pendingOffersOn(l.id).map(o=>o.player_id);
+  if(!M.adminWithdraw(l.id))throw new HttpError(404,"Annonce introuvable ou déjà fermée.");
+  const author=players.get(l.player_id);
+  if(author){
+   try{update(author,S=>{R.logEntry(S,"market","Ton annonce a été retirée par l'organisation.",{listing:l.id});});}catch(e){console.error(`market: journal line not written for ${author.id}`,e);}
+   marketCast([author.id,...offerers],"mine");
+  }
+  marketBoardChanged();
+  audit(via,cmd,nameOf(l.player_id),`Annonce #${l.id} retirée (${giveText(l.give)})`);
+  return {};
+ }
  if(cmd==="duel-cancel"){
   const d=Number.isSafeInteger(b.id)&&q.duel.get(b.id);
   if(d){guard(d.challenger);guard(d.defender);}
