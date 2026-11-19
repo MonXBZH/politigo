@@ -142,8 +142,9 @@ it("one attempt at a time; the cell must exist",async()=>{
  assert.equal((await view(a)).attempt,null);
 });
 
-it("an expired attempt pastes nothing and still used the quota",async()=>{
+it("an expired attempt pastes nothing, still used the quota, and does not make its player active",async()=>{
  const a=await cp("Lent Colle","left");
+ const act0=(await view(a)).active;
  const s=await start(a,44);assert.equal(s.status,200);
  await sleep(10_600);
  const r=await stopAt(a,s.json.id,1000);assert.equal(r.status,409);assert.equal(r.json.error,GONE);
@@ -152,6 +153,36 @@ it("an expired attempt pastes nothing and still used the quota",async()=>{
  const s2=await start(a,45);assert.equal(s2.status,200);
  await sleep(10_600);
  assert.equal((await view(a)).left,DAILY_QUOTA-2);assert.equal((await view(a)).cells[45],null);
+ assert.deepEqual((await view(a)).active,act0,"two lost posters: not an active colleur");
+ // a real paste does make him one
+ await paste(a,44);
+ assert.deepEqual((await view(a)).active,{...act0,left:act0.left+1});
+});
+
+it("a stop on a wall that vanished meanwhile pastes nothing, spends the poster, and does not make its player active",async()=>{
+ const d=mkdtempSync(join(tmpdir(),"wall-")),port=18964,sock=join(d,"admin.sock");
+ let s=await boot(port,d,env(d));
+ try{
+  const a=await colleur(port,sock,"Mur Perdu","left");
+  await stop(s);
+  // wall 1 full (nobody's posters), so wall 2 is open and empty
+  let db=new DatabaseSync(join(d,"t.db"));
+  const put=db.prepare("INSERT INTO wall_cells(g,camp,by,name,vol,sol,at,motif) VALUES(?,?,NULL,'X',0,2,?,0)");
+  for(let g=0;g<WALL_CELLS;g++)put.run(g,g%2?"left":"right",Date.now());
+  db.close();
+  s=await boot(port,d,env(d));
+  assert.equal((await view(a)).walls,2);
+  const st=await start(a,WALL_CELLS);assert.equal(st.status,200,JSON.stringify(st.json));
+  // a poster of wall 1 reaches its 48 h: wall 1 has a hole, the empty wall 2 goes
+  db=new DatabaseSync(join(d,"t.db"),{timeout:5000});db.prepare("UPDATE wall_cells SET at=? WHERE g=0").run(Date.now()-49*R.H);db.close();
+  const r=await stopAt(a,st.json.id,BRUSH_MS);
+  assert.equal(r.status,409);assert.equal(r.json.error,"Ce mur a disparu : l'affiche n'a pas été posée.");
+  const v=await view(a);
+  assert.equal(v.walls,1);assert.equal(v.left,DAILY_QUOTA-1,"the poster is spent");
+  assert.deepEqual(v.active,{left:0,right:0},"not an active colleur");
+  await paste(a,0);
+  assert.deepEqual((await view(a)).active,{left:1,right:0});
+ }finally{await stop(s);}
 });
 
 it("the live event: another client hears the wall change (coalesced)",async()=>{

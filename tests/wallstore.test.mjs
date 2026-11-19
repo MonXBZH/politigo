@@ -68,6 +68,21 @@ test("noteColleur twice keeps one row and sums; active counts distinct humans pe
  assert.equal(W.used(20261117,1),0);assert.equal(W.used(20261118,9),0);
 });
 
+test("a spent poster counts for the quota, never for the activity; a real paste does both",()=>{
+ const {W,db}=fresh();
+ W.spend(20261118,7,"right");W.spend(20261118,7,"right");
+ assert.equal(W.used(20261118,7),2);
+ assert.deepEqual(W.active(20261118),{left:0,right:0});assert.deepEqual(W.colleurs(20261118,"right"),[]);
+ const row=db.prepare("SELECT pasted,spent,useful FROM wall_days WHERE player_id=7").get();
+ assert.deepEqual([row.pasted,row.spent,row.useful],[0,2,0]);
+ W.noteColleur(20261118,7,"right",true,NOW);
+ assert.equal(W.used(20261118,7),3);
+ assert.deepEqual(W.active(20261118),{left:0,right:1});assert.deepEqual(W.colleurs(20261118,"right"),[7]);
+ // the week's ranking only knows useful pastes: a spent poster adds nothing
+ W.spend(20261119,8,"left");
+ assert.deepEqual(W.week(weekOf(20261118)).map(r=>r.playerId),[7]);
+});
+
 test("volunteer budget accumulates per day and camp",()=>{
  const {W}=fresh();
  assert.equal(W.volunteerUsed(20261118,"left"),0);

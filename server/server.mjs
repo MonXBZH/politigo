@@ -1878,17 +1878,17 @@ async function marketRoute(req,res){
 // One brush stroke per poster: "start" opens an attempt (in memory, one per player, its seed never re-drawn), "stop"
 // pastes it on the live cell in one transaction (cells, the day's row, the XP and the journal). The quality is the
 // server's: a time longer than what really elapsed (+1 s), too quick or nonsense is « bâclé ». An attempt not stopped
-// within WALL_ATTEMPT_MS pastes nothing but its poster is spent (noted at expiry). Open 24/7: night and nap never block.
+// within WALL_ATTEMPT_MS pastes nothing but its poster is spent (quota only, never active). Open 24/7: night and nap never block.
 const WS=createWall(db);
 const WALL_ATTEMPT_MS=10e3,WALL_CAST_MS=3e3,WALL_GONE="Ce coup de pinceau n'est plus valable.";
 const wallAttempts=new Map();   // playerId -> {id, seed, g, t0, timer}
 const wallHour=now=>R.hodOf(Math.floor(now/R.H));
 const WALL_WORD={posee:"posée",rafraichie:"rafraîchie",abimee:"abîmée",prise:"prise"};
-// An attempt past its time: forgotten, its poster noted as used (on the day it expires). Never throws.
+// An attempt past its time: forgotten, its poster spent (on the day it expires) without making its player active. Never throws.
 function wallExpire(p,a,now){
  if(wallAttempts.get(p.id)!==a)return;
  wallAttempts.delete(p.id);clearTimeout(a.timer);
- try{if(players.has(p.id))WS.noteColleur(dayNow(now),p.id,p.state.camp,false,now);}catch(e){console.error(`wall: expired attempt of player ${p.id} not noted`,e);}
+ try{if(players.has(p.id))WS.spend(dayNow(now),p.id,p.state.camp);}catch(e){console.error(`wall: expired attempt of player ${p.id} not noted`,e);}
  try{if(players.has(p.id))pushMe(p);}catch{}
 }
 const wallLive=(p,now)=>{const a=wallAttempts.get(p.id);if(a&&now-a.t0>WALL_ATTEMPT_MS)wallExpire(p,a,now);return wallAttempts.get(p.id)??null;};
@@ -1948,7 +1948,7 @@ async function wallRoute(req,res){
     if(n>WL.wallCount(cells))opened=n-1;
     WS.setCells(settled,cells);
    }
-   WS.noteColleur(day,p.id,camp,!!r&&WL.isUseful(r.outcome),now);
+   if(r)WS.noteColleur(day,p.id,camp,WL.isUseful(r.outcome),now);else WS.spend(day,p.id,camp);
    if(r)update(p,S=>{R.advance(S,now,SPEED,rand,fxOf(p));R.addXp(S,xp);
     R.logEntry(S,"wall",`${WL.isWallNight(hour)?"Nuit du collage":"Collage"} : affiche ${WALL_WORD[r.outcome]} en ${WL.cellLabel(a.g)} (${WL.QUALITY_LABEL[q]}, +${xp} XP).`,{g:a.g,outcome:r.outcome,quality:q});});
    db.exec("COMMIT");
