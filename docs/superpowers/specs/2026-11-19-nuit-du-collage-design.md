@@ -113,6 +113,13 @@ change d'aspect d'un jour à l'autre ; le camp minoritaire garde ses chances.
     ni les rafraîchissements ni les attaques qui ne font que retirer un point (sinon tout le monde finit à égalité).
   - *Décision de conception* : égalité → le titre va à celui qui a **atteint ce score en premier**.
 
+### Le jour et la nuit (décidé avec l'utilisateur, 19/11)
+
+- L'activité s'appelle **« Collage »** le jour et **« La Nuit du collage »** la nuit.
+- La nuit va de **20 h à 8 h** (heure de Paris). Elle est ouverte 24 h/24 : ni la nuit de l'élu ni sa sieste ne bloquent.
+- **La nuit, l'XP d'une affiche est multipliée par 1,5** (+50 %). *Décision de conception* : ce bonus se multiplie
+  avec un événement « Double XP » (×2 × 1,5 = ×3), arrondi à l'entier.
+
 ### Récompenses en XP
 
 - XP par affiche selon la qualité (valeurs de départ, réglables) : **parfait 14, bon 10, bâclé 5**. Au plus
