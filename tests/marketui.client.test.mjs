@@ -169,6 +169,15 @@ test("catalogue: every tradable item not owned, grouped by kind and rarity; neve
  for(const x of g)assert.ok(!/ultra|mythique/i.test(x.label));
 });
 
+test("catalogue: no legendary by name (one not owned stays a surprise; « une tenue Légendaire » still asks for it)",()=>{
+ for(const S of [st([]),st(["communard"])]){
+  const g=U.catalogue(S);
+  assert.ok(!g.some(x=>/Légendaire/.test(x.label)),JSON.stringify(g.map(x=>x.label)));
+  const ids=g.flatMap(x=>x.items.map(i=>i.id));for(const id of ["communard","empereur"])assert.ok(!ids.includes(id),id);
+  assert.ok(g.some(x=>x.label==="Tenues · Épique"),"the other rarities stay");
+ }
+});
+
 test("listingView, tradeRecap: a listing whose want is null or missing never throws",()=>{
  for(const want of [null,undefined]){
   const l=lst(["golf"],want);

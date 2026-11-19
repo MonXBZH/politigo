@@ -95,11 +95,12 @@ export function freshIds(board,newCount){
  return new Set([...board].sort((a,b)=>(b.created??0)-(a.created??0)).slice(0,newCount).map(l=>l.id));
 }
 
-// What a deposit may ask for by name: every tradable item not owned (both camps), by kind and rarity.
+// What a deposit may ask for by name: every tradable item not owned (both camps), by kind and rarity. A legendary not
+// owned is never named (it stays a surprise): « une tenue/un objet Légendaire » asks for one, and an owned one is not asked.
 export function catalogue(S,exclude=[]){
  const have=new Set([...own(S),...exclude]),out=[];
  for(const r of TRADE_RARITIES)for(const kind of ["outfit","object"]){
-  const items=Object.keys(ITEMS).filter(id=>ITEMS[id].rarity===r&&ITEMS[id].kind===kind&&tradable(id)&&!have.has(id))
+  const items=Object.keys(ITEMS).filter(id=>ITEMS[id].rarity===r&&r!=="legendaire"&&ITEMS[id].kind===kind&&tradable(id)&&!have.has(id))
    .map(id=>({id,label:`${nm(id)}${ITEMS[id].pool==="all"?"":` (${campWord(ITEMS[id].pool)})`}`}));
   if(items.length)out.push({label:`${kind==="outfit"?"Tenues":"Objets"} · ${RARITY_LABEL[r]}`,items});
  }
