@@ -187,6 +187,10 @@ dans la main. **Purement cosmétique** : aucun effet sur le jeu, et **jamais d'a
   Tu joues d'abord, ton rival a 24 h pour relever le défi ou le refuser (sans rien perdre).
   Victoire : **+40 XP**, moral +10, énergie +5. Défaite : −15 XP, moral −10, énergie −5, sans jamais perdre de niveau
   ni descendre une jauge sous 25. Dès le niveau 5, trois défis par jour.
+- 🧺 **La Brocante** : un tableau d'annonces où les joueurs échangent tenues et objets de leur Garde-robe, y compris entre les
+  deux camps. Dépose une annonce (1 à 3 objets, ce que tu cherches), **troque** tout de suite si tu as ce qu'elle demande, ou
+  fais une **offre** que l'auteur accepte ou refuse. Dès le niveau 5 et 3 jours de compte, 3 échanges par jour ; certains objets
+  très rares ne s'échangent pas. Tu es prévenu des offres, et les échanges entre camps s'affichent dans le fil.
 - 🔔 **Notifications** : sois prévenu d'un défi ou d'un résultat même le jeu fermé (Dossier → Compte).
   Sur iPhone, ajoute d'abord PolitiGo à l'écran d'accueil.
 - 💬 **Le chat** (si l'organisateur l'ouvre, salon par salon) : un salon pour tout le monde et un salon réservé à ton camp. Emojis, images et GIF (colle celui de ton
@@ -199,7 +203,7 @@ dans la main. **Purement cosmétique** : aucun effet sur le jeu, et **jamais d'a
 
 Une **interface d'administration** facultative, dans son propre conteneur, pour le réseau local : tableau de bord, fiches
 des joueurs (mot de passe, déblocage, renommage, suspension, suppression, protection), **annonces** immédiates ou planifiées (à tous, à un camp, à un
-joueur), ouverture et modération du chat (avec le fil de tous les salons en direct), modération du fil, duels, code d'invitation en un clic,
+joueur), ouverture et modération du chat (avec le fil de tous les salons en direct), modération du fil, duels, Brocante (annonces et échanges, avec un signal « même réseau »), code d'invitation en un clic,
 inscriptions et événements à chaud, sauvegardes automatiques, **détection de bots**, journal des actions. Les cas à traiter (signalements,
 duels suspects, comptes louches, comptes abandonnés, événements rares) remontent en direct dans « À traiter », avec un son et une notification
 système. L'organisateur peut nommer des **modérateurs** parmi les joueurs, avec des droits choisis un par un. La fiche d'un
@@ -296,8 +300,9 @@ les sauvegardes, les mises à jour, le cycle de développement et les tests.
   toute personne qui n'a pas été définitivement condamnée.
 - **Les dessins sont des caricatures originales**, sans photo ni logo officiel.
 - **Aucun argent réel** : la seule monnaie, les frais de mandat, se gagne en gardant son élu en vie.
-- **Données** : seuls le pseudo, le mot de passe haché, la partie et les messages du chat (effacés au bout de 7 jours) sont
-  enregistrés, sur le serveur de l'organisateur. Aucune adresse IP n'est conservée. Chaque joueur peut supprimer son compte
+- **Données** : seuls le pseudo, le mot de passe haché, la partie, les messages du chat (effacés au bout de 7 jours) et une empreinte
+  non réversible de la dernière adresse de connexion (pour repérer les échanges entre comptes d'une même personne) sont
+  enregistrés, sur le serveur de l'organisateur. Aucune adresse IP en clair n'est conservée. Chaque joueur peut supprimer son compte
   depuis Dossier → Compte.
 - **Une personne citée estime un contenu inexact ou blessant ?** Ouvre une *issue* sur ce dépôt : il sera revu, corrigé ou
   retiré sans discussion.

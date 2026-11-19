@@ -541,3 +541,11 @@ test("the mandate day survives the daylight-saving changes and follows the game'
  try{assert.equal(R.mandateDay(R.newGame("left",Date.UTC(2026,0,5,4)),Date.UTC(2026,0,5,5)),2,"23:00 → 00:00 in New York");}
  finally{R.setTimeZone("Europe/Paris");}
 });
+
+test("the Brocante's last visit survives a resignation and a reload",()=>{
+ const S=game();S.marketSeen=at(9);
+ assert.equal(play(S,{type:"restart",camp:"right"},10).ok,true);
+ assert.equal(S.marketSeen,at(9));
+ assert.equal(R.sanitize(JSON.parse(JSON.stringify(S)),at(10)).marketSeen,at(9));
+ assert.equal("marketSeen" in R.sanitize(JSON.parse(JSON.stringify(game())),at(10)),false,"absent stays absent");
+});

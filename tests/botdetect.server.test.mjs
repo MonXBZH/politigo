@@ -153,15 +153,20 @@ test("a moderator's own sheet carries no bot report nor eligibility; the version
 test("activity.lag migration: two servers on an old database at once, and a 1.7.0 insert still works",async()=>{
  const dir=mkdtempSync(join(tmpdir(),"pgbd-old-")),file=join(dir,"t.db");
  const old=new DatabaseSync(file);
- old.exec("CREATE TABLE activity(player_id INTEGER NOT NULL,t INTEGER NOT NULL,kind TEXT NOT NULL,live INTEGER NOT NULL,ua TEXT NOT NULL);INSERT INTO activity VALUES(1,1,'pet',1,'browser');");old.close();
- const [p1,p2]=await Promise.all([boot(3842,dir),boot(3843,dir)]);
+ // Recent rows: the servers' first chores purge activity older than 14 days, and must not race the assertion below.
+ const t0=Date.now();
+ old.exec("CREATE TABLE activity(player_id INTEGER NOT NULL,t INTEGER NOT NULL,kind TEXT NOT NULL,live INTEGER NOT NULL,ua TEXT NOT NULL);");
+ old.prepare("INSERT INTO activity VALUES(1,?,'pet',1,'browser')").run(t0);old.close();
+ // Both boots settle before anything is asserted: a rejected one never leaves the other server running.
+ const booted=await Promise.allSettled([boot(3842,dir),boot(3843,dir)]),[p1,p2]=booted.map(r=>r.value);
  try{
+  for(const r of booted)if(r.status==="rejected")throw r.reason;
   const db=new DatabaseSync(file,{timeout:5000});
   assert.ok(db.prepare("PRAGMA table_info(activity)").all().some(c=>c.name==="lag"));
-  db.prepare("INSERT INTO activity(player_id,t,kind,live,ua) VALUES(?,?,?,?,?)").run(1,2,"pet",1,"browser");   // 1.7.0's own statement
+  db.prepare("INSERT INTO activity(player_id,t,kind,live,ua) VALUES(?,?,?,?,?)").run(1,t0+1,"pet",1,"browser");   // 1.7.0's own statement
   assert.deepEqual(db.prepare("SELECT lag FROM activity ORDER BY t").all().map(r=>r.lag),[null,null]);
   db.close();
- }finally{await stop(p1);await stop(p2);}
+ }finally{for(const p of [p1,p2])if(p)await stop(p);}
 });
 
 test("news never opened: a weak client hint for a very active old account, none for a recent one",async()=>{

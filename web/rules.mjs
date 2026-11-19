@@ -451,6 +451,7 @@ export function sanitize(s,now){
  o.diedAt=num(s.diedAt??o.journal.find(j=>j.k==="death")?.t,-1,o.vclock,-1);
  // 1.6.0: missions, mail, goals, Flamme, wardrobe (absent from older states: fresh ones).
  ACT.sanitizeActivities(s,o);o.wardrobe=WR.sanitizeWardrobe(s.wardrobe);
+ if(Number.isFinite(s.marketSeen))o.marketSeen=num(s.marketSeen,0,8.64e15,0);   // 1.9.0: the last visit of the Brocante
  return o;
 }
 function gameKeys(o,s){
@@ -576,7 +577,7 @@ function die(S,reason,camp=S.camp,random=Math.random){
  const day={goals:S.goals,mDay:S.missions.day,mN:S.missions.n,mPaid:S.missions.paid,mB:S.missions.b,mail:S.mail};
  // idleDeaths: deaths in a row of a life the player never touched. Not by the XP: the hour tick pays some on its own.
  const name=person(S).name,keep={journal:S.journal,jn:S.jn,deaths:S.deaths+1,idleDeaths:reason==="neglect"&&!S.played?(S.idleDeaths||0)+1:0,best:S.best,bestStreak:S.bestStreak,equipped:S.equipped,treatDay:S.treatDay,advent:S.advent,
-  wardrobe:S.wardrobe,flame:{...S.flame,pts:Math.round(S.flame.pts*ACT.FLAME.death*100)/100}};
+  wardrobe:S.wardrobe,flame:{...S.flame,pts:Math.round(S.flame.pts*ACT.FLAME.death*100)/100},...(S.marketSeen!==undefined?{marketSeen:S.marketSeen}:{})};
  const fresh=Object.assign(freshState(camp,S.vclock),keep,{lastReal:S.lastReal,diedAt:S.vclock});
  for(const k of Object.keys(S))delete S[k];
  Object.assign(S,fresh);

@@ -18,6 +18,8 @@ import * as W from "./wardrobe.mjs";
 import * as D from "./duel.mjs";
 import * as SF from "./snowfront.mjs";
 import {createChallenges} from "./snowchallenges.mjs";
+import * as MK from "./market.mjs";
+import {createMarket,netPrefix} from "./marketstore.mjs";
 
 const env=process.env;
 process.umask(0o077);
@@ -72,6 +74,9 @@ const knob=(v,def)=>{const n=Number(v);return v!==undefined&&v!==""&&Number.isFi
 const DUEL_MIN_LEVEL=knob(env.POLITIGO_DUEL_MIN_LEVEL,R.DUEL.minLevel),DUEL_MIN_AGE=knob(env.POLITIGO_DUEL_MIN_AGE_H,R.DUEL.minAgeMs/R.H)*R.H;
 // Said at every start: a test setting left on a real server opens duels to fresh accounts (and to alts).
 if(DUEL_MIN_LEVEL!==R.DUEL.minLevel||DUEL_MIN_AGE!==R.DUEL.minAgeMs)console.warn(`Duel test settings active: level ${DUEL_MIN_LEVEL}+, accounts ${DUEL_MIN_AGE/R.H} h old+ (normal: ${R.DUEL.minLevel}, ${R.DUEL.minAgeMs/R.H} h).`);
+// La Brocante: the duels' level, and an account age of its own (3 days), which the knob can only lower (tests).
+const MARKET_MIN_AGE=knob(env.POLITIGO_MARKET_MIN_AGE_H,MK.MARKET.minAgeMs/R.H)*R.H;
+if(MARKET_MIN_AGE!==MK.MARKET.minAgeMs)console.warn(`Brocante test setting active: accounts ${MARKET_MIN_AGE/R.H} h old+ (normal: ${MK.MARKET.minAgeMs/R.H} h).`);
 // The Duel du Bâton on a test server: its rounds' clock runs this many times faster, and a deferred duel is replayed this
 // long after the bearer's part instead of at the next 21:00. Never set on a real server (said at start).
 const BATON_K=Math.max(1,Math.min(20,Math.floor(Number(env.POLITIGO_BATON_SPEED))||1));
@@ -181,7 +186,7 @@ if(!db.prepare("PRAGMA table_info(admin_log)").all().some(c=>c.name==="actor")){
 }
 // Databases from before the changelog (or the suspensions) lack the column: NULL means "has read nothing yet".
 // Another process starting on the same file at the same moment may have added it first: that is fine too.
-for(const [col,type] of [["seen_version","TEXT"],["suspended","INTEGER NOT NULL DEFAULT 0"],["last_seen","INTEGER"],["protected","INTEGER NOT NULL DEFAULT 0"],["abandon_ignored","INTEGER NOT NULL DEFAULT 0"]]){
+for(const [col,type] of [["seen_version","TEXT"],["suspended","INTEGER NOT NULL DEFAULT 0"],["last_seen","INTEGER"],["protected","INTEGER NOT NULL DEFAULT 0"],["abandon_ignored","INTEGER NOT NULL DEFAULT 0"],["net_fp","TEXT"]]){
  if(db.prepare("PRAGMA table_info(players)").all().some(c=>c.name===col))continue;
  try{db.exec(`ALTER TABLE players ADD COLUMN ${col} ${type}`);}catch(e){if(!/duplicate column/i.test(e.message))throw e;}
 }
@@ -241,7 +246,8 @@ const q={
  savePlayer:db.prepare("UPDATE players SET state=?,score=?,updated=? WHERE id=?"),
  playerByKey:db.prepare("SELECT id,pass FROM players WHERE name_key=?"),
  deletePlayer:db.prepare("DELETE FROM players WHERE id=?"),
- allPlayers:db.prepare("SELECT id,name,created,state,seen_version,suspended,last_seen,protected,abandon_ignored FROM players"),
+ allPlayers:db.prepare("SELECT id,name,created,state,seen_version,suspended,last_seen,protected,abandon_ignored,net_fp FROM players"),
+ setNetFp:db.prepare("UPDATE players SET net_fp=? WHERE id=?"),
  setLastSeen:db.prepare("UPDATE players SET last_seen=?,abandon_ignored=0 WHERE id=?"),
  setProtected:db.prepare("UPDATE players SET protected=? WHERE id=?"),
  setIgnored:db.prepare("UPDATE players SET abandon_ignored=? WHERE id=?"),
@@ -394,7 +400,7 @@ const players=new Map();
    // Ahead of real time on a real-time server: left as is (no replay), but said, since it should not happen.
    if(SPEED===1&&state.vclock-now>10*60e3)console.error(`player ${row.id}: game clock ${Math.round((state.vclock-now)/60e3)} min ahead of real time`);
   }catch(e){console.error(`player ${row.id}: clock not resynced`,e);state.lastReal=now;}
-  players.set(row.id,{id:row.id,name:row.name,created:row.created,state,seen:row.seen_version??null,suspended:!!row.suspended,lastSeen:row.last_seen,protected:!!row.protected,ignored:!!row.abandon_ignored});
+  players.set(row.id,{id:row.id,name:row.name,created:row.created,state,seen:row.seen_version??null,suspended:!!row.suspended,lastSeen:row.last_seen,protected:!!row.protected,ignored:!!row.abandon_ignored,netFp:row.net_fp||""});
  }
  if(longest>=60000)console.log(`Clocks back on the real hour: ${resynced} player(s), up to ${Math.round(longest/60000)} min skipped, gauges untouched.`);
 }
@@ -550,13 +556,36 @@ function auth(req){
  const p=row&&players.get(row.player_id);
  if(!p)throw new HttpError(401,"Connexion requise.");
  if(p.suspended)throw new HttpError(403,SUSPENDED);   // sessions are deleted at suspension: this is the belt and braces
- touchSeen(p);
+ touchSeen(p,Date.now(),clientIp(req));
  return p;
 }
 // The last connection, for the console alone: at most one write an hour per player. Coming back clears an "ignored".
 const SEEN_EVERY=36e5;
-function touchSeen(p,now=Date.now()){
+// "Same network" (La Brocante): one HMAC-SHA256 of the network of the player's last address (netPrefix: the IPv4, or the
+// IPv6 /64) under a key made once and kept in a 0600 file next to the database, never in it: a copy of the database
+// carries the fingerprints, not their key. Never the address itself, never a history, never sent to anyone; "" when unknown.
+const NETKEY_FILE=join(dirname(DB_PATH),"netkey.txt");
+function loadNetKey(){
+ const temp=why=>{console.error(`${NETKEY_FILE}: ${why}, using a temporary key ("same network" fingerprints change at every start)`);return crypto.randomBytes(32);};
+ const read=()=>{const k=readFileSync(NETKEY_FILE,"utf8").trim();return /^[0-9a-f]{64}$/.test(k)?Buffer.from(k,"hex"):null;};
+ // A file that is there but damaged is left untouched (it may be repaired by hand).
+ try{return read()??temp("no usable key (file left untouched)");}catch(e){if(e.code!=="ENOENT")return temp(e.message);}
+ // Created with O_EXCL: of two processes starting together, one writes it and both read the same key back.
+ try{writeFileSync(NETKEY_FILE,crypto.randomBytes(32).toString("hex")+"\n",{mode:0o600,flag:"wx"});}catch(e){if(e.code!=="EEXIST")return temp(`not saved (${e.message})`);}
+ try{return read()??temp("no usable key after creation");}catch(e){return temp(e.message);}
+}
+const NET_KEY=loadNetKey();
+// The 1.9.0 betas kept the key in the settings: gone (the fingerprints made with it are rewritten at the next login or hour).
+try{db.prepare("DELETE FROM settings WHERE key='netkey'").run();}catch(e){console.error("legacy network key not deleted:",e.message);}
+function netFp(ip){const n=netPrefix(ip);return n?crypto.createHmac("sha256",NET_KEY).update(n).digest("hex"):"";}
+const sameNet=(a,b)=>!!a&&!!b&&a===b;
+function noteNet(p,ip){
+ try{const f=netFp(ip);if(!f||p.netFp===f)return;q.setNetFp.run(f,p.id);p.netFp=f;}
+ catch(e){console.error(`player ${p.id}: network not saved (${e?.code||e?.name})`);}   // neither the address nor the fingerprint is logged
+}
+function touchSeen(p,now=Date.now(),ip=null){
  if(now-(p.lastSeen??0)<SEEN_EVERY)return;
+ if(ip)noteNet(p,ip);
  p.lastSeen=now;p.ignored=false;
  try{q.setLastSeen.run(now,p.id);}catch(e){console.error(`player ${p.id}: last connection not saved`,e);}
 }
@@ -621,7 +650,7 @@ function flushBoard(){
 }
 // The debate's seed deals its answers: it never leaves the server (the other games' seeds only shape what is drawn).
 const publicState=S=>S.mini?.k==="debate"&&"seed" in S.mini?{...S,mini:Object.fromEntries(Object.entries(S.mini).filter(([k])=>k!=="seed"))}:S;
-function mePayload(p){return {name:p.name,state:publicState(p.state),speed:SPEED,tz:R.timeZone(),serverNow:Date.now(),event:EVENT_MODE,events:publicEvents(Date.now()),version:VERSION,release:RELEASE,seenVersion:p.seen??null,chat:chatRooms(),urnHint:urnHintOf(p),baton:batonWon?batonView(p):null,...noelView(p,Date.now())};}
+function mePayload(p){return {name:p.name,state:publicState(p.state),speed:SPEED,tz:R.timeZone(),serverNow:Date.now(),event:EVENT_MODE,events:publicEvents(Date.now()),version:VERSION,release:RELEASE,seenVersion:p.seen??null,chat:chatRooms(),urnHint:urnHintOf(p),baton:batonWon?batonView(p):null,marketNew:marketNewOf(p,Date.now()),marketListed:marketListedOf(p),...noelView(p,Date.now())};}
 
 // ===================================================================== TRÊVE: THE FRONT DE NEIGE AND THE NEW YEAR TOAST
 // Every snowball fight the server replayed adds its score to its player's camp (snowfront.mjs), unless flagged as a
@@ -1595,6 +1624,251 @@ async function batonRoute(req,res){
 // ===================================================================== CHAT (server/chat.mjs)
 const chat=createChat({db,dataDir:dirname(DB_PATH),players,clients,sse,auth,limited,HttpError,send,readJson,checkOrigin,clientIp,rooms:chatRooms});
 
+// ===================================================================== LA BROCANTE (market.mjs: the rules, marketstore.mjs: the rows)
+// The items stay in each wardrobe (the truth); listings and offers only describe them. A trade is checked in full, then
+// written in one transaction: both games, the listing traded, the offers closed, the day's counts, the history. Nothing
+// awaits between the checks and the COMMIT: of two requests for one listing, the second finds it gone.
+const M=createMarket(db);
+const MK_GONE="Cette annonce n'est plus disponible.",MK_GONE_O="Cette offre n'est plus disponible.",MK_OFFERS_SHOWN=20,MK_OFFERS_DAY=10,MK_LISTINGS_DAY=10;
+// A visit of the Brocante is written at most every 30 s; /api/me's count is kept 10 s; the board's live refresh is
+// one trailing event per 3 s whatever the number of changes.
+const MK_SEEN_WRITE=30e3,MK_NEW_MS=10e3,MK_BOARD_MS=3e3;
+// "" when this player may trade now. tradeBlock weighs the age against the rules' 3 days: a lowered knob shifts it.
+function marketBlock(p,now){
+ return MK.tradeBlock(p.state,{minLevel:DUEL_MIN_LEVEL,ageMs:now-p.created+MK.MARKET.minAgeMs-MARKET_MIN_AGE,today:M.today(p.id,dayNow(now))});
+}
+// An author whose listings are off the board: gone, suspended, away 14 days, or unable to trade now (level, age, the
+// day's limit). Hidden, never closed: they come back with the author. To a taker, the same answer as a gone listing.
+function authorHidden(o,now){return !o||o.suspended||(o.lastSeen??0)<now-MK.MARKET.awayMs||!!marketBlock(o,now);}
+const mkWho=id=>{const o=players.get(id);return {name:o?.name??GONE,camp:o?.state.camp??null};};
+const itemName=id=>W.ITEMS[id]?.name??id,itemNames=ids=>ids.map(itemName).join(", ");
+// "Chasuble syndicale, Mégaphone et 4 bulletins".
+function giveText(g){
+ const parts=g.items.map(itemName);if(g.bulletins)parts.push(`${g.bulletins} bulletin${g.bulletins>1?"s":""}`);
+ return parts.length>1?`${parts.slice(0,-1).join(", ")} et ${parts.at(-1)}`:parts[0]??"rien";
+}
+const deName=n=>/^[aeiouyhàâäéèêëîïôöûüœ]/i.test(n)?`d'${n}`:`de ${n}`;
+// What a player gives (a listing, an offer, a take), with the reason a malformed one is refused. Never names what is excluded.
+function readGive(x,needItem){
+ const bad="Choisis ce que tu donnes.";
+ if(!x||typeof x!=="object"||Array.isArray(x)||(x.items!==undefined&&!Array.isArray(x.items)))throw new HttpError(422,bad);
+ const items=[...new Set(x.items??[])],b=x.bulletins??0,max=MK.MARKET.maxItems;
+ if(items.length>max||(needItem&&!items.length))throw new HttpError(422,`Choisis de 1 à ${max} objets.`);
+ if(items.some(i=>typeof i!=="string"||!Object.hasOwn(W.ITEMS,i)))throw new HttpError(422,"Objet inconnu.");
+ if(!items.every(MK.tradable))throw new HttpError(422,"Certains objets très rares ne s'échangent pas.");
+ if(!Number.isInteger(b)||b<0||b>MK.MARKET.maxBulletins)throw new HttpError(422,`Bulletins : de 0 à ${MK.MARKET.maxBulletins} par côté.`);
+ const g=MK.cleanGive({items,bulletins:b},{needItem});if(!g)throw new HttpError(422,bad);
+ return g;
+}
+// A listing that offers an item no longer tradable (the catalogue changed), or that cannot be read: gone for good.
+const mkDead=l=>!Array.isArray(l?.give?.items)||!l.give.items.every(MK.tradable);
+// Closed, its author and offerers told; never throws (it runs while a board is read).
+function mkCloseDead(l){
+ try{const who=M.closeListing(l.id);if(who){marketCast([l.player_id,...who],"mine");marketBoardChanged();}}
+ catch(e){console.error(`market: listing ${l.id} not closed`,e);}
+}
+// A listing is on the board when its author is, still holds what it offers (else refused at the take) and does not ask
+// by name for something already his (a draw, a gift: it could never be taken). Hidden, not closed; a dead one is closed.
+function listingShown(l,ok,now){
+ if(mkDead(l)){mkCloseDead(l);return false;}
+ if(!ok.has(l.player_id))ok.set(l.player_id,!authorHidden(players.get(l.player_id),now));
+ if(!ok.get(l.player_id))return false;
+ const S=players.get(l.player_id).state,w=l.want;
+ return !MK.missing(S,l.give)&&!(w?.kind==="items"&&Array.isArray(w.items)&&MK.dupes(S,w.items).length);
+}
+const listingOut=(l,mine)=>({id:l.id,author:mkWho(l.player_id),give:l.give,want:l.want,created:l.created,mine});
+// The board (others' visible listings), mine with their pending offers, my offers (pending, and the latest decided).
+function marketView(p,now){
+ const seen=Number(p.state.marketSeen)||0,open=M.openListings(),ok=new Map();
+ const live=id=>{const o=players.get(id);return !!o&&!o.suspended;};
+ const board=open.filter(l=>l.player_id!==p.id&&listingShown(l,ok,now)).map(l=>listingOut(l,false));
+ const mine=open.filter(l=>l.player_id===p.id).map(l=>({...listingOut(l,true),
+  offers:M.pendingOffersOn(l.id).filter(o=>live(o.player_id)).map(o=>({id:o.id,from:mkWho(o.player_id),give:o.give,created:o.created}))}));
+ const offers=M.offersBy(p.id,MK_OFFERS_SHOWN).map(o=>{const l=M.listing(o.listing_id);
+  return {id:o.id,listingId:o.listing_id,give:o.give,status:o.status,created:o.created,listing:l?{author:mkWho(l.player_id),give:l.give,want:l.want}:null};});
+ return {board,mine,offers,block:marketBlock(p,now),today:M.today(p.id,dayNow(now)),newCount:board.filter(l=>l.created>seen).length};
+}
+// For /api/me: the visible listings by others since the last visit of the Brocante (0 rather than a broken payload).
+// Kept MK_NEW_MS per player; forgotten at the player's visit and at every change of the board.
+const mkNew=new Map();   // playerId -> {t,n}
+function marketNewOf(p,now){
+ const c=mkNew.get(p.id);if(c&&now>=c.t&&now-c.t<MK_NEW_MS)return c.n;
+ try{
+  const seen=Number(p.state.marketSeen)||0,ok=new Map();
+  const n=M.openListings().filter(l=>l.player_id!==p.id&&l.created>seen&&listingShown(l,ok,now)).length;
+  mkNew.set(p.id,{t:now,n});return n;
+ }catch{return 0;}
+}
+// For /api/me: my items in my open listings (the Garde-robe's « En vitrine »); [] rather than a broken payload.
+function marketListedOf(p){try{return [...new Set(M.openOf(p.id).flatMap(l=>l.give?.items??[]))];}catch{return [];}}
+// Live: "kind" to the players concerned, at once.
+function marketCast(ids,kind){const to=new Set(ids);for(const c of clients)if(to.has(c.playerId))sse(c.res,"market",{kind});}
+// The board changed: every screen hears it once, MK_BOARD_MS after the first change (the ones in between ride along).
+let mkBoardTimer=null;
+function marketBoardChanged(){
+ mkNew.clear();
+ if(mkBoardTimer)return;
+ mkBoardTimer=setTimeout(()=>{mkBoardTimer=null;try{broadcast("market",{kind:"board"});}catch(e){console.error("market board:",e);}},MK_BOARD_MS);mkBoardTimer.unref?.();
+}
+const marketPush=(id,text)=>notify(id,{title:"PolitiGo",body:`🧺 Brocante : ${text}`,tag:"market",url:"/"});
+// The trade itself: the author gives the listing, the taker (or the offerer) gives tGives. Every condition is checked
+// again here, then both games and the rows move in one transaction; on any error nothing moved (both states restored).
+function doTrade(l,o,taker,tGives,now){
+ const author=players.get(l.player_id),cur=M.listing(l.id);
+ if(!author||author.suspended||!players.has(taker.id)||taker.suspended||cur?.status!=="open")throw new HttpError(409,MK_GONE);
+ if(author.id===taker.id)throw new HttpError(422,"C'est ta propre annonce.");
+ if(o&&(M.offerOf(o.id)?.status!=="pending"||o.listing_id!==l.id))throw new HttpError(409,MK_GONE_O);
+ if(mkDead(cur)){mkCloseDead(cur);throw new HttpError(409,MK_GONE);}   // closed before any write, never written then rolled back
+ if(marketBlock(author,now)||marketBlock(taker,now))throw new HttpError(422,"Échange impossible pour l'instant.");
+ const aGives=cur.give;
+ // The author no longer holds it (never through the game: a state reset on load): closed when an item is gone.
+ if(MK.missing(author.state,aGives)){
+  const lost=aGives.items.filter(i=>!author.state.wardrobe.own.includes(i));
+  if(lost.length){try{const c=M.closeUsing(author.id,lost);marketCast([author.id,...c.told],"mine");marketBoardChanged();}catch(e){console.error(`market: listing ${l.id} not closed`,e);}}
+  throw new HttpError(409,MK_GONE);
+ }
+ const miss=MK.missing(taker.state,tGives);if(miss)throw new HttpError(409,miss+".");
+ if(MK.dupes(taker.state,aGives.items).length||MK.dupes(author.state,tGives.items).length)throw new HttpError(409,"Échange impossible : objet déjà possédé.");
+ const keep=[author.state,taker.state],same=sameNet(author.netFp,taker.netFp),aT=giveText(aGives),bT=giveText(tGives);
+ const closedLine=(S,n)=>{if(n)R.logEntry(S,"market",`Brocante : ${n>1?`${n} de tes annonces sont fermées`:"une de tes annonces est fermée"}, l'objet a changé de mains.`);};
+ // The staff's own checks wait for the COMMIT (as in transferBaton), then run for both.
+ batonBusy=true;let told=[];
+ try{
+ db.exec("BEGIN");
+ try{
+  try{M.trade({listingId:l.id,offerId:o?.id??null,aId:author.id,bId:taker.id,aGave:aGives,bGave:tGives,sameNet:same,now});}
+  catch(e){const m=e?.message;throw m==="Offre indisponible."?new HttpError(409,MK_GONE_O):m==="Annonce indisponible."?new HttpError(409,MK_GONE):e;}   // a failed write stays a 500
+  // Closed with the trade: each side's listings and offers holding what it gave, and its listings asking by name for
+  // what it received (they could never be taken now).
+  const ca=M.closeUsing(author.id,aGives.items),cb=M.closeUsing(taker.id,tGives.items),wa=M.closeWanting(author.id,tGives.items),wb=M.closeWanting(taker.id,aGives.items);
+  told=[ca,cb,wa,wb].flatMap(c=>c.told).filter(id=>id!==author.id&&id!==taker.id);
+  update(author,SA=>{
+   update(taker,SB=>{
+    try{MK.applyTrade(SA,aGives,SB,tGives);}catch(e){throw new HttpError(409,/\.$/.test(e.message)?e.message:e.message+".");}
+    closedLine(SB,cb.listings.length+wb.listings.length);R.logEntry(SB,"market",`Brocante : ${bT} contre ${aT} ${deName(author.name)}.`,{listing:l.id});
+   });
+   closedLine(SA,ca.listings.length+wa.listings.length);R.logEntry(SA,"market",`Brocante : ${aT} contre ${bT} ${deName(taker.name)}.`,{listing:l.id});
+  });
+  db.exec("COMMIT");
+ }catch(e){
+  try{db.exec("ROLLBACK");}catch{}author.state=keep[0];taker.state=keep[1];
+  try{pushMe(author);pushMe(taker);}catch{}   // an inner update may already have shown its side
+  throw e;
+ }
+ }finally{batonBusy=false;}
+ for(const pl of [author,taker]){try{batonCheck(pl,now);}catch(e){console.error(`player ${pl.id}: Bâton check failed`,e);}}
+ marketCast([author.id,taker.id],"trade");if(told.length)marketCast(told,"offer");marketBoardChanged();
+ if(o)marketPush(taker.id,`${author.name} a accepté ton offre : ${bT} contre ${aT}.`);
+ else marketPush(author.id,`ton annonce a trouvé preneur, ${aT} contre ${bT} ${deName(taker.name)}.`);
+ if(author.state.camp!==taker.state.camp)feedLine(author.name,"market",`🔄 ${author.name} a troqué ${aT} contre ${bT} ${deName(taker.name)}`);
+ audit("server","market-trade",author.name,`${aT} contre ${bT} ${deName(taker.name)} · même réseau : ${same?"oui":"non"}`);
+}
+// POST /api/market {op, …}: list {give, want}, withdraw {id}, take {id, give}, offer {id, give}, unoffer {id},
+// accept {id} and refuse {id} (an offer's id). Anyone signed in may look (GET); trading needs marketBlock to be "".
+async function marketRoute(req,res){
+ const p=auth(req);
+ if(limited("market:"+p.id,10,60e3))throw new HttpError(429,"Doucement : réessaie dans un instant.");
+ const b=await readJson(req);
+ if(!players.has(p.id))throw new HttpError(401,"Connexion requise.");   // deleted while the body was arriving
+ if(p.suspended)throw new HttpError(403,SUSPENDED);   // suspended while it was arriving
+ const now=Date.now(),op=typeof b.op==="string"?b.op:"?";
+ const idOf=v=>{if(!Number.isSafeInteger(v)||v<1)throw new HttpError(400,"Identifiant inconnu.");return v;};
+ const gate=()=>{const why=marketBlock(p,now);if(why)throw new HttpError(403,why);};
+ const openListing=id=>{const l=M.listing(id);if(!l||l.status!=="open")throw new HttpError(409,MK_GONE);return l;};
+ // Someone else's listing, on the board: a hidden one answers as a gone one (never why: no window on the author).
+ const others=l=>{
+  if(l.player_id===p.id)throw new HttpError(422,"C'est ta propre annonce.");
+  if(!listingShown(l,new Map(),now))throw new HttpError(409,MK_GONE);return players.get(l.player_id);
+ };
+ // What p would receive and what the other would receive: never something already owned (the other's, unnamed).
+ const noDupes=(o,give,l)=>{
+  const d=MK.dupes(p.state,l.give.items);if(d.length)throw new HttpError(422,`Tu as déjà : ${itemNames(d)}.`);
+  if(MK.dupes(o.state,give.items).length)throw new HttpError(422,"Échange impossible : objet déjà possédé.");
+ };
+ const holds=give=>{const m=MK.missing(p.state,give);if(m)throw new HttpError(422,m+".");};
+ if(op==="list"){
+  gate();
+  const give=readGive(b.give,true),want=MK.cleanWant(b.want);
+  if(!want)throw new HttpError(422,`Dis ce que tu cherches : des objets, une rareté, des bulletins (1 à ${MK.MARKET.maxBulletins}) ou une offre.`);
+  holds(give);
+  if(want.kind==="items"){const d=MK.dupes(p.state,want.items);if(d.length)throw new HttpError(422,`Tu as déjà : ${itemNames(d)}.`);}
+  const listed=new Set(M.openOf(p.id).flatMap(l=>l.give?.items??[])),twice=give.items.filter(i=>listed.has(i));
+  if(twice.length)throw new HttpError(422,`Déjà en vitrine dans une autre annonce : ${itemNames(twice)}.`);
+  // Deposit, withdraw, deposit again: 10 listings a server day, whatever became of them.
+  const day=dayNow(now);
+  if(M.listedSince(p.id,now-26*R.H).filter(t=>dayNow(t)===day).length>=MK_LISTINGS_DAY)throw new HttpError(422,`${MK_LISTINGS_DAY} annonces par jour : reviens demain.`);
+  if(M.openCount(p.id)>=MK.MARKET.maxListings)throw new HttpError(422,`${MK.MARKET.maxListings} annonces ouvertes au plus : retires-en une d'abord.`);
+  const id=M.list(p.id,give,want,now);
+  marketCast([p.id],"mine");marketBoardChanged();
+  return send(res,200,{ok:true,id});
+ }
+ if(op==="withdraw"){
+  const l=M.listing(idOf(b.id));if(!l||l.player_id!==p.id)throw new HttpError(409,MK_GONE);   // someone else's: as a missing one
+  const offerers=M.pendingOffersOn(l.id).map(o=>o.player_id);
+  if(!M.withdraw(l.id,p.id))throw new HttpError(409,MK_GONE);
+  marketCast([p.id,...offerers],"mine");marketBoardChanged();
+  return send(res,200,{ok:true});
+ }
+ if(op==="take"){
+  gate();
+  const l=openListing(idOf(b.id)),o=others(l);
+  if(l.want?.kind==="offer")throw new HttpError(422,"Cette annonce attend des offres : fais une offre.");
+  const give=readGive(b.give,false);
+  if(!MK.satisfies(l.want,give))throw new HttpError(422,"Ce n'est pas ce que demande l'annonce.");
+  holds(give);noDupes(o,give,l);
+  doTrade(l,null,p,give,now);
+  return send(res,200,{ok:true});
+ }
+ if(op==="offer"){
+  gate();
+  const l=openListing(idOf(b.id)),o=others(l),give=readGive(b.give,true);
+  holds(give);noDupes(o,give,l);
+  if(M.pendingOn(l.id,p.id))throw new HttpError(409,"Tu as déjà une offre en attente sur cette annonce.");
+  // No harassment by offer, withdraw, offer again: a refusal is final for that listing, 10 offers a server day, and
+  // the author is pushed once a day per offerer and listing.
+  if(M.refusedOn(l.id,p.id))throw new HttpError(422,"Ton offre sur cette annonce a déjà été refusée.");
+  const day=dayNow(now);
+  if(M.createdSince(p.id,now-26*R.H).filter(t=>dayNow(t)===day).length>=MK_OFFERS_DAY)throw new HttpError(422,`${MK_OFFERS_DAY} offres par jour au plus : reviens demain.`);
+  if(M.pendingCount(p.id)>=MK.MARKET.maxOffers)throw new HttpError(422,`${MK.MARKET.maxOffers} offres en attente au plus.`);
+  const first=!M.offersOf(l.id,p.id).some(x=>dayNow(x.created)===day);
+  const id=M.offer(l.id,p.id,give,now);
+  if(first)marketPush(o.id,`${p.name} te propose ${giveText(give)} pour ton annonce (${giveText(l.give)}).`);
+  marketCast([o.id,p.id],"offer");
+  return send(res,200,{ok:true,id});
+ }
+ if(op==="unoffer"){
+  const o=M.offerOf(idOf(b.id));if(!o||o.player_id!==p.id)throw new HttpError(409,MK_GONE_O);   // someone else's: as a missing one
+  if(!M.setOffer(o.id,"withdrawn"))throw new HttpError(409,MK_GONE_O);
+  const l=M.listing(o.listing_id);marketCast([p.id,...(l?[l.player_id]:[])],"offer");
+  return send(res,200,{ok:true});
+ }
+ if(op==="accept"||op==="refuse"){
+  const o=M.offerOf(idOf(b.id)),l=o&&M.listing(o.listing_id);
+  if(!l||l.player_id!==p.id)throw new HttpError(409,MK_GONE_O);   // not on my listing: as a missing one
+  if(l.status!=="open")throw new HttpError(409,MK_GONE);
+  if(o.status!=="pending")throw new HttpError(409,MK_GONE_O);
+  const from=players.get(o.player_id);
+  if(op==="refuse"){
+   if(!M.setOffer(o.id,"refused"))throw new HttpError(409,MK_GONE_O);
+   if(from){marketPush(from.id,`${p.name} a refusé ton offre (${giveText(o.give)}).`);marketCast([from.id,p.id],"offer");}
+   return send(res,200,{ok:true});
+  }
+  gate();
+  if(!from)throw new HttpError(409,MK_GONE_O);   // a deleted offerer's offers are closed with the account
+  // An offerer who cannot trade right now: refused, the offer stays pending.
+  if(from.suspended||marketBlock(from,now))throw new HttpError(422,`${from.name} ne peut pas échanger pour l'instant : son offre reste en attente.`);
+  // An offer that can never go through any more is closed.
+  const close=why=>{M.setOffer(o.id,"closed");marketCast([from.id,p.id],"offer");return new HttpError(409,`L'offre ne tient plus : ${why}.`);};
+  if(mkDead(o))throw close("un des objets proposés ne s'échange plus");
+  if(MK.missing(from.state,o.give))throw close(`${from.name} n'a plus ce qu'il proposait`);
+  let d=MK.dupes(from.state,l.give.items);if(d.length)throw close(`${from.name} a déjà ${itemNames(d)}`);
+  d=MK.dupes(p.state,o.give.items);if(d.length)throw close(`tu as déjà ${itemNames(d)}`);
+  doTrade(l,o,from,o.give,now);
+  return send(res,200,{ok:true});
+ }
+ throw new HttpError(400,"Opération inconnue.");
+}
+
 // ===================================================================== ROUTES
 async function route(req,res){
  // Only the path matters, and an odd request target ("//", "//host") is just not found, never a 500.
@@ -1639,7 +1913,7 @@ async function route(req,res){
   db.exec("BEGIN IMMEDIATE");
   try{seat();({lastInsertRowid}=q.insertPlayer.run(Number(getSetting("playerFloor"))||0,name,nameKey(name),pass,now,JSON.stringify(state),R.score(state),now,RELEASE));db.exec("COMMIT");}
   catch(e){db.exec("ROLLBACK");giveBack();throw e;}
-  const p={id:Number(lastInsertRowid),name,created:now,state,seen:RELEASE};players.set(p.id,p);touchSeen(p,now);   // a new player has nothing to catch up on
+  const p={id:Number(lastInsertRowid),name,created:now,state,seen:RELEASE,netFp:""};players.set(p.id,p);noteNet(p,ip);touchSeen(p,now);   // a new player has nothing to catch up on
   // The account exists from here on: a failed announcement must not turn the sign-up into an error.
   try{const feed=newFeedEntries(p,0);if(feed.length)broadcast("feed",feed);publishBoard();}catch(e){console.error("register: announce failed",e);}
   return send(res,201,mePayload(p),{"Set-Cookie":startSession(p.id)});
@@ -1657,7 +1931,7 @@ async function route(req,res){
   const p=row&&players.get(row.id);
   if(!p||!okPw||q.playerByKey.get(key)?.pass!==row.pass)throw new HttpError(401,"Pseudo ou mot de passe incorrect.");
   if(p.suspended)throw new HttpError(403,SUSPENDED);   // only said to whoever knows the password
-  touchSeen(p);
+  noteNet(p,ip);touchSeen(p);
   return send(res,200,mePayload(p),{"Set-Cookie":startSession(p.id)});
  }
  if(path==="/api/logout"&&method==="POST"){
@@ -1717,6 +1991,15 @@ async function route(req,res){
   const p=auth(req);if(limited("snowchs:"+p.id,30,10e3))throw new HttpError(429,"Doucement : réessaie dans un instant.");
   return send(res,200,{ok:true,...snowChallengesView(p,Date.now())});
  }
+ if(path==="/api/market"&&method==="GET"){
+  const p=auth(req);if(limited("marketget:"+p.id,30,10e3))throw new HttpError(429,"Doucement : réessaie dans un instant.");
+  const now=Date.now(),v=marketView(p,now);
+  // The "new listings" count starts again from here (no journal line); in memory at once, written at most every 30 s.
+  update(p,S=>{const write=!(now-(Number(S.marketSeen)||0)<MK_SEEN_WRITE);S.marketSeen=now;return write?undefined:false;});
+  mkNew.delete(p.id);
+  return send(res,200,{ok:true,...v});
+ }
+ if(path==="/api/market"&&method==="POST")return marketRoute(req,res).finally(()=>{if(deferred.size)flushDeferred();});
  if(path==="/api/debate"&&method==="POST")return debateRoute(req,res).finally(()=>{if(deferred.size)flushDeferred();});
  if(path==="/api/duels"&&method==="GET"){
   const p=auth(req),now=Date.now();
@@ -1813,7 +2096,7 @@ const adminActor=new AsyncLocalStorage();
 // The weighty commands keep a quota of their own: a flood of small ones (a chat-mute sent a thousand times) cannot
 // push the evidence out. The same command repeated (same author, target and detail, within AUDIT_SAME) is one row "×N".
 const AUDIT_KEY=["player-delete","player-protect","suspend","rename","reset-password","signout","invite-regenerate","registrations-set","chat-set","event-set",
- "mythic-reset","mythic-release","duel-annul","baton-judge","backup","backup-note"];
+ "mythic-reset","mythic-release","duel-annul","baton-judge","backup","backup-note","market-withdraw"];
 const AUDIT_KEEP=1000,AUDIT_KEEP_KEY=2000,AUDIT_SAME=10*6e4,AUDIT_IN=`cmd IN (${AUDIT_KEY.map(c=>`'${c}'`).join(",")})`;
 const auditQ={
  trimRest:db.prepare(`DELETE FROM admin_log WHERE NOT ${AUDIT_IN} AND id<=(SELECT id FROM admin_log WHERE NOT ${AUDIT_IN} ORDER BY id DESC LIMIT 1 OFFSET ${AUDIT_KEEP})`),
@@ -2346,6 +2629,7 @@ function chores(now){
  q.purgeDuels.run(now-30*864e5);q.purgeTombstones.run(now-7*864e5);q.purgeAcks.run(now-ALERT_DAYS*864e5);
  for(const dir of new Set([ADMIN_SOCKET&&dirname(ADMIN_SOCKET),dirname(DB_PATH)].filter(Boolean)))sweepBackups(dir,now);
  try{snowChTick(now);}catch(e){console.error("chores, snow challenges:",e);}
+ try{M.purge(now-30*864e5);}catch(e){console.error("chores, market purge:",e);}   // decided offers, dead listings; never trades
 }
 // Backup copies older than 10 min that nothing took away: cut short by a full disk (its journal too), or left next to
 // the database by a stop in the middle of a transfer over the network link.
@@ -2373,12 +2657,16 @@ function removePlayer(p){
  }
  try{snowChCancelOf(p.id,now);}catch(e){console.error("snow challenges, deleting a player:",e);}
  db.exec("BEGIN");
- try{q.freeMythicsOf.run(p.id);q.deleteSchedulesTo.run(p.id);q.deletePlayer.run(p.id);q.tombstone.run(nameKey(p.name),p.created,now);q.deleteFeedOf.run(p.name);setSetting("playerFloor",String(Math.max(p.id,Number(getSetting("playerFloor"))||0)));db.exec("COMMIT");}catch(e){db.exec("ROLLBACK");throw e;}
+ // Their listings and pending offers close with the account (the rows stay for the trade history), both ways.
+ const hadListings=M.openCount(p.id)>0;let told=[];
+ try{told=M.removePlayer(p.id);q.freeMythicsOf.run(p.id);q.deleteSchedulesTo.run(p.id);q.deletePlayer.run(p.id);q.tombstone.run(nameKey(p.name),p.created,now);q.deleteFeedOf.run(p.name);setSetting("playerFloor",String(Math.max(p.id,Number(getSetting("playerFloor"))||0)));db.exec("COMMIT");}catch(e){db.exec("ROLLBACK");throw e;}
  players.delete(p.id);deferred.delete(p.id);soloTurns.delete(p.id);cleanCache.delete(p.id);   // a staff they held is back in the urn
  try{broadcast("feedInit",q.recentFeed.all(40));}catch(e){console.error("feed after deleting a player:",e);}
  try{after?.();}catch(e){console.error("chat, after deleting a player:",e);}
  try{chat.playerDeleted(p.id);}catch(e){console.error("chat, deleted player:",e);}
  for(const c of [...clients])if(c.playerId===p.id)closeStream(c,true);
+ mkNew.delete(p.id);if(hadListings)marketBoardChanged();
+ if(told.length)marketCast(told,"offer");   // the other side of the listings and offers closed with the account
  publishBoard(true);   // gone from every board at once
 }
 function closeStreamsOf(id){for(const c of [...clients])if(c.playerId===id)closeStream(c);}
@@ -2419,10 +2707,11 @@ function suspend(p,on){
   for(const d of q.openDuelsOf.all(p.id,p.id)){try{voidDuel(d,now);}catch(e){console.error(`suspend, duel ${d.id}:`,e);}}
   for(const r of bq.open.all())if(r.challenger===p.id||r.bearer===p.id){try{voidBaton(bLoad(r),now);}catch(e){console.error(`suspend, baton duel ${r.id}:`,e);}}
   try{snowChCancelOf(p.id,now);}catch(e){console.error(`suspend, snow challenges of ${p.id}:`,e);}
+  if(M.openCount(p.id))marketBoardChanged();   // their listings leave the board (hidden, not closed)
   publishBoard(true);
  }else{
   // Back on the real hour: the suspension is skipped, not played.
-  q.setSuspended.run(0,p.id);p.suspended=false;
+  q.setSuspended.run(0,p.id);p.suspended=false;if(M.openCount(p.id))marketBoardChanged();
   update(p,S=>{R.resync(S,now,"suspension");});
  }
 }
@@ -2669,6 +2958,36 @@ async function adminCommand(b){
  // Read-only: the recent snowball challenges, the defender's score and the flags of their fight (counted 0 when a bot's).
  if(cmd==="snow-challenges")return {items:snowCh.recent(limitOf(b.limit,50,200)).map(r=>({id:r.id,challenger:nameOf(r.challenger),defender:nameOf(r.defender),
   score:r.score,dScore:r.dScore,rawScore:r.dRaw,status:r.status,created:r.created,expires:r.expires,closed:r.closed,winner:r.status==="done"&&r.winner!==null?nameOf(r.winner):null,dFlags:r.dFlags??[]}))};
+ // The Brocante, read-only: the latest trades, the open listings (with their pending offers) and the pairs of players who
+ // traded at least twice in 30 days. Same network is a yes/no: never an address nor a fingerprint.
+ if(cmd==="market-list"){
+  const who=id=>({name:nameOf(id),camp:players.get(id)?.state.camp??null});
+  const named=g=>g&&Array.isArray(g.items)?{...g,names:g.items.map(i=>W.ITEMS[i]?.name??i)}:g;   // the console shows names, not ids
+  const trades=M.recent(limitOf(b.limit,50,200)).map(t=>({id:t.id,created:t.created,a:who(t.a_id),b:who(t.b_id),aGave:named(t.a_gave),bGave:named(t.b_gave),sameNet:!!t.same_net}));
+  const listings=M.openListings().map(l=>({id:l.id,created:l.created,author:who(l.player_id),give:named(l.give),want:named(l.want),offers:M.pendingOffersOn(l.id).length}));
+  const byPair=new Map();
+  for(const t of M.tradesSince(now-30*864e5)){
+   const k=t.a_id<t.b_id?`${t.a_id}:${t.b_id}`:`${t.b_id}:${t.a_id}`,e=byPair.get(k)??{a:who(Math.min(t.a_id,t.b_id)),b:who(Math.max(t.a_id,t.b_id)),n:0,sameNet:false};
+   e.n++;if(t.same_net)e.sameNet=true;byPair.set(k,e);
+  }
+  const pairs=[...byPair.values()].filter(e=>e.n>=2).sort((x,y)=>y.n-x.n).slice(0,20);
+  return {trades,listings,pairs};
+ }
+ if(cmd==="market-withdraw"){
+  const l=Number.isSafeInteger(b.id)&&M.listing(b.id);
+  if(!l||l.status!=="open")throw new HttpError(404,"Annonce introuvable ou déjà fermée.");
+  guard(l.player_id);
+  const offerers=M.pendingOffersOn(l.id).map(o=>o.player_id);
+  if(!M.adminWithdraw(l.id))throw new HttpError(404,"Annonce introuvable ou déjà fermée.");
+  const author=players.get(l.player_id);
+  if(author){
+   try{update(author,S=>{R.logEntry(S,"market","Ton annonce a été retirée par l'organisation.",{listing:l.id});});}catch(e){console.error(`market: journal line not written for ${author.id}`,e);}
+   marketCast([author.id,...offerers],"mine");
+  }
+  marketBoardChanged();
+  audit(via,cmd,nameOf(l.player_id),`Annonce #${l.id} retirée (${giveText(l.give)})`);
+  return {};
+ }
  if(cmd==="duel-cancel"){
   const d=Number.isSafeInteger(b.id)&&q.duel.get(b.id);
   if(d){guard(d.challenger);guard(d.defender);}
