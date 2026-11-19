@@ -812,7 +812,7 @@ async function viewFeed(){
 
 // ===================================================================== Duels
 async function viewDuels(){
- const [{items},sus,snow,mkt]=await Promise.all([call("duels-list"),call("duels-suspects").catch(e=>({error:e.message})),call("snow-challenges").catch(e=>({error:e.message})),call("market-list").catch(e=>({error:e.message}))]);
+ const [{items},sus,snow,mkt,wall]=await Promise.all([call("duels-list"),call("duels-suspects").catch(e=>({error:e.message})),call("snow-challenges").catch(e=>({error:e.message})),call("market-list").catch(e=>({error:e.message})),call("wall-list").catch(e=>({error:e.message}))]);
  const susItems=Array.isArray(sus.items)?sus.items:Array.isArray(sus.suspects)?sus.suspects:[];
  const ids=x=>(Array.isArray(x.duels)?x.duels:[]).map(d=>typeof d==="object"?d:{id:d}).filter(d=>d.id!=null);
  return [head("Duels",refreshBtn()),
@@ -838,7 +838,8 @@ async function viewDuels(){
    h("tbody",{},snow.items.map(c=>h("tr",{},h("td",{class:"nowrap"},fmt(c.created)),h("td",{},who(c.challenger)),h("td",{},who(c.defender)),
     h("td",{class:"nowrap"},`${num(c.score)} – ${num(c.dScore)}${c.winner?` (${c.winner})`:""}${Number.isFinite(c.rawScore)&&c.rawScore!==c.dScore?` · rejoué ${num(c.rawScore)}`:""}`),h("td",{},tr(SNOW_STATUS,c.status)),h("td",{},flagBadges(c.dFlags)||"—"))))))
    :empty("Aucun défi de neige pour le moment.")),
- brocanteCard(mkt)];
+ brocanteCard(mkt),
+ collageCard(wall)];
 }
 // La Brocante: open listings (withdrawable), the latest trades and the pairs who traded often. Never an address: only "même réseau".
 const netPill=y=>y?h("span",{class:"badge warn"},"même réseau : oui"):h("span",{class:"muted small"},"non");
@@ -872,6 +873,26 @@ function brocanteCard(m){
    m.pairs?.length?h("div",{class:"table-wrap"},h("table",{},head2(["Joueurs","Échanges","Même réseau"]),
     h("tbody",{},m.pairs.map(p=>h("tr",{},h("td",{},mkWho(p.a)," · ",mkWho(p.b)),h("td",{},String(p.n)),h("td",{},netPill(p.sameNet)))))))
     :empty("Aucune paire n'a échangé plusieurs fois.")]);
+}
+
+// La Nuit du collage, read-only: the last nights, today's colleurs and volunteers, the walls, the title worn now.
+const nightDay=d=>`${String(d%100).padStart(2,"0")}/${String(Math.floor(d/100)%100).padStart(2,"0")}`;
+const nightWinner=w=>!Array.isArray(w)||!w.length?"personne":w.length>1?"égalité":w[0]==="left"?"la Gauche":"la Droite";
+const nightText=n=>`${nightDay(n.day)} · Gauche ${n.left} · Droite ${n.right} · ${nightWinner(n.winners)} · ${n.paid} payé${n.paid>1?"s":""}`;
+function collageCard(w){
+ const pair=o=>`Gauche ${num(o?.left)} · Droite ${num(o?.right)}`;
+ return h("div",{class:"card"},h("h2",{},"Collage — la Nuit du collage"),
+  h("p",{class:"muted small"},"Le mur d'affiches, en lecture seule : les colleurs actifs du jour, les volontaires qui renforcent le camp en infériorité, et le titre porté en ce moment."),
+  w.error?h("p",{class:"err"},w.error):[
+   h("div",{class:"list"},
+    h("div",{class:"row"},h("span",{class:"grow"},"Murs : ",h("b",{},num(w.walls)))),
+    h("div",{class:"row"},h("span",{class:"grow"},"Cases tenues : ",h("b",{},pair(w.counts)))),
+    h("div",{class:"row"},h("span",{class:"grow"},"Colleurs actifs aujourd'hui : ",h("b",{},pair(w.active)))),
+    h("div",{class:"row"},h("span",{class:"grow"},"Volontaires aujourd'hui : ",h("b",{},pair(w.volunteers)))),
+    h("div",{class:"row"},h("span",{class:"grow"},"Colleur de la semaine : ",w.title?h("span",{},h("b",{},w.title.name)," ",campBadge(w.title.camp)):"—"))),
+   h("h3",{},"Dernières nuits"),
+   w.nights?.length?h("div",{class:"list"},w.nights.map(n=>h("div",{class:"row"},h("span",{class:"grow nowrap"},nightText(n)))))
+    :empty("Aucune nuit comptée pour le moment.")]);
 }
 
 // ===================================================================== Réglages

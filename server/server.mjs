@@ -3181,6 +3181,12 @@ async function adminCommand(b){
   const pairs=[...byPair.values()].filter(e=>e.n>=2).sort((x,y)=>y.n-x.n).slice(0,20);
   return {trades,listings,pairs};
  }
+ // The Nuit du collage, read-only: the last 30 nights, today's colleurs and volunteers, the walls and their counts, the
+ // title worn now. Names only: never an id, an address or a fingerprint.
+ if(cmd==="wall-list"){
+  const cells=WS.cells(now),active=WS.active(dayNow(now)),t=WS.title(now),tp=t&&players.get(t.playerId);
+  return {nights:WS.history(30),walls:WL.wallCount(cells),counts:wallCounts(cells,now),active,volunteers:WL.volunteerCounts(active),title:tp?{name:tp.name,camp:tp.state.camp}:null};
+ }
  if(cmd==="market-withdraw"){
   const l=Number.isSafeInteger(b.id)&&M.listing(b.id);
   if(!l||l.status!=="open")throw new HttpError(404,"Annonce introuvable ou déjà fermée.");

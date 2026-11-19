@@ -441,3 +441,24 @@ it("POLITIGO_WALL_CLOSE_AT is refused on a released image and when it is not an 
  await assert.rejects(boot(18973,mkdtempSync(join(tmpdir(),"wall-")),{POLITIGO_VERSION:"v1.9.0",POLITIGO_WALL_CLOSE_AT:String(Date.now())}),/server exited 1[\s\S]*POLITIGO_WALL_CLOSE_AT/);
  await assert.rejects(boot(18973,mkdtempSync(join(tmpdir(),"wall-")),{POLITIGO_WALL_CLOSE_AT:"minuit"}),/server exited 1[\s\S]*POLITIGO_WALL_CLOSE_AT/);
 });
+
+// ===================================================================== the console's card (wall-list)
+it("wall-list: the last nights, today's colleurs and volunteers, the walls, the title; names only, nothing private",async()=>{
+ const t=today();
+ const x=await seeded(18975,[["Liste Un","left"],["Liste Deux","right"],["Liste Titre","left"]],({db,cell,day,id})=>{
+  cell(0,"left",id["Liste Un"]);cell(1,"left",null,1);cell(2,"right",id["Liste Deux"]);
+  day(t,"Liste Un","left");day(t,"Liste Titre","left");day(t,"Liste Deux","right");
+  db.prepare("INSERT OR REPLACE INTO wall_nights(day,left_n,right_n,winners,paid,at) VALUES(?,?,?,?,?,?)").run(shift(t,-1),58,41,'["left"]',7,Date.now()-864e5);
+  db.prepare("INSERT INTO wall_titles(week,player_id) VALUES(?,?)").run(weekOf(t)-1,id["Liste Titre"]);
+ });
+ try{
+  const r=await admAt(join(x.d,"admin.sock"),{cmd:"wall-list"});
+  assert.equal(r.ok,true,JSON.stringify(r));
+  assert.deepEqual(Object.keys(r).sort(),["active","counts","nights","ok","title","volunteers","walls"]);
+  assert.deepEqual(r.nights.map(n=>[n.day,n.left,n.right,n.winners,n.paid]),[[shift(t,-1),58,41,["left"],7]]);
+  assert.deepEqual(r.active,{left:2,right:1});assert.equal(r.walls,1);
+  assert.deepEqual(r.counts,{left:2,right:1});assert.deepEqual(r.volunteers,{left:0,right:1});
+  assert.deepEqual(r.title,{name:"Liste Titre",camp:"left"});
+  assert.doesNotMatch(JSON.stringify(r),/"(ip|net|id|playerId)"|\d+\.\d+\.\d+\.\d+/);
+ }finally{await x.stop();}
+});
