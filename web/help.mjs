@@ -70,12 +70,12 @@ export const HELP=[
  {id:"brocante",title:"La Brocante",parts:[
   "Le tableau d'annonces où les joueurs s'échangent tenues et objets de leur Garde-robe. Les deux camps s'y croisent : l'objet reçu se porte, quel que soit son camp.",
   ["Dépose une annonce : 1 à 3 objets que tu possèdes, et ce que tu cherches (des objets précis, une rareté, quelques bulletins, ou « faites-moi une offre »). Tu as 3 annonces ouvertes au plus.",
-   "Une offre refusée ne se renouvelle pas sur la même annonce. Une annonce n'expire pas : elle reste jusqu'à ce que tu la retires ou qu'un échange se fasse. L'objet en vitrine reste à toi, tu peux le porter.",
+   "Une offre refusée ne se renouvelle pas sur la même annonce. Une annonce n'expire pas : elle reste jusqu'à ce que tu la retires, qu'un échange se fasse ou qu'un des objets annoncés change de mains. L'objet en vitrine reste à toi, tu peux le porter.",
    "« Troquer » : si tu as ce qui est demandé, l'échange se fait tout de suite. Sinon, « Faire une offre » : l'auteur accepte ou refuse. Tu as 5 offres en attente au plus, une par annonce, et 10 offres par jour.",
    "Les bulletins n'accompagnent que des objets : jamais de bulletins seuls contre rien, et 20 au plus par côté.",
-   "Pour échanger : niveau 5, un compte d'au moins 3 jours, et 3 échanges par jour. Tout le monde peut regarder. Une annonce dont l'auteur est absent depuis plus de 14 jours, ou qui a atteint sa limite du jour, est masquée jusqu'à son retour.",
+   "Pour échanger : niveau 5, un compte d'au moins 3 jours, et 3 échanges par jour. Tout le monde peut regarder. Une annonce est masquée tant que son auteur est absent depuis plus de 14 jours, suspendu, sous le niveau 5 ou à sa limite du jour.",
    "Un objet que tu possèdes déjà ne s'échange pas. Certains objets très rares ne s'échangent pas non plus.",
-   "Un objet échangé quitte ta Garde-robe : si tu le retires plus tard, c'est un nouvel objet. Rien d'autre ne change : ni XP, ni jauges, ni confettis.",
+   "Un objet échangé quitte ta Garde-robe : si tu en tires un autre exemplaire plus tard, c'est un nouvel objet. Rien d'autre ne change : ni XP, ni jauges, ni confettis.",
    "Tu es prévenu d'une offre reçue, d'un échange conclu ou d'une réponse à ton offre. Les échanges entre camps s'affichent dans le fil.",
    "Vie privée : le jeu garde une empreinte non réversible de ta dernière adresse de connexion, pour repérer les échanges entre comptes d'une même personne ; jamais l'adresse elle-même."]]},
  {id:"events",title:"Les événements",parts:[

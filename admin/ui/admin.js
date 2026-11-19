@@ -1010,7 +1010,7 @@ function botReport(r,withName=true){
 async function viewBots(){
  const {items}=await call("bots");
  return [head("Détection de bots",refreshBtn()),
-  h("p",{class:"muted small"},"Indices sur 14 jours, jamais une preuve, et rien n'est sanctionné tout seul. Trois familles : le rythme (délais de réaction mesurés par le jeu et comparés aux autres joueurs, visites, pauses), le client (hors navigateur, sans écran ouvert, nouveautés jamais ouvertes) et les mini-jeux (résultats invraisemblables, scores trop constants, parties au plus tôt permis). Une alerte demande au moins deux familles ; la nuit ne compte qu'avec un autre indice. Le détail des points est dans chaque rapport. Aucune adresse IP n'est conservée. Heures dans le fuseau du jeu."),
+  h("p",{class:"muted small"},"Indices sur 14 jours, jamais une preuve, et rien n'est sanctionné tout seul. Trois familles : le rythme (délais de réaction mesurés par le jeu et comparés aux autres joueurs, visites, pauses), le client (hors navigateur, sans écran ouvert, nouveautés jamais ouvertes) et les mini-jeux (résultats invraisemblables, scores trop constants, parties au plus tôt permis). Une alerte demande au moins deux familles ; la nuit ne compte qu'avec un autre indice. Le détail des points est dans chaque rapport. Aucune adresse IP n'est conservée en clair. Heures dans le fuseau du jeu."),
   items.length?h("div",{class:"grid wide"},items.map(r=>h("div",{class:"card"},botReport(r)))):h("div",{class:"card"},empty("Aucune activité enregistrée."))];
 }
 

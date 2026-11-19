@@ -190,8 +190,7 @@ dans la main. **Purement cosmétique** : aucun effet sur le jeu, et **jamais d'a
 - 🧺 **La Brocante** : un tableau d'annonces où les joueurs échangent tenues et objets de leur Garde-robe, y compris entre les
   deux camps. Dépose une annonce (1 à 3 objets, ce que tu cherches), **troque** tout de suite si tu as ce qu'elle demande, ou
   fais une **offre** que l'auteur accepte ou refuse. Dès le niveau 5 et 3 jours de compte, 3 échanges par jour ; certains objets
-  très rares ne s'échangent pas, et les bulletins n'accompagnent que des objets. Notifications, et les échanges entre camps
-  s'affichent dans le fil.
+  très rares ne s'échangent pas. Tu es prévenu des offres, et les échanges entre camps s'affichent dans le fil.
 - 🔔 **Notifications** : sois prévenu d'un défi ou d'un résultat même le jeu fermé (Dossier → Compte).
   Sur iPhone, ajoute d'abord PolitiGo à l'écran d'accueil.
 - 💬 **Le chat** (si l'organisateur l'ouvre, salon par salon) : un salon pour tout le monde et un salon réservé à ton camp. Emojis, images et GIF (colle celui de ton
