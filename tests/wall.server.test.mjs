@@ -315,7 +315,8 @@ it("the night: a tie shares the wall, a camp alone wins with fewer cells, nobody
  // only the left pasted today: it wins with fewer cells than the right's old posters
  x=await seeded(18967,[["Seule Gauche","left"],["Absente Droite","right"]],({cell,day,id})=>{
   cell(0,"left",id["Seule Gauche"]);for(const g of [1,2,3])cell(g,"right",id["Absente Droite"]);
-  day(t,"Seule Gauche","left");day(shift(t,-1),"Absente Droite","right");
+  // The right last pasted two days ago: yesterday stays empty, so the first-boot close of yesterday adds no line.
+  day(t,"Seule Gauche","left");day(shift(t,-2),"Absente Droite","right");
  },closeNow());
  try{
   const c=x.cs["Seule Gauche"];
