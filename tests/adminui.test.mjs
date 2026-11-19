@@ -287,7 +287,7 @@ test("the console offers Noël and lists snow challenges for a moderator with th
 test("the Brocante card: market-list under the Duels panel, market-withdraw a right of its own in Modo complet, the page and the backup text",async()=>{
  const js=await fetch(`http://127.0.0.1:${ADMIN}/admin.js`).then(r=>r.text());
  assert.match(js,/"Brocante"/);assert.match(js,/Paires répétées \(30 j\)/);assert.match(js,/même réseau : oui/);assert.match(js,/call\("market-list"\)/);assert.match(js,/call\("market-withdraw"/);
- assert.match(js,/l'empreinte réseau des joueurs et sa clé/,"the backup warning names the network key");
+ assert.match(js,/l'empreinte réseau des joueurs, mais pas sa clé/,"the backup warning: the fingerprints, not their key");assert.doesNotMatch(js,/l'empreinte réseau des joueurs et sa clé/);
  const b=browser();assert.equal((await b.login()).status,200);
  const cat=(await b.req("/api/mods")).json;
  assert.ok(cat.actions.some(([id,label])=>id==="market-withdraw"&&label==="Retirer une annonce de la Brocante"));

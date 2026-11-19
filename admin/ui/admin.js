@@ -939,7 +939,7 @@ async function viewBackup(){
   h("label",{for:"bk-hour"},"Heure (celle du conteneur)"),hour,rows.map(r=>r.el),h("div",{class:"btn-row"},saveBtn,runBtn),
   h("p",{class:"muted small"},"Les 5 dernières sauvegardes manuelles sont gardées. Les images du chat (chat-media) ne sont pas incluses, et ces copies restent sur la même machine que le jeu : télécharges-en une de temps en temps."));
  return [head("Sauvegarde",refreshBtn()),h("div",{class:"grid wide"},
-  h("div",{class:"card"},h("h2",{},"Base de données"),h("p",{class:"muted small"},"Une copie cohérente de la base (VACUUM INTO), prise à chaud, téléchargée puis effacée de la machine de la partie. Elle contient les empreintes des mots de passe, l'empreinte réseau des joueurs et sa clé : garde-la en lieu sûr."),
+  h("div",{class:"card"},h("h2",{},"Base de données"),h("p",{class:"muted small"},"Une copie cohérente de la base (VACUUM INTO), prise à chaud, téléchargée puis effacée de la machine de la partie. Elle contient les empreintes des mots de passe et l'empreinte réseau des joueurs, mais pas sa clé (netkey.txt, à côté de la base) : garde-la en lieu sûr."),
    h("div",{class:"btn-row"},dl("backup","Télécharger la base (.db)"))),
   h("div",{class:"card"},h("h2",{},"Clé des notifications"),h("p",{class:"muted small"},"vapid.json : sans elle, une base restaurée perd tous les abonnements aux notifications. C'est une clé privée : ne la partage jamais."),
    h("div",{class:"btn-row"},dl("backup-vapid","Télécharger vapid.json")))),

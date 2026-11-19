@@ -35,7 +35,7 @@ docker compose up -d --build
 | `POLITIGO_BIND` | l'IP interne du serveur Docker (le reverse proxy est sur une autre machine) |
 | `POLITIGO_PORT` | `8080` |
 | `COOKIE_SECURE` | `1` (cookies de session HTTPS uniquement) |
-| `PROXY_HOPS` | `2` (le reverse proxy + le nginx de la pile) |
+| `PROXY_HOPS` | `2` (le reverse proxy + le nginx de la pile). Doit correspondre à la vraie chaîne de proxys : sinon tous les joueurs ont la même adresse (limites de requêtes partagées) et la même empreinte réseau (« même réseau » toujours « oui » à la Brocante) |
 | `POLITIGO_SPEED` | `1` (temps réel ; plus grand uniquement sur un serveur de test) |
 | `POLITIGO_PUSH` | facultatif. Vide : notifications de duel activées ; **`off`** : désactivées (voir « Duels et notifications ») |
 | `POLITIGO_PUSH_CONTACT` | facultatif. Adresse `mailto:` ou `https:` transmise aux services de notification ; vide : la page GitHub du projet |
@@ -189,7 +189,8 @@ Si l'un de ses `location` utilise `add_header`, recopier la ligne HSTS dedans : 
 ## 3. Exploitation
 
 - **Sauvegarde** : le volume `politigo_politigo-data` contient `politigo.db` (comptes, parties, duels, fil, chat), `vapid.json`
-  (la clé des notifications : à sauvegarder avec la base, sinon les téléphones abonnés ne reçoivent plus rien) et `chat-media/`
+  (la clé des notifications : à sauvegarder avec la base, sinon les téléphones abonnés ne reçoivent plus rien), `netkey.txt`
+  (la clé de l'empreinte « même réseau » de la Brocante : perdue, elle est refaite et les empreintes suivent en une heure) et `chat-media/`
   (les images du chat, effacées au bout de 7 jours). L'interface d'administration télécharge aussi une copie cohérente de la base
   (page Sauvegarde). Exemple en ligne de commande :
   `docker run --rm -v politigo_politigo-data:/d -v "$PWD":/b alpine tar czf /b/politigo-$(date +%F).tgz -C /d .`
@@ -319,8 +320,13 @@ Une seule console peut gérer plusieurs parties, sur cette machine ou ailleurs (
   échanges (date, les deux joueurs, ce qui a changé de mains). La carte montre aussi les paires qui échangent à répétition sur
   30 jours et « même réseau : oui / non ». Ce signal vient d'une empreinte HMAC-SHA256 de la dernière adresse de connexion de chaque
   joueur (une seule valeur par joueur, écrasée à chaque connexion, effacée avec le compte, jamais l'adresse elle-même ni un historique) :
-  il n'interdit rien, l'administrateur tranche (suspendre existe déjà). La clé secrète de l'empreinte est la ligne `netkey` de la table
-  des réglages, générée au premier démarrage : elle voyage avec la base, donc avec les sauvegardes, qui sont à garder en lieu sûr.
+  il n'interdit rien, l'administrateur tranche (suspendre existe déjà). Une adresse IPv6 compte pour son préfixe /64 (un même
+  foyer change souvent d'adresse dans ce préfixe). La clé secrète de l'empreinte est le fichier `netkey.txt` du volume des données,
+  à côté de la base (droits 0600), créé au premier démarrage : elle n'est **pas** dans la base, donc pas dans ses sauvegardes
+  (une 1.9.0 de test qui la gardait dans les réglages l'en efface au démarrage). Sans ce fichier (volume refait, base restaurée
+  ailleurs), une nouvelle clé est créée et les empreintes se refont à la connexion suivante de chaque joueur (au plus une heure pour un joueur en ligne) :
+  « même réseau » est aveugle entre-temps. `PROXY_HOPS` doit correspondre à la vraie chaîne de proxys devant l'API : sinon chaque
+  joueur est vu avec l'adresse d'un proxy, tous ont la même empreinte et « même réseau » répond toujours « oui ».
   Le droit « Retirer une annonce de la Brocante » (inclus dans « Modo complet ») retire une annonce ; elle n'est jamais supprimée
   d'elle-même, seulement masquée quand son auteur est absent depuis plus de 14 jours, suspendu, sous le niveau 5 ou à sa limite du jour.
 - **À traiter** : sur toutes les parties, vérifiées toutes les 20 s, les messages signalés du chat, les duels signalés par

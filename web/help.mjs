@@ -69,7 +69,7 @@ export const HELP=[
   "La Garde-robe range tes tenues et tes objets : touche-en un pour le porter, touche-le de nouveau pour l'enlever. Une tenue s'enfile par-dessus tous les personnages de la collection."]},
  {id:"brocante",title:"La Brocante",parts:[
   "Le tableau d'annonces où les joueurs s'échangent tenues et objets de leur Garde-robe. Les deux camps s'y croisent : l'objet reçu se porte, quel que soit son camp.",
-  ["Dépose une annonce : 1 à 3 objets que tu possèdes, et ce que tu cherches (des objets précis, une rareté, quelques bulletins, ou « faites-moi une offre »). Tu as 3 annonces ouvertes au plus.",
+  ["Dépose une annonce : 1 à 3 objets que tu possèdes, et ce que tu cherches (des objets précis, une rareté, quelques bulletins, ou « faites-moi une offre »). Tu as 3 annonces ouvertes au plus, et 10 annonces déposées par jour, même retirées.",
    "Une offre refusée ne se renouvelle pas sur la même annonce. Une annonce n'expire pas : elle reste jusqu'à ce que tu la retires, qu'un échange se fasse ou qu'un des objets annoncés change de mains. L'objet en vitrine reste à toi, tu peux le porter.",
    "« Troquer » : si tu as ce qui est demandé, l'échange se fait tout de suite. Sinon, « Faire une offre » : l'auteur accepte ou refuse. Tu as 5 offres en attente au plus, une par annonce, et 10 offres par jour.",
    "Les bulletins n'accompagnent que des objets : jamais de bulletins seuls contre rien, et 20 au plus par côté.",
