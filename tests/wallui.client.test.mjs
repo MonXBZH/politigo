@@ -97,6 +97,10 @@ test("drawWall: the wall on view only, the selection framed, an unrolling poster
  assert.ok(e.ops.some(o=>o.clip&&o.clip.h===8&&o.clip.x===1&&o.clip.y===1),"half the poster");
  const f=mockCtx();U.drawWall(f,cells,1,now,{flash:new Set([C+2]),flashOn:true});
  assert.ok(f.ops.some(o=>o.col===U.FLASH_COL));
+ const g=mockCtx();U.drawWall(g,cells,1,now,{bg:{}});
+ assert.ok(g.ops[0].img,"a ready brick wall is copied, not redrawn");assert.ok(!g.ops.some(o=>o.col==="#1d1619"&&o.w===U.CW));
+ const b=mockCtx();U.drawBricks(b);
+ for(const o of b.ops.slice(1))assert.equal(o.col,U.brickColor(o.x,o.y),"the bricks match brickColor");
 });
 test("cellAt: a point on the canvas to a cell of the wall, the gaps and borders around to none",()=>{
  assert.equal(U.cellAt(1.5/U.CW,1.5/U.CH),0);

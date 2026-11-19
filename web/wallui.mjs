@@ -99,9 +99,10 @@ const frame=(c,ox,oy,col)=>{rect(c,ox-1,oy-1,ART+2,1,col);rect(c,ox-1,oy+ART,ART
 export const cellOrigin=i=>[1+(i%WALL_W)*CELL,1+Math.floor(i/WALL_W)*CELL];
 
 // The wall w (0-based) of the flat cells. opts: sel (global index, framed), unroll {g, prev, p 0..1} (the new poster
-// unrolls from the top over the previous one), flash (global indexes) with flashOn (framed now), hit (a cell just hit).
+// unrolls from the top over the previous one), flash (global indexes) with flashOn (framed now), hit (a cell just hit),
+// bg (a canvas already holding drawBricks: copied instead of redrawn).
 export function drawWall(c,cells,w,now,opts={}){
- drawBricks(c);
+ if(opts.bg)c.drawImage(opts.bg,0,0);else drawBricks(c);
  const u=opts.unroll;
  for(let i=0;i<C;i++){
   const g=w*C+i,[ox,oy]=cellOrigin(i),cell=W.liveCell(cells[g],now);
