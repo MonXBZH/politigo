@@ -7,9 +7,9 @@ import {mkdtempSync} from "node:fs";
 import {createConnection} from "node:net";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
-import {boot,stop,PW,player,sleep,until} from "./server-helpers.mjs";
+import {boot,stop,PW,player,sleep,until,dayNow} from "./server-helpers.mjs";
 import * as R from "../web/rules.mjs";
-import {brushQuality,cellLabel,wallXp,isWallNight,QUALITY_LABEL,WALL_CELLS,BRUSH_MS,DAILY_QUOTA} from "../web/wall.mjs";
+import {brushQuality,cellLabel,wallXp,isWallNight,weekOf,QUALITY_LABEL,WALL_CELLS,WAVE_HOURS,BRUSH_MS,DAILY_QUOTA} from "../web/wall.mjs";
 
 const T=120000,it=(name,fn)=>test(name,{timeout:T},fn);
 const WP=18961;
@@ -243,4 +243,201 @@ it("a suspended player can neither look nor paste; the knob lowers the level and
   const o=await player(port,"Voisin Colle","right");
   assert.equal((await view(o)).cells[0],null,"nothing pasted");
  }finally{await stop(s);}
+});
+
+// ===================================================================== the wall tick: the night, the volunteers, the week
+// Each case: a server of its own, its players registered, then rows written straight into the stopped database (cells,
+// day rows, settings), then booted again. POLITIGO_WALL_CLOSE_AT forces the close of the night of its own day.
+const today=()=>dayNow();
+const shift=(key,n)=>{const d=new Date(Date.UTC(Math.floor(key/10000),Math.floor(key/100)%100-1,key%100+n));return d.getUTCFullYear()*10000+(d.getUTCMonth()+1)*100+d.getUTCDate();};
+// The volunteer wave due now (the index in WAVE_HOURS), -1 before 10 h.
+const dueWave=()=>{let i=-1;for(const [k,h] of WAVE_HOURS.entries())if(hour()>=h)i=k;return i;};
+const NIGHT_JOURNAL="🖌️ Nuit du collage : ton camp a tenu le mur. +1 bulletin.";
+async function seeded(port,names,seed,extra={}){
+ const d=mkdtempSync(join(tmpdir(),"wall-"));
+ let s=await boot(port,d,env(d));const cs={};
+ try{for(const [name,camp] of names){const c=await player(port,name,camp),S=(await me(c)).state;c.b0=S.wardrobe.bulletins;c.x0=S.xp;cs[name]=c;}}
+ finally{await stop(s);}
+ const db=new DatabaseSync(join(d,"t.db"));
+ const id=Object.fromEntries(db.prepare("SELECT id,name FROM players").all().map(r=>[r.name,r.id]));
+ const set=(k,v)=>v==null?db.prepare("DELETE FROM settings WHERE key=?").run(k):db.prepare("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)").run(k,String(v));
+ const cell=(g,camp,by=null,vol=0,at=Date.now())=>db.prepare("INSERT OR REPLACE INTO wall_cells(g,camp,by,name,vol,sol,at,motif) VALUES(?,?,?,?,?,2,?,0)").run(g,camp,by,by?"X":null,vol,at);
+ const day=(dk,name,camp,{pasted=1,useful=0,reached=0}={})=>db.prepare("INSERT INTO wall_days(day,player_id,camp,pasted,spent,useful,reached_at) VALUES(?,?,?,?,?,?,?)").run(dk,id[name],camp,pasted,Math.max(1,pasted),useful,reached);
+ set("wall_wave",`${today()}:${dueWave()}`);   // no volunteer wave unless the case asks for one
+ seed({db,id,set,cell,day});db.close();
+ s=await boot(port,d,{...env(d),...extra});
+ return {get s(){return s;},d,cs,id,open:()=>new DatabaseSync(join(d,"t.db"),{timeout:5000}),restart:async(more=extra)=>{await stop(s);s=await boot(port,d,{...env(d),...more});return s;},stop:()=>stop(s)};
+}
+const feedOf=async(c,re)=>(await c.call("GET","/api/board")).json.feed.filter(e=>re.test(e.text));
+const bulletins=async c=>(await me(c)).state.wardrobe.bulletins-c.b0;
+const paidLine=async c=>(await me(c)).state.journal.some(j=>j.text===NIGHT_JOURNAL);
+const closeNow=()=>({POLITIGO_WALL_CLOSE_AT:String(Date.now())});
+
+it("the night with both camps: the most cells win, a bulletin to each of the winning camp's colleurs of the day only",async()=>{
+ const t=today();
+ const x=await seeded(18965,[["Nuit Un","left"],["Nuit Deux","left"],["Nuit Hier","left"],["Nuit Rate","left"],["Nuit Droite","right"]],({cell,day,id})=>{
+  cell(0,"left",id["Nuit Un"]);cell(1,"left",id["Nuit Deux"]);cell(2,"left");cell(3,"right",id["Nuit Droite"]);cell(4,"right",null,1);
+  day(t,"Nuit Un","left");day(t,"Nuit Deux","left");day(t,"Nuit Droite","right");
+  day(shift(t,-1),"Nuit Hier","left");day(t,"Nuit Rate","left",{pasted:0});   // yesterday only; spent but never pasted
+ },closeNow());
+ try{
+  assert.match(x.s.err+x.s.out,/Collage test setting active: night close at /);
+  const c=x.cs["Nuit Droite"],line="🖌️ La Gauche a tenu le mur cette nuit (3 cases contre 2).";
+  assert.ok(await until(async()=>(await feedOf(c,/tenu le mur/)).length,6000),"the feed line");
+  assert.deepEqual((await feedOf(c,/🖌️/)).map(e=>[e.player,e.kind,e.text]),[["PolitiGo","wall",line]]);
+  for(const n of ["Nuit Un","Nuit Deux"]){assert.equal(await bulletins(x.cs[n]),1,n);assert.equal(await paidLine(x.cs[n]),true,n);}
+  for(const n of ["Nuit Hier","Nuit Rate","Nuit Droite"]){assert.equal(await bulletins(x.cs[n]),0,n);assert.equal(await paidLine(x.cs[n]),false,n);}
+  for(const n of ["Nuit Un","Nuit Droite"])assert.equal((await me(x.cs[n])).state.xp,x.cs[n].x0,"no XP at the close");
+  const db=x.open();
+  try{
+   const row=db.prepare("SELECT * FROM wall_nights WHERE day=?").get(t);
+   assert.deepEqual({l:row.left_n,r:row.right_n,w:JSON.parse(row.winners),paid:row.paid},{l:3,r:2,w:["left"],paid:2});
+   assert.equal(db.prepare("SELECT value FROM settings WHERE key='wall_night_closed'").get().value,String(t));
+   const log=db.prepare("SELECT via,target,detail FROM admin_log WHERE cmd='wall-night'").all();
+   assert.equal(log.length,1);assert.equal(log[0].via,"server");assert.equal(log[0].target,String(t));assert.match(log[0].detail,/Gauche 3 · Droite 2/);
+  }finally{db.close();}
+ }finally{await x.stop();}
+});
+
+it("the night: a tie shares the wall, a camp alone wins with fewer cells, nobody able to win means no line",async()=>{
+ const t=today();
+ // a tie with at least one cell each: both camps win
+ let x=await seeded(18966,[["Egal Gauche","left"],["Egal Droite","right"]],({cell,day,id})=>{
+  cell(0,"left",id["Egal Gauche"]);cell(1,"left");cell(2,"right",id["Egal Droite"]);cell(3,"right");
+  day(t,"Egal Gauche","left");day(t,"Egal Droite","right");
+ },closeNow());
+ try{
+  const c=x.cs["Egal Gauche"];
+  assert.ok(await until(async()=>(await feedOf(c,/🖌️/)).length,6000));
+  assert.deepEqual((await feedOf(c,/🖌️/)).map(e=>e.text),["🖌️ Égalité : la Gauche et la Droite se partagent le mur cette nuit (2 cases chacune)."]);
+  assert.equal(await bulletins(c),1);assert.equal(await bulletins(x.cs["Egal Droite"]),1);
+ }finally{await x.stop();}
+ // only the left pasted today: it wins with fewer cells than the right's old posters
+ x=await seeded(18967,[["Seule Gauche","left"],["Absente Droite","right"]],({cell,day,id})=>{
+  cell(0,"left",id["Seule Gauche"]);for(const g of [1,2,3])cell(g,"right",id["Absente Droite"]);
+  day(t,"Seule Gauche","left");day(shift(t,-1),"Absente Droite","right");
+ },closeNow());
+ try{
+  const c=x.cs["Seule Gauche"];
+  assert.ok(await until(async()=>(await feedOf(c,/🖌️/)).length,6000));
+  assert.deepEqual((await feedOf(c,/🖌️/)).map(e=>e.text),["🖌️ La Gauche a tenu le mur cette nuit (1 case contre 3) : la Droite n'a pas collé."]);
+  assert.equal(await bulletins(c),1);assert.equal(await bulletins(x.cs["Absente Droite"]),0);
+ }finally{await x.stop();}
+ // the only active camp has no cell left; nobody else pasted: no winner, no line, the night is closed all the same
+ x=await seeded(18968,[["Vide Gauche","left"],["Vide Droite","right"]],({cell,day})=>{
+  cell(0,"right");cell(1,"right");day(t,"Vide Gauche","left");
+ },closeNow());
+ try{
+  const c=x.cs["Vide Gauche"];
+  const closed=()=>{const d=x.open();try{return d.prepare("SELECT winners FROM wall_nights WHERE day=?").get(t)??null;}finally{d.close();}};
+  assert.ok(await until(closed,6000),"closed");
+  await sleep(400);
+  assert.deepEqual(await feedOf(c,/🖌️/),[],"no feed line");
+  assert.equal(await bulletins(c),0);
+  assert.deepEqual(JSON.parse(closed().winners),[]);
+ }finally{await x.stop();}
+});
+
+it("missed midnights close once: only the last night is closed, the older ones are skipped and logged",async()=>{
+ const t=today(),y=shift(t,-1);
+ const x=await seeded(18969,[["Retard Un","left"],["Retard Vieux","left"],["Retard Droite","right"]],({db,cell,day,set,id})=>{
+  set("wall_night_closed",shift(t,-4));db.prepare("DELETE FROM wall_nights").run();
+  cell(0,"left",id["Retard Un"]);cell(1,"left");cell(2,"right",id["Retard Droite"]);
+  day(shift(t,-3),"Retard Vieux","left");day(y,"Retard Un","left");day(y,"Retard Droite","right");
+ });
+ try{
+  const c=x.cs["Retard Droite"],line="🖌️ La Gauche a tenu le mur cette nuit (2 cases contre 1).";
+  assert.ok(await until(async()=>(await feedOf(c,/🖌️/)).length,6000));
+  assert.equal(await bulletins(x.cs["Retard Un"]),1);assert.equal(await bulletins(x.cs["Retard Vieux"]),0,"an older night is never paid");
+  let db=x.open();
+  try{
+   assert.deepEqual(db.prepare("SELECT day FROM wall_nights ORDER BY day").all().map(r=>r.day),[y]);
+   const skip=db.prepare("SELECT via,target,detail FROM admin_log WHERE cmd='wall-night-skip'").all();
+   assert.equal(skip.length,1);assert.equal(skip[0].via,"server");assert.match(skip[0].detail,/2 nuits/);
+   assert.equal(skip[0].target,`${shift(t,-3)}-${shift(t,-2)}`);
+  }finally{db.close();}
+  await x.restart();
+  await sleep(1000);
+  assert.deepEqual((await feedOf(c,/🖌️/)).map(e=>e.text),[line],"closed once across a restart");
+  assert.equal(await bulletins(x.cs["Retard Un"]),1);
+  db=x.open();try{assert.equal(db.prepare("SELECT COUNT(*) AS n FROM admin_log WHERE cmd LIKE 'wall-night%'").get().n,2);}finally{db.close();}
+ }finally{await x.stop();}
+});
+
+it("a deleted colleur: never paid, his posters still count for his camp; the forced close happens once",async()=>{
+ const t=today(),AT=Date.now()+6000;
+ const x=await seeded(18970,[["Reste Gauche","left"],["Parti Gauche","left"],["Garde Droite","right"]],({cell,day,id})=>{
+  cell(0,"left",id["Parti Gauche"]);cell(1,"left",id["Parti Gauche"]);cell(2,"right",id["Garde Droite"]);
+  day(t,"Reste Gauche","left");day(t,"Parti Gauche","left");day(t,"Garde Droite","right");
+ },{POLITIGO_WALL_CLOSE_AT:String(AT)});
+ try{
+  assert.equal((await x.cs["Parti Gauche"].call("DELETE","/api/account",{password:PW})).status,200);
+  assert.ok(Date.now()<AT,"deleted before the close");
+  const c=x.cs["Garde Droite"];
+  assert.ok(await until(async()=>(await feedOf(c,/🖌️/)).length,12000));
+  assert.deepEqual((await feedOf(c,/🖌️/)).map(e=>e.text),["🖌️ La Gauche a tenu le mur cette nuit (2 cases contre 1)."]);
+  assert.equal(await bulletins(x.cs["Reste Gauche"]),1);
+  let db=x.open();try{assert.equal(db.prepare("SELECT paid FROM wall_nights WHERE day=?").get(t).paid,1);}finally{db.close();}
+  await x.restart();await sleep(1000);
+  assert.equal((await feedOf(c,/🖌️/)).length,1,"the knob closes its night once");
+  assert.equal(await bulletins(x.cs["Reste Gauche"]),1);
+ }finally{await x.stop();}
+});
+
+it("a volunteer wave: min(A − B, B) « bon » posters for the minority, marked vol, no XP, never active; once per wave",async()=>{
+ assert.ok(dueWave()>=0,"the test server lives in the early afternoon");
+ const t=today(),L=["Vol G1","Vol G2","Vol G3","Vol G4","Vol G5"],Rr=["Vol D1","Vol D2"];
+ const x=await seeded(18971,[...L.map(n=>[n,"left"]),...Rr.map(n=>[n,"right"])],({day,set})=>{
+  for(const n of L)day(t,n,"left");for(const n of Rr)day(t,n,"right");
+  set("wall_wave",null);
+ });
+ try{
+  const c=x.cs["Vol D1"],stored=()=>{const d=x.open();try{return d.prepare("SELECT COUNT(*) AS n FROM wall_cells").get().n;}finally{d.close();}};
+  assert.ok(await until(()=>stored()>=2,6000),"the wave pasted");
+  await sleep(300);const v=await view(c);
+  const posted=v.cells.filter(Boolean);
+  assert.equal(posted.length,2,"min(5 − 2, 2) = 2 volunteers, one poster each");
+  for(const p of posted)assert.deepEqual({camp:p.camp,vol:p.vol,sol:p.sol,by:p.by,name:p.name},{camp:"right",vol:true,sol:2,by:null,name:null});
+  assert.deepEqual(v.active,{left:5,right:2},"volunteers are never active colleurs");
+  assert.deepEqual(v.volunteers,{left:0,right:2});
+  for(const n of [...L,...Rr])assert.equal((await me(x.cs[n])).state.xp,x.cs[n].x0,`no XP for ${n}`);
+  const db=x.open();
+  try{
+   assert.equal(db.prepare("SELECT used FROM wall_vol WHERE day=? AND camp='right'").get(t).used,2);
+   assert.equal(db.prepare("SELECT value FROM settings WHERE key='wall_wave'").get().value,`${t}:${dueWave()}`);
+  }finally{db.close();}
+  await x.restart();await sleep(1000);
+  assert.equal((await view(c)).cells.filter(Boolean).length,2,"once per wave, across a restart");
+ }finally{await x.stop();}
+});
+
+it("the weekly title: last week's champion in the feed, wallTitle on his board row this week",async()=>{
+ const t=today(),last=shift(t,-7),now=Date.now();
+ const x=await seeded(18972,[["Ines Colle","left"],["Bob Colle","right"],["Cy Colle","left"]],({day,set})=>{
+  day(last,"Ines Colle","left",{pasted:14,useful:14,reached:now-8*864e5});
+  day(last,"Bob Colle","right",{pasted:15,useful:14,reached:now-8*864e5+60e3});   // the same score, reached later
+  day(last,"Cy Colle","left",{pasted:3,useful:3,reached:now-8*864e5});
+  set("wall_week_closed",null);
+ });
+ try{
+  const c=x.cs["Bob Colle"],line="🖌️ Colleur de la semaine : Ines Colle (14 collages utiles).";
+  assert.ok(await until(async()=>(await feedOf(c,/Colleur de la semaine/)).length,6000));
+  assert.deepEqual((await feedOf(c,/🖌️/)).map(e=>[e.player,e.kind,e.text]),[["PolitiGo","wall",line]]);
+  const board=(await c.call("GET","/api/board")).json.board,row=n=>board.find(r=>r.name===n);
+  assert.equal(row("Ines Colle").wallTitle,true);
+  assert.equal(row("Bob Colle").wallTitle,undefined);assert.equal(row("Cy Colle").wallTitle,undefined);
+  assert.deepEqual((await view(c)).title,{name:"Ines Colle",camp:"left"});
+  const db=x.open();
+  try{
+   assert.equal(db.prepare("SELECT player_id FROM wall_titles WHERE week=?").get(weekOf(t)-1).player_id,x.id["Ines Colle"]);
+   assert.equal(db.prepare("SELECT value FROM settings WHERE key='wall_week_closed'").get().value,String(weekOf(t)-1));
+  }finally{db.close();}
+  await x.restart();await sleep(1000);
+  assert.equal((await feedOf(c,/Colleur de la semaine/)).length,1,"the week closes once");
+ }finally{await x.stop();}
+});
+
+it("POLITIGO_WALL_CLOSE_AT is refused on a released image and when it is not an instant",async()=>{
+ await assert.rejects(boot(18973,mkdtempSync(join(tmpdir(),"wall-")),{POLITIGO_VERSION:"v1.9.0",POLITIGO_WALL_CLOSE_AT:String(Date.now())}),/server exited 1[\s\S]*POLITIGO_WALL_CLOSE_AT/);
+ await assert.rejects(boot(18973,mkdtempSync(join(tmpdir(),"wall-")),{POLITIGO_WALL_CLOSE_AT:"minuit"}),/server exited 1[\s\S]*POLITIGO_WALL_CLOSE_AT/);
 });

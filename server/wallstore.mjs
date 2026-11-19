@@ -58,9 +58,11 @@ CREATE INDEX IF NOT EXISTS wall_days_p ON wall_days(player_id);`);
  const write=c=>q.put.run(c.g,c.camp,c.by??null,c.name??null,c.vol?1:0,c.sol,c.at,c.takenFrom??null,c.takenAt??null,c.motif??0);
  // Writes only the difference with what is stored: the changed cells are put (or deleted when null), the rows past the new end go.
  const same=(x,y)=>x===y||!!x&&!!y&&["camp","by","name","sol","at","motif","takenFrom","takenAt"].every(k=>(x[k]??null)===(y[k]??null))&&!!x.vol===!!y.vol;
+ // Returns the number of rows written or deleted.
  const setCells=(cells,before=load())=>{
-  cells.forEach((c,g)=>{if(!same(c,before[g]??null)){if(c)write({...c,g});else q.del.run(g);}});
-  q.trim.run(cells.length);
+  let n=0;
+  cells.forEach((c,g)=>{if(!same(c,before[g]??null)){n++;if(c)write({...c,g});else q.del.run(g);}});
+  return n+Number(q.trim.run(cells.length).changes);
  };
  return {
   // The settled walls at `now` (expired posters freed, walls opened or closed); the settled result is stored if it changed.
@@ -68,6 +70,12 @@ CREATE INDEX IF NOT EXISTS wall_days_p ON wall_days(player_id);`);
    const before=load(),next=settleWalls(before,now).cells;
    setCells(next,before);
    return next;
+  },
+  // The same, and whether a stored row changed (a poster freed, so maybe a wall gone): the tick tells the screens.
+  // A wall opens only on a paste, which tells them itself (an empty wall has no row).
+  settle(now){
+   const before=load(),next=settleWalls(before,now).cells;
+   return {cells:next,changed:setCells(next,before)>0};
   },
   paste(g,cell){if(cell)write({...cell,g});else q.del.run(g);},
   setCells,

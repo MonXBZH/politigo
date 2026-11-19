@@ -171,3 +171,16 @@ test("closeNight keeps the given time, now when absent",()=>{
  const t=Date.now();W.closeNight(2,{left:0,right:0,winners:[],paid:0});
  assert.ok(db.prepare("SELECT at FROM wall_nights WHERE day=2").get().at>=t);
 });
+
+test("settle(now) says whether the stored walls changed",()=>{
+ const {W}=fresh();
+ assert.equal(W.settle(NOW).changed,false,"an empty first wall has no row to write");
+ W.paste(0,cell({at:NOW-47*HOUR}));W.paste(1,cell());
+ let r=W.settle(NOW);assert.equal(r.changed,false);assert.ok(r.cells[0]&&r.cells[1]);
+ r=W.settle(NOW+HOUR);assert.equal(r.changed,true,"a poster reached 48 h");assert.equal(r.cells[0],null);
+ assert.equal(W.settle(NOW+HOUR).changed,false);
+ W.setCells(Array.from({length:WALL_CELLS},(_,i)=>cell({motif:i})));
+ let o=W.settle(NOW);assert.equal(o.cells.length,2*WALL_CELLS,"a full wall opens the next");
+ assert.equal(W.settle(NOW).changed,false,"an open empty wall is no row: not a change at every tick");
+ o=W.settle(NOW+49*HOUR);assert.equal(o.changed,true,"everything expired");assert.equal(o.cells.length,WALL_CELLS);
+});

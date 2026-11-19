@@ -109,6 +109,16 @@ if(env.POLITIGO_NEWYEAR_AT!==undefined&&env.POLITIGO_NEWYEAR_AT!==""){
  if(!Number.isSafeInteger(n)||n<=0){console.error("POLITIGO_NEWYEAR_AT must be an instant in ms since 1970.");process.exit(1);}
  NEWYEAR_AT=n;console.warn(`New Year test setting active: midnight at ${new Date(n).toISOString()}.`);
 }
+// La Nuit du collage's close moved to an instant, in ms: a test setting (refused on a released image, like the New Year's).
+// It closes the night of that instant's day once, at that instant; the real midnights then go on as usual.
+let WALL_CLOSE_AT=null;
+if(env.POLITIGO_WALL_CLOSE_AT!==undefined&&env.POLITIGO_WALL_CLOSE_AT!==""){
+ const rawVersion=env.POLITIGO_VERSION??"";
+ if(rawVersion!==""&&rawVersion!=="dev"){console.error("POLITIGO_WALL_CLOSE_AT is a test setting: refused unless POLITIGO_VERSION is unset or \"dev\". Remove it.");process.exit(1);}
+ const n=Number(env.POLITIGO_WALL_CLOSE_AT);
+ if(!Number.isSafeInteger(n)||n<=0){console.error("POLITIGO_WALL_CLOSE_AT must be an instant in ms since 1970.");process.exit(1);}
+ WALL_CLOSE_AT=n;console.warn(`Collage test setting active: night close at ${new Date(n).toISOString()}.`);
+}
 // The timed events still to come or running (the table holds them all): read by every action and every clock tick.
 let EVENTS=[];
 const fxOf=p=>t=>E.effectsOf(EVENTS,p.state.camp,t);
@@ -610,11 +620,13 @@ const onlineIds=()=>new Set([...clients].map(c=>c.playerId));
 const isOnline=id=>[...clients].some(c=>c.playerId===id);
 function boardRows(){
  const on=onlineIds(),tally=new Map(q.duelTally.all().map(r=>[r.id,r]));
+ // The Colleur de la semaine wears his title on his card the whole following week.
+ let colleur=null;try{colleur=WS.title(Date.now())?.playerId??null;}catch(e){console.error("board, wall title:",e);}
  return [...players.values()].filter(p=>!p.suspended).map(p=>{const S=p.state,worn=S.wardrobe?.worn,t=tally.get(p.id);return {
   name:p.name,camp:S.camp,candidate:R.person(S).name,lvl:S.lvl,score:R.score(S),form:S.form,
   streak:S.streak,bestStreak:S.bestStreak,deaths:S.deaths,asleep:R.isAsleep(S),online:on.has(p.id),
   // What the portraits wear, and the duel record of the last month (closed duels are purged after 30 days).
-  outfit:worn?.outfit??null,object:worn?.object??null,dw:Number(t?.dw??0),dl:Number(t?.dl??0)};})
+  outfit:worn?.outfit??null,object:worn?.object??null,dw:Number(t?.dw??0),dl:Number(t?.dl??0),...(p.id===colleur?{wallTitle:true}:{})};})
  .sort((a,b)=>b.score-a.score||b.lvl-a.lvl||a.name.localeCompare(b.name,"fr"));
 }
 const clients=new Set();         // live SSE connections: {res, playerId}
@@ -892,6 +904,7 @@ setInterval(()=>{
  if(now-lastChores>=60e3){lastChores=now;try{chores(now);}catch(e){console.error("sweep, chores:",e);}}
  try{sweepDuels(now);}catch(e){console.error("sweep, duels:",e);}
  try{chat.sweep(now);}catch(e){console.error("sweep, chat:",e);}
+ try{wallTick(now);}catch(e){console.error("sweep, wall:",e);}
  try{flushDeferred();}catch(e){console.error("sweep, deferred pushes:",e);}   // games that expired or were closed above
  lastSweep=now;
 },SWEEP_MS).unref();
@@ -1898,7 +1911,8 @@ const wallCounts=(cells,now)=>{const n=WL.countWall(cells,now);return {left:n.le
 // The next Paris midnight, when the night is counted.
 const wallClosesAt=now=>{const w=wall(now);return wallToUtc(w.year,w.month,w.day+1,0,0);};
 function wallView(p,now){
- const cells=WS.cells(now),day=dayNow(now),active=WS.active(day),a=wallLive(p,now),t=WS.title(now),tp=t&&players.get(t.playerId);
+ const st=WS.settle(now),cells=st.cells,day=dayNow(now),active=WS.active(day),a=wallLive(p,now),t=WS.title(now),tp=t&&players.get(t.playerId);
+ if(st.changed)wallChanged();   // a poster reached its 48 h since the last tick: the other screens hear it too
  return {cells,walls:WL.wallCount(cells),now,counts:wallCounts(cells,now),active,volunteers:WL.volunteerCounts(active),left:wallLeftOf(p,now),
   attempt:a?{id:a.id,seed:a.seed,g:a.g,t0:a.t0}:null,title:tp?{name:tp.name,camp:tp.state.camp}:null,closesAt:wallClosesAt(now)};
 }
@@ -1960,6 +1974,99 @@ async function wallRoute(req,res){
   return send(res,200,{ok:true,quality:q,outcome:r.outcome,g:a.g,cell:r.cell,xp,left:wallLeftOf(p,now),...(opened!==undefined?{opened}:{})});
  }
  throw new HttpError(400,"Opération inconnue.");
+}
+// ---- The wall's clock (every sweep): the wear, the volunteers' waves, the night at Paris midnight, the week on Monday.
+// Each is done once, kept in a setting: wall_wave = "day:wave", wall_night_closed = the last closed day, wall_week_closed
+// = the last closed week. After a downtime only the latest due wave, the last night and the last week are done.
+const WALL_NIGHT_JOURNAL="🖌️ Nuit du collage : ton camp a tenu le mur. +1 bulletin.";
+// The day key n days from a day key, by the calendar (a 23 h or 25 h day never skips nor repeats one); the days between two.
+const dayUtc=k=>Date.UTC(Math.floor(k/10000),Math.floor(k/100)%100-1,k%100);
+const dayShift=(k,n)=>{const d=new Date(dayUtc(k)+n*864e5);return d.getUTCFullYear()*10000+(d.getUTCMonth()+1)*100+d.getUTCDate();};
+const dayGap=(a,b)=>Math.round((dayUtc(b)-dayUtc(a))/864e5);
+function wallTick(now){
+ const day=dayNow(now),step=(what,fn)=>{try{fn();}catch(e){console.error(`wall tick, ${what}:`,e);}};
+ step("wear",()=>{if(WS.settle(now).changed)wallChanged();});
+ step("volunteers",()=>{
+  let i=-1;const h=wallHour(now);for(const [k,wh] of WL.WAVE_HOURS.entries())if(h>=wh)i=k;
+  if(i<0)return;
+  const [d,w]=String(getSetting("wall_wave")??"").split(":").map(Number);
+  if(d===day&&w>=i)return;
+  wallWave(day,i,now);
+ });
+ step("night",()=>{
+  const last=Number(getSetting("wall_night_closed"))||0,prev=dayShift(day,-1);
+  if(last<prev){
+   const gap=last?dayGap(last,prev)-1:0;   // the nights between the last closed one and yesterday: skipped
+   if(gap>0)audit("server","wall-night-skip",`${dayShift(last,1)}-${dayShift(prev,-1)}`,`${gap} nuit${gap>1?"s":""} non close${gap>1?"s":""} (serveur arrêté) : seule la dernière compte`);
+   if(WS.nightClosed(prev))setSetting("wall_night_closed",String(prev));else closeWallNight(prev,now);
+  }
+  if(WALL_CLOSE_AT!==null&&now>=WALL_CLOSE_AT){const d=dayNow(WALL_CLOSE_AT);if(!WS.nightClosed(d))closeWallNight(d,now);}
+ });
+ step("week",()=>{
+  const wk=WL.weekOf(day)-1;
+  if((Number(getSetting("wall_week_closed"))||0)<wk)closeWallWeek(wk);
+ });
+}
+// One wave: each minority volunteer pastes one « bon » poster (planWave: a volunteer appearing late only gets the waves
+// left, one per wave), by nobody, no XP, never an active colleur. The cells, the count and the setting in one transaction.
+function wallWave(day,i,now){
+ const before=WS.cells(now),vc=WL.volunteerCounts(WS.active(day)),done={left:0,right:0};
+ let cells=before;
+ for(const camp of WL.CAMPS){
+  const n=vc[camp];if(!n)continue;
+  const {posters}=WL.planWave(Array(n).fill(WL.WAVE_HOURS.length-i),n,i);
+  const r=WL.runVolunteers(cells,{camp,posters,now,seed:WL.hash32("wall-wave",day,i,camp)});
+  cells=r.wall;done[camp]=r.actions.length;
+ }
+ db.exec("BEGIN");
+ try{
+  if(done.left||done.right)WS.setCells(cells,before);
+  for(const camp of WL.CAMPS)if(done[camp])WS.addVolunteerUsed(day,camp,done[camp]);
+  setSetting("wall_wave",`${day}:${i}`);
+  db.exec("COMMIT");
+ }catch(e){try{db.exec("ROLLBACK");}catch{}throw e;}
+ if(done.left||done.right){console.log(`Collage: volunteers' wave ${i} of ${day}, left ${done.left}, right ${done.right}`);wallChanged();}
+}
+// The night: the walls counted now, the winners (scoreNight: only a camp with an active human colleur that day), one
+// bulletin to each of the winning camps' colleurs of the day, the night's row and the setting in ONE transaction, as
+// closeFront: an error pays nobody, puts the live states back and is retried at the next tick. Then the feed line (none
+// when nobody wins) and, when anybody pasted that day, the admin log.
+function closeWallNight(day,now){
+ const cells=WS.cells(now),n=WL.countWall(cells,now),counts={left:n.left,right:n.right},active=WS.active(day);
+ const {winners}=WL.scoreNight(counts,active),can=WL.CAMPS.filter(c=>active[c]>0),keep=new Map();let paid=0;
+ batonBusy=true;db.exec("BEGIN");
+ try{
+  for(const camp of winners)for(const id of WS.colleurs(day,camp)){
+   const p=players.get(id);if(!p||p.suspended)continue;
+   keep.set(id,p.state);let credited=false;
+   update(p,S=>{const w=S.wardrobe;if(!w)return false;credited=true;const b=Number.isFinite(w.bulletins)?w.bulletins:0;w.bulletins=Math.min(9999,b+1);
+    R.logEntry(S,"wall",WALL_NIGHT_JOURNAL,{bulletins:1});});
+   if(credited)paid++;
+  }
+  WS.closeNight(day,{...counts,winners,paid,at:now});
+  setSetting("wall_night_closed",String(Math.max(day,Number(getSetting("wall_night_closed"))||0)));
+  db.exec("COMMIT");
+ }catch(e){
+  try{db.exec("ROLLBACK");}catch{}
+  for(const [id,st] of keep){const p=players.get(id);if(p)p.state=st;}
+  console.error(`Collage night ${day} NOT closed (retried at the next tick):`,e);return;
+ }finally{batonBusy=false;}
+ console.log(`Collage night ${day} closed: left ${counts.left}, right ${counts.right}, winners ${winners.join("+")||"none"}, ${paid} player(s) paid`);
+ const line=WL.nightLine(winners,counts,can);if(line)feedLine("PolitiGo","wall",line);
+ if(can.length)audit("server","wall-night",String(day),`Gauche ${counts.left} · Droite ${counts.right} · ${winners.length===2?"égalité":winners.length?`${WL.CAMP_NAME[winners[0]]} gagne`:"personne ne gagne"} · +1 bulletin à ${paid} joueur${paid>1?"s":""}`);
+}
+// The week: its champion (most poses on an empty cell and captures, the earliest to the score on a tie) wears the title
+// the following week. A week nobody pasted usefully closes quietly.
+function closeWallWeek(wk){
+ const champ=WS.week(wk).find(r=>players.has(r.playerId))??null;
+ db.exec("BEGIN");
+ try{if(champ)WS.setTitle(wk,champ.playerId);setSetting("wall_week_closed",String(wk));db.exec("COMMIT");}
+ catch(e){try{db.exec("ROLLBACK");}catch{}throw e;}
+ publishBoard();   // last week's title leaves its card, this one's arrives
+ if(!champ)return;
+ const name=players.get(champ.playerId).name,n=champ.useful;
+ feedLine("PolitiGo","wall",`🖌️ Colleur de la semaine : ${name} (${n} collage${n>1?"s":""} utile${n>1?"s":""}).`);
+ audit("server","wall-week",name,`Semaine ${wk} · ${n} collage${n>1?"s":""} utile${n>1?"s":""}`);
 }
 
 // ===================================================================== ROUTES
