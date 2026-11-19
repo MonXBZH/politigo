@@ -29,12 +29,32 @@ test("the catalogue: every id of the contract, with its kind, pool and rarity",(
   assert.deepEqual([W.ITEMS[id].kind,W.ITEMS[id].pool,W.ITEMS[id].rarity],["outfit",camp,r],id);
  assert.deepEqual([W.ITEMS.giletjaune.kind,W.ITEMS.giletjaune.pool,W.ITEMS.giletjaune.rarity],["outfit","all","rare"]);
  for(const [pool,ids] of Object.entries(SPEC.objects))for(const id of ids.split(" "))assert.equal(W.ITEMS[id]?.kind+W.ITEMS[id]?.pool,"object"+pool,id);
- assert.equal(Object.keys(W.ITEMS).length,41+54);
+ assert.equal(Object.keys(W.ITEMS).length,41+54+35);
  assert.equal(W.ITEMS.baton.rarity,"mythique");assert.equal(W.ITEMS.grossesaucisse.rarity,"epique");
  for(const it of Object.values(W.ITEMS)){assert.ok(it.name&&it.desc);}
  assert.equal(W.ITEMS.camarade.name,"Le Camarade, 1917");assert.equal(W.ITEMS.blazer.desc,"Boutons dorés, écusson.");
- for(const camp of ["left","right"])for(const [kind,n] of [["outfit",{commun:8,rare:6,epique:4,legendaire:1}],["object",{commun:7,rare:6,epique:5-(camp==="right"),legendaire:3}]])for(const [r,c] of Object.entries(n))
+ const COUNT={left:{outfit:{commun:10,rare:8,epique:5,legendaire:2},object:{commun:9,rare:8,epique:6,legendaire:5}},
+  right:{outfit:{commun:9,rare:8,epique:6,legendaire:2},object:{commun:9,rare:8,epique:5,legendaire:5}},
+  all:{outfit:{commun:0,rare:2,epique:1,legendaire:0},object:{commun:7,rare:4,epique:4,legendaire:4}}};
+ for(const [camp,kinds] of Object.entries(COUNT))for(const [kind,n] of Object.entries(kinds))for(const [r,c] of Object.entries(n))
   assert.equal(Object.values(W.ITEMS).filter(it=>it.kind===kind&&it.pool===camp&&it.rarity===r).length,c,`${camp} ${kind} ${r}`);
+});
+
+test("1.9.0, the satire wave: 35 pieces with their camp, kind and rarity, all drawable from their pools",()=>{
+ const WAVE={
+  left:{outfit:{legendaire:"hologramme",epique:"caviar",rare:"frondeur sanscravate",commun:"agetudiante bobo"},
+   object:{legendaire:"comptesuisse phobie",epique:"rosesfanees",rare:"primairepop nupes",commun:"synthese petition"}},
+  right:{outfit:{legendaire:"levallois",epique:"trocadero chouan",rare:"footing manifpourtous",commun:"enarque"},
+   object:{legendaire:"bracelet bouclier",epique:"painvole",rare:"lingot courcomptes",commun:"giletquart cartefouquets"}},
+  all:{outfit:{epique:"enmemetemps",rare:"marcheur"},object:{legendaire:"dissolution matignon",epique:"art493 homard",rare:"promesse",commun:"elements tweet"}}};
+ let n=0;
+ for(const [pool,kinds] of Object.entries(WAVE))for(const [kind,rs] of Object.entries(kinds))for(const [r,ids] of Object.entries(rs))for(const id of ids.split(" ")){
+  n++;assert.deepEqual([W.ITEMS[id]?.kind,W.ITEMS[id]?.pool,W.ITEMS[id]?.rarity],[kind,pool,r],id);
+  for(const camp of pool==="all"?["left","right"]:[pool])assert.ok(W.poolItems(camp,r).includes(id),`${id} drawable by ${camp}`);
+  if(pool!=="all")assert.ok(!W.poolItems(pool==="left"?"right":"left",r).includes(id),`${id} stays in its camp`);
+ }
+ assert.equal(n,35);
+ assert.match(W.ITEMS.bracelet.desc,/Sarkozy/);assert.match(W.ITEMS.phobie.desc,/Thévenoud/);
 });
 
 test("the pools: shared items (the gilet jaune too) and the camp's own, never the other camp's nor the staff",()=>{
@@ -83,13 +103,35 @@ test("pity: an épique at the 10th draw without one, a légendaire at the 50th, 
  assert.deepEqual(got.slice(0,10),[..."ccccccccc"].map(()=>"commun").concat("epique"));
  assert.equal(got[19],"epique");assert.equal(got[49],"legendaire");assert.equal(got[79],"ultra");
  assert.equal(got.filter(r=>r==="epique").length,6,"10, 20, 30, 40, 60, 70");
- assert.deepEqual(S.wardrobe.pity,{epique:0,legendaire:0,ultra:0});assert.equal(S.wardrobe.draws,80);
+ assert.deepEqual(S.wardrobe.pity,{epique:0,legendaire:30,ultra:0},"the ultra leaves the légendaire counter alone");assert.equal(S.wardrobe.draws,80);
  assert.ok(S.wardrobe.own.includes("camarade"));
  const T=game();T.wardrobe.bulletins=5;T.wardrobe.pity={epique:3,legendaire:20,ultra:20};
  play(T,{type:"draw",pay:"bulletin"},10,seq(0.1,0));   // an épique rolled resets only the épique counter
  assert.deepEqual(T.wardrobe.pity,{epique:0,legendaire:21,ultra:21});
  play(T,{type:"draw",pay:"bulletin"},10,seq(0.01,0));   // a légendaire resets the two lower counters
  assert.deepEqual(T.wardrobe.pity,{epique:0,legendaire:0,ultra:22});
+});
+
+test("1.9.0: the ultra keeps the légendaire counter, the forced légendaire is a new one while any is missing",()=>{
+ const S=game();S.wardrobe.bulletins=5;S.wardrobe.own=["camarade"];S.wardrobe.pity={epique:4,legendaire:30,ultra:79};
+ const u=play(S,{type:"draw",pay:"bulletin"},10,never);
+ assert.equal(u.item.rarity,"ultra");assert.equal(u.dup,true);
+ assert.deepEqual(S.wardrobe.pity,{epique:0,legendaire:31,ultra:0},"an ultra (even a duplicate) resets épique and ultra only");
+ const legs=W.poolItems("left","legendaire");assert.ok(legs.length>=10);
+ const T=game();T.wardrobe.bulletins=5;T.wardrobe.own=legs.slice(0,-1);T.wardrobe.pity.legendaire=49;
+ const g=play(T,{type:"draw",pay:"bulletin"},10,seq(0.99,0));   // the pick would be the first one, owned: the forced draw skips it
+ assert.equal(g.item.rarity,"legendaire");assert.equal(g.item.id,legs.at(-1));assert.equal(g.dup,false);
+ assert.equal(T.wardrobe.pity.legendaire,0);
+ const F=game();F.wardrobe.bulletins=5;F.wardrobe.own=[...legs];F.wardrobe.pity.legendaire=49;
+ const d=play(F,{type:"draw",pay:"bulletin"},10,seq(0.99,0));   // all owned: a duplicate, as before
+ assert.equal(d.item.rarity,"legendaire");assert.equal(d.item.id,legs[0]);assert.equal(d.dup,true);
+ const N=game();N.wardrobe.bulletins=5;N.wardrobe.own=[legs[0]];
+ const r=play(N,{type:"draw",pay:"bulletin"},10,seq(0.01,0));   // a légendaire rolled by luck keeps its plain pick
+ assert.equal(r.item.id,legs[0]);assert.equal(r.dup,true);
+ const P=game();P.wardrobe.bulletins=5;P.wardrobe.pity={epique:0,legendaire:49,ultra:79};
+ assert.equal(play(P,{type:"draw",pay:"bulletin"},10,never).item.rarity,"ultra");
+ assert.equal(P.wardrobe.pity.legendaire,49,"both due: the ultra first, the légendaire stays due for the next draw");
+ assert.equal(play(P,{type:"draw",pay:"bulletin"},10,never).item.rarity,"legendaire");
 });
 
 test("a duplicate turns into confetti; 100 confetti buy a missing commun, rare or épique",()=>{

@@ -1920,7 +1920,7 @@ function renderUrn(body,set){
  const pity=document.createElement("div");pity.className="pity";
  for(const k of Object.keys(W.PITY)){
   const n=w.pity?.[k]||0,left=W.PITY[k]-n,row=document.createElement("div"),l=document.createElement("span"),v=document.createElement("b"),bar=document.createElement("div"),fill=document.createElement("i");
-  row.className="pity-row";l.textContent=`${W.RARITY_LABEL[k]} garanti${k==="epique"?" (ou mieux)":""}`;v.textContent=left<=1?"au prochain tirage":`dans ${left} tirages`;row.append(l,v);
+  row.className="pity-row";l.textContent=`${W.RARITY_LABEL[k]} garanti${k==="epique"?" (ou mieux)":k==="legendaire"&&W.poolItems(S.camp,"legendaire").some(id=>!w.own.includes(id))?" (un nouveau)":""}`;v.textContent=left<=1?"au prochain tirage":`dans ${left} tirages`;row.append(l,v);
   bar.className="bar";bar.setAttribute("aria-hidden","true");fill.style.width=`${Math.round(100*n/W.PITY[k])}%`;fill.style.background=W.RARITY_COLOR[k];bar.append(fill);   // CSSOM
   pity.append(row,bar);
  }

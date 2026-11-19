@@ -5,14 +5,18 @@
 import {cmpRelease} from "./rules.mjs";
 
 export const CHANGELOG=[
- {version:"1.9.0",date:"2026-11-19",help:["brocante"],
+ {version:"1.9.0",date:"2026-11-19",help:["brocante","tombola"],
   added:[
    "La Brocante : un tableau d'annonces où les joueurs échangent tenues et objets de leur Garde-robe. Dépose une annonce, troque tout de suite si tu as ce qu'elle demande, ou fais une offre que l'auteur accepte ou refuse.",
    "Les échanges se font entre les deux camps : l'objet reçu se porte. Dès le niveau 5, avec un compte d'au moins 3 jours, 3 échanges et 10 annonces déposées par jour.",
    "Tu es prévenu d'une offre reçue, d'un échange conclu ou d'une réponse à ton offre, et les échanges entre camps apparaissent dans le fil.",
-   "Les objets en vitrine sont marqués dans la Garde-robe."
+   "Les objets en vitrine sont marqués dans la Garde-robe.",
+   "La vague satirique : 35 nouvelles pièces à la Tombola et à la Loterie, 14 tenues et 21 objets, dont 9 pour les deux camps. Au menu : des affaires, des promesses, un 49.3 et un siège éjectable. Toutes s'échangent à la Brocante."
   ],
-  fixed:[],
+  fixed:[
+   "Un ultra rare, même en doublon, ne remet plus à zéro le compteur du légendaire garanti.",
+   "Le légendaire garanti est désormais un légendaire que tu n'as pas encore, tant qu'il t'en manque un."
+  ],
   admin:[
    "La carte Brocante de la console liste les annonces ouvertes et l'historique des échanges, avec les paires qui reviennent sur 30 jours et un signal « même réseau : oui / non ».",
    "Nouveau droit de modérateur : « Retirer une annonce de la Brocante », inclus dans « Modo complet ».",

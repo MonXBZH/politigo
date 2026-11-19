@@ -64,7 +64,7 @@ export const HELP=[
   "À gauche La Tombola de la Fête, à droite La Loterie du Gala (Dossier). De quoi habiller ton élu et lui mettre quelque chose dans la main. Purement cosmétique, et jamais d'argent réel.",
   ["Un tirage gratuit par jour, puis un bulletin par tirage.",
    `Chances : ${rarities.map(r=>`${RARITY_LABEL[r].toLowerCase()} ${pct(ODDS[r])}`).join(", ")}.`,
-   `Tirages garantis : ${RARITY_LABEL.epique.toLowerCase()} (ou mieux) au ${PITY.epique}ᵉ tirage sans en voir, ${RARITY_LABEL.legendaire.toLowerCase()} au ${PITY.legendaire}ᵉ, ${RARITY_LABEL.ultra.toLowerCase()} au ${PITY.ultra}ᵉ.`,
+   `Tirages garantis : ${RARITY_LABEL.epique.toLowerCase()} (ou mieux) au ${PITY.epique}ᵉ tirage sans en voir, ${RARITY_LABEL.legendaire.toLowerCase()} au ${PITY.legendaire}ᵉ, ${RARITY_LABEL.ultra.toLowerCase()} au ${PITY.ultra}ᵉ. Le légendaire garanti est un légendaire que tu n'as pas encore, tant qu'il en manque, et un ultra rare ne remet pas son compteur à zéro.`,
    `Un doublon devient des confettis (${rarities.map(r=>CONFETTI[r]).join(", ")} selon la rareté) ; ${EXCHANGE.cost.commun}, ${EXCHANGE.cost.rare} ou ${EXCHANGE.cost.epique} confettis s'échangent contre une pièce commune, rare ou épique de ton choix.`],
   "La Garde-robe range tes tenues et tes objets : touche-en un pour le porter, touche-le de nouveau pour l'enlever. Une tenue s'enfile par-dessus tous les personnages de la collection."]},
  {id:"brocante",title:"La Brocante",parts:[
