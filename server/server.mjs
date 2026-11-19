@@ -133,7 +133,14 @@ if(!/^(mailto:|https:\/\/)[^\s]{3,200}$/.test(PUSH_CONTACT)){console.error("POLI
 const db=new DatabaseSync(DB_PATH,{timeout:5000});
 // A database created by an older version (before the umask) is made private too; another owner's file is left alone.
 for(const f of [DB_PATH,DB_PATH+"-wal",DB_PATH+"-shm"]){try{chmodSync(f,0o600);}catch{}}
-db.exec(`PRAGMA journal_mode=WAL;PRAGMA foreign_keys=ON;
+// Two servers opening the same file at once (a restart overlapping the old process, the tests): switching to WAL and
+// creating the schema can answer "database is locked" at once, without the busy wait. Every statement below is
+// idempotent, so it is simply run again for a few seconds.
+function bootExec(sql){
+ const end=Date.now()+10e3,pause=new Int32Array(new SharedArrayBuffer(4));
+ for(;;){try{db.exec(sql);return;}catch(e){if(![5,6].includes(e.errcode)||Date.now()>end)throw e;Atomics.wait(pause,0,0,25+Math.floor(Math.random()*50));}}
+}
+bootExec(`PRAGMA journal_mode=WAL;PRAGMA foreign_keys=ON;
 CREATE TABLE IF NOT EXISTS players(id INTEGER PRIMARY KEY,name TEXT NOT NULL,name_key TEXT NOT NULL UNIQUE,pass TEXT NOT NULL,
  created INTEGER NOT NULL,state TEXT NOT NULL,score INTEGER NOT NULL DEFAULT 0,updated INTEGER NOT NULL,seen_version TEXT);
 CREATE TABLE IF NOT EXISTS sessions(token_hash TEXT PRIMARY KEY,player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,expires INTEGER NOT NULL);
