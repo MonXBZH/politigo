@@ -329,6 +329,12 @@ Une seule console peut gérer plusieurs parties, sur cette machine ou ailleurs (
   joueur est vu avec l'adresse d'un proxy, tous ont la même empreinte et « même réseau » répond toujours « oui ».
   Le droit « Retirer une annonce de la Brocante » (inclus dans « Modo complet ») retire une annonce ; elle n'est jamais supprimée
   d'elle-même, seulement masquée quand son auteur est absent depuis plus de 14 jours, suspendu, sous le niveau 5 ou à sa limite du jour.
+- **Collage** (carte Collage de la console, sous le droit du panneau Duels, en lecture seule) : les 30 dernières nuits (camp gagnant, cases,
+  colleurs), les colleurs et les bénévoles du jour, les murs et le titre de Colleur de la semaine. Le jeu n'enregistre rien de nouveau
+  sur les personnes : les poses sont rattachées au pseudo comme le reste de la partie. Points d'exploitation : les murs sont comptés
+  au premier passage du serveur après minuit, soit jusqu'à une trentaine de secondes de retard ; après une interruption, seule la
+  dernière nuit manquée est clôturée (les plus anciennes sont sautées, ce que note le journal des actions) et les vagues de bénévoles
+  manquées sont perdues, pas rattrapées. Le niveau minimal se règle avec `POLITIGO_WALL_MIN_LEVEL` (voir les réglages de test).
 - **À traiter** : sur toutes les parties, vérifiées toutes les 20 s, les messages signalés du chat, les duels signalés par
   l'anti-triche, les joueurs au score de bot de 50/100 ou plus et les groupes de duels suspects. Le nombre s'affiche dans
   le menu et dans le titre de l'onglet, un son marque chaque nouvelle alerte, et une notification système s'affiche quand
@@ -581,6 +587,9 @@ Le panneau **Events** de l'administration crée et gère des événements à dur
 - **Réglages de test** (jamais en production) : `POLITIGO_DUEL_MIN_LEVEL` et `POLITIGO_DUEL_MIN_AGE_H` abaissent le niveau
   et l'ancienneté du compte exigés pour les duels (ils ne peuvent que les baisser), pour tester avec des comptes neufs.
   `POLITIGO_MARKET_MIN_AGE_H` fait de même pour l'ancienneté exigée à la Brocante (3 jours par défaut ; elle ne peut que la baisser).
+  `POLITIGO_WALL_MIN_LEVEL` fait de même pour le niveau exigé au Collage (3 par défaut ; elle ne peut que le baisser).
+  `POLITIGO_WALL_CLOSE_AT` (instant en ms depuis 1970) déplace le décompte de minuit de La Nuit du collage, pour tester une nuit
+  sans attendre : réglage de test uniquement, le serveur refuse de démarrer avec elle si `POLITIGO_VERSION` n'est ni vide ni `dev`.
 
 ## 4. Sécurité en bref
 

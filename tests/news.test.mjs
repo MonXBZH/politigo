@@ -63,3 +63,24 @@ test("the guide: sections well formed, numbers filled in, every link from the ne
  // no spoiler: the guide never names what the Flamme attracts
  assert.doesNotMatch(JSON.stringify(HELP),/b[âa]ton|mythique|apprix/i);
 });
+
+test("the Collage guide: 48 h, level 3, in the 1.9.0 news, no spoiler; the série rule is explained",async()=>{
+ const {readFileSync}=await import("node:fs");
+ const {ITEMS}=await import("../web/wardrobe.mjs");
+ const txt=h=>h.parts.flat().join(" ");
+ const c=helpOf("collage");assert.ok(c);assert.match(c.title,/Collage/);
+ assert.match(txt(c),/48 h/);assert.match(txt(c),/niveau 3/);assert.match(txt(c),/minuit/);assert.match(txt(c),/bénévoles/);
+ assert.equal(SHEET_HELP.wall,"collage");
+ const e=CHANGELOG.find(x=>x.version==="1.9.0");assert.ok(e.help.includes("collage"));
+ assert.ok(e.added.some(l=>/Collage/.test(l))&&e.admin.some(l=>/Collage/.test(l)));
+ assert.doesNotMatch(txt(c)+[...e.added,...e.admin].filter(l=>/Collage/.test(l)).join(" "),/b[âa]ton|ultra|mythique/i);
+ const xp=txt(helpOf("xp"));assert.match(xp,/série/);assert.match(xp,/50/);assert.match(xp,/zéro/);
+ assert.ok(e.fixed.some(l=>/série/.test(l)&&/50/.test(l)));
+ // SOURCES.md (generated): lists the public-fact pieces, never an ultra or mythique one
+ const src=readFileSync(new URL("../docs/SOURCES.md",import.meta.url),"utf8");
+ assert.match(src,/## Garde-robe : pièces qui évoquent des faits publics/);
+ for(const it of Object.values(ITEMS)){
+  const shown=["commun","rare","epique","legendaire"].includes(it.rarity);
+  assert.equal(src.includes(`| ${it.name.replace(/\|/g,"\\|")} |`),shown,it.name);
+ }
+});
