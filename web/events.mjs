@@ -2,7 +2,7 @@
 // the effects of those running at a given time. Pure and shared: the server applies the effects, the browser shows
 // them. No event ever touches the Flamme, the odds of the urn or real money.
 export const EVENT_MAX_MS=7*864e5,EVENT_MIN_MS=5*6e4,EVENT_NAME_MAX=50,EVENT_MSG_MAX=160;
-export const EVENT_GAMES=[["pong","Pong des arguments"],["debate","Débat chrono"],["manif","Manif"],["snowball","Bataille de neige"],["wall","Nuit du collage"]];
+export const EVENT_GAMES=[["pong","Pong des arguments"],["debate","Débat chrono"],["manif","Manif"],["snowball","Bataille de neige"],["wall","Collage"]];
 export const EVENT_WHO=["all","left","right"],EVENT_REPEAT=["","day","week"];
 // Reminders on offer: minutes before the start, and how the console names them.
 export const EVENT_REMINDS=[[15,"15 minutes"],[60,"1 heure"],[1440,"1 jour"]];

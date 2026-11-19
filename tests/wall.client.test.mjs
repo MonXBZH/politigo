@@ -102,6 +102,17 @@ test("night scoring: active colleur rule, ties, line",()=>{
  const none=n(30,60,0,0);assert.deepEqual(none.winners,[]);assert.equal(none.line,null);
 });
 
+test("night: 20 h to 8 h, names, XP at +50 %",()=>{
+ assert.deepEqual(W.WALL_NIGHT,{start:20,end:8,xp:1.5});
+ for(const h of [20,23,0,7])assert.equal(W.isWallNight(h),true,`hour ${h}`);
+ for(const h of [8,12,19])assert.equal(W.isWallNight(h),false,`hour ${h}`);
+ assert.equal(W.wallName(7),"La Nuit du collage");assert.equal(W.wallName(0),"La Nuit du collage");
+ assert.equal(W.wallName(8),"Collage");assert.equal(W.wallName(19),"Collage");
+ assert.equal(W.wallXp("parfait",20),21);assert.equal(W.wallXp("parfait",20,2),42);
+ assert.equal(W.wallXp("bon",12),10);assert.equal(W.wallXp("bon",12,2),20);
+ assert.equal(W.wallXp("bacle",3),8,"7.5 rounds up");assert.equal(W.wallXp("bacle",8),5);
+});
+
 test("night line: singular and plural winner count",()=>{
  const l=(a,b)=>W.scoreNight({left:a,right:b},{left:1,right:1}).line;
  assert.equal(l(1,0),"🖌️ La Gauche a tenu le mur cette nuit (1 case contre 0).");
@@ -193,7 +204,7 @@ test("wallBlock: level and quota only",()=>{
 });
 
 test("the wall is an event game, without bonus by default",()=>{
- assert.ok(EVENT_GAMES.some(g=>g[0]==="wall"&&g[1]==="Nuit du collage"));
+ assert.ok(EVENT_GAMES.some(g=>g[0]==="wall"&&g[1]==="Collage"));
  assert.equal(NO_FX.xp.wall,1);
 });
 

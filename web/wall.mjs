@@ -225,3 +225,11 @@ export function wallBlock(S,{minLevel,used}){
  if(used>=DAILY_QUOTA)return "Plus d'affiche aujourd'hui : reviens demain.";
  return "";
 }
+
+// ---------------------------------------------------------------- day and night
+// « Collage » by day, « La Nuit du collage » from 20:00 to 08:00 (Paris hour of day, 0-23), when the XP is +50 %.
+export const WALL_NIGHT={start:20,end:8,xp:1.5};
+export const isWallNight=hour=>hour>=WALL_NIGHT.start||hour<WALL_NIGHT.end;
+export const wallName=hour=>isWallNight(hour)?"La Nuit du collage":"Collage";
+// The XP of one poster: the night bonus multiplies with the Double XP event, then rounds.
+export const wallXp=(quality,hour,eventMult=1)=>Math.round(XP[quality]*eventMult*(isWallNight(hour)?WALL_NIGHT.xp:1));
