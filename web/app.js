@@ -1141,7 +1141,7 @@ cv.addEventListener("keydown",e=>{if(!pong&&!mini&&(e.key==="Enter"||e.key===" "
 document.addEventListener("keydown",e=>{
  if(!$("#sheet").hidden){
   if(e.key==="Escape"){closeSheet();return;}
-  if(sheetKind==="wall"&&wl?.brush&&(e.key===" "||e.code==="Space")){e.preventDefault();wallStop();return;}   // Space stops the brush
+  if(sheetKind==="wall"&&wl?.brush&&(e.key===" "||e.code==="Space")){e.preventDefault();if(!e.repeat)wallStop();return;}   // a fresh Space stops the brush
   if(e.key==="Tab"){                                   // keep keyboard focus inside the open sheet
    // Only what is on screen: a hidden file input or a closed menu cannot take the focus.
    const f=[...$(".sheet-card").querySelectorAll("button:not(:disabled),select,input:not(:disabled),textarea:not(:disabled),[tabindex='0']")].filter(el=>el.getClientRects().length);
@@ -2095,6 +2095,7 @@ async function markNewsSeen(){
 }
 function closeSheet(fromBack=false){
  if($("#sheet").hidden)return;
+ clearTimeout(wlLoadT);wlLoadT=0;                     // no wall reload for a closed sheet
  if(sheetKind==="news"&&newsAuto){newsAuto=false;SEEN=RELEASE;markNewsSeen();}
  if(!fromBack&&sheetInHistory){sheetInHistory=false;pendingBack=true;history.back();}
  $("#sheet").hidden=true;sheetKind=null;setBackgroundInert(false);chat.hide();$("#sheet").classList.remove("chat");
@@ -2683,7 +2684,7 @@ function duelEvent(v){
 const WALL_LEVEL=3;                                  // the server's default level: its own 422 says so when a test lowers it
 const wlOpen=()=>sheetKind==="wall"&&!$("#sheet").hidden;
 const wlHour=()=>hodOf(Math.floor(serverNow()/R.H));   // the Paris hour: « Collage » by day, « La Nuit du collage » 20 h – 8 h
-function wallLoad(){clearTimeout(wlLoadT);wlLoadT=setTimeout(()=>{wlLoadT=0;wallFetch();},250);}
+function wallLoad(){clearTimeout(wlLoadT);wlLoadT=setTimeout(()=>{wlLoadT=0;if(wlOpen())wallFetch();},250);}   // never once the sheet is closed
 async function wallFetch(){
  if(!S)return;
  const seq=++wlSeq,who=me,r=await api("GET","/api/wall");
@@ -2705,38 +2706,39 @@ function wallEvent(v){
  wallPaint();
 }
 const wlSay=t=>{const a=wlUi?.say;if(!a)return;a.textContent="";setTimeout(()=>{a.textContent=t;},30);};
-const wlEl=(tag,cls,text)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e;};
 function renderWall(body,set){
  set(`🖌️ ${WL.wallName(wlHour())}`,"");
- wlUi?.ro?.disconnect();wlUi=null;body.append(wlEl("div","wl"));wallPaint();
+ wlUi?.ro?.disconnect();wlUi=null;body.append(mkEl("div","wl"));wallPaint();
 }
 // The skeleton, once per opening: the score, the wall and its arrows, the legend, the cell's card, « Coller », the brush.
 function wallBuild(box){
- const u={box},btn=(t,cls,fn,label)=>{const b=wlEl("button",`btn ${cls}`,t);b.type="button";if(label)b.setAttribute("aria-label",label);b.addEventListener("click",fn);return b;};
- u.count=wlEl("b","wl-count");u.pills=wlEl("div","wl-pills");
- u.cv=wlEl("canvas","wl-cv");u.cv.width=WU.CW;u.cv.height=WU.CH;u.cv.tabIndex=0;u.cv.setAttribute("role","img");u.cv.setAttribute("aria-describedby","wl-help");
- u.ctx=u.cv.getContext("2d");u.wrap=wlEl("div","wl-wrap");u.wrap.append(u.cv);
- u.prev=btn("◀","wl-navb",()=>wallGo(-1),"Mur précédent");u.next=btn("▶","wl-navb",()=>wallGo(1),"Mur suivant");u.nav=wlEl("span");
- const nav=wlEl("div","wl-nav");nav.append(u.prev,u.nav,u.next);
- const help=wlEl("p","sr","Un mur de 8 colonnes (A à H) sur 6 lignes. Flèches pour choisir une case, Page précédente et Page suivante pour changer de mur, Entrée pour coller, Espace pour arrêter le pinceau.");help.id="wl-help";
- const leg=wlEl("div","wl-legend"),t0=serverNow();
- for(const [cell,label] of WU.legendCells(S.camp,t0)){const k=wlEl("canvas");k.width=k.height=WU.ART;k.setAttribute("aria-hidden","true");WU.drawPoster(k.getContext("2d"),0,0,cell,t0);const sp=wlEl("span");sp.append(k,label);leg.append(sp);}
- const pips=wlEl("span");pips.append(wlEl("b","wl-pips","▮▮▯"),"en bas : solidité (1 à 3)");leg.append(pips);
- u.info=wlEl("div","wl-info");u.quota=wlEl("span","wl-quota");u.paste=btn("Coller","go",wallPaste);
- u.action=wlEl("div","wl-action");u.action.append(u.quota,u.paste);u.why=wlEl("p","fine wl-why");
- u.brush=wlEl("div","wl-brush");u.brush.hidden=true;
- const bh=wlEl("div","wl-bhead");bh.append(wlEl("b","","Coup de pinceau"),wlEl("span","fine","Arrête le pinceau dans la zone dorée (Espace)."));
- u.cursor=wlEl("span","wl-cursor");
- const timer=wlEl("div","wl-timer");timer.setAttribute("aria-hidden","true");u.timer=wlEl("i");timer.append(u.timer);
+ const u={box},btn=(t,cls,fn,label)=>{const b=mkEl("button",`btn ${cls}`,t);b.type="button";if(label)b.setAttribute("aria-label",label);b.addEventListener("click",fn);return b;};
+ u.count=mkEl("b","wl-count");u.pills=mkEl("div","wl-pills");
+ u.cv=mkEl("canvas","wl-cv");u.cv.width=WU.CW;u.cv.height=WU.CH;u.cv.tabIndex=0;u.cv.setAttribute("role","img");u.cv.setAttribute("aria-describedby","wl-help");
+ u.ctx=u.cv.getContext("2d");u.wrap=mkEl("div","wl-wrap");u.wrap.append(u.cv);
+ u.prev=btn("◀","wl-navb",()=>wallGo(-1),"Mur précédent");u.next=btn("▶","wl-navb",()=>wallGo(1),"Mur suivant");u.nav=mkEl("span");
+ const nav=mkEl("div","wl-nav");nav.append(u.prev,u.nav,u.next);
+ const help=mkEl("p","sr","Un mur de 8 colonnes (A à H) sur 6 lignes. Flèches pour choisir une case, Page précédente et Page suivante pour changer de mur, Entrée pour coller, Espace pour arrêter le pinceau.");help.id="wl-help";
+ const leg=mkEl("div","wl-legend"),t0=serverNow();
+ for(const [cell,label] of WU.legendCells(S.camp,t0)){const k=mkEl("canvas");k.width=k.height=WU.ART;k.setAttribute("aria-hidden","true");WU.drawPoster(k.getContext("2d"),0,0,cell,t0);const sp=mkEl("span");sp.append(k,label);leg.append(sp);}
+ const pips=mkEl("span");pips.append(mkEl("b","wl-pips","▮▮▯"),"en bas : solidité (1 à 3)");leg.append(pips);
+ u.info=mkEl("div","wl-info");u.quota=mkEl("span","wl-quota");u.paste=btn("Coller","go",wallPaste);
+ u.action=mkEl("div","wl-action");u.action.append(u.quota,u.paste);u.why=mkEl("p","fine wl-why");
+ u.brush=mkEl("div","wl-brush");u.brush.hidden=true;
+ const bh=mkEl("div","wl-bhead");bh.append(mkEl("b","","Coup de pinceau"),mkEl("span","fine","Arrête le pinceau dans la zone dorée (Espace)."));
+ u.cursor=mkEl("span","wl-cursor");
+ const timer=mkEl("div","wl-timer");timer.setAttribute("aria-hidden","true");u.timer=mkEl("i");timer.append(u.timer);
  u.stop=btn("Arrêter le pinceau","go",()=>wallStop());
+ u.stop.addEventListener("keydown",e=>{if(WU.brushKey(e)==="block")e.preventDefault();});   // a held Enter (the one that pasted) never stops it
  u.brush.append(bh,wallGauge(u.cursor,true),timer,u.stop);
- u.result=wlEl("div","wl-result");u.result.hidden=true;
- u.say=wlEl("div","sr");u.say.setAttribute("aria-live","polite");
- u.status=wlEl("p","fine");u.main=wlEl("div","wl-main");
+ u.result=mkEl("div","wl-result");u.result.hidden=true;
+ u.say=mkEl("div","sr");u.say.setAttribute("aria-live","polite");
+ u.status=mkEl("p","fine");u.main=mkEl("div","wl-main");
  u.main.append(u.count,u.pills,u.wrap,nav,help,leg,u.info,u.action,u.why,u.brush,u.result);
  box.append(u.status,u.main,u.say);
  u.cv.addEventListener("keydown",e=>{
   if(!wl||wl.brush)return;
+  if(e.repeat&&(e.key==="Enter"||e.key==="PageUp"||e.key==="PageDown")){e.preventDefault();return;}   // a held key pastes or turns once
   if(e.key==="PageUp"||e.key==="PageDown"){e.preventDefault();wallGo(e.key==="PageUp"?-1:1);}
   else if(e.key==="Enter"){e.preventDefault();wallPaste();}
   else{const n=WU.wallState(wl,{type:"key",key:e.key});if(n!==wl){e.preventDefault();wl=n;wallPaint();wlSay(WU.cellSummary(wl.cells,wl.sel,serverNow()));}}
@@ -2756,8 +2758,8 @@ function wallBuild(box){
 }
 // The gauge: bâclé, bon, parfait in the middle, bon, bâclé; the big one has its labels.
 function wallGauge(cursor,labels){
- const g=wlEl("div",`wl-gauge${labels?"":" mini"}`);g.setAttribute("aria-hidden","true");
- if(labels)for(const [x,t,dim] of [[15,"bâclé",1],[37,"bon"],[50,"parfait"],[63,"bon"],[85,"bâclé",1]]){const l=wlEl("span",`lab${dim?" dim":""}`,t);l.style.left=`${x}%`;g.append(l);}
+ const g=mkEl("div",`wl-gauge${labels?"":" mini"}`);g.setAttribute("aria-hidden","true");
+ if(labels)for(const [x,t,dim] of [[15,"bâclé",1],[37,"bon"],[50,"parfait"],[63,"bon"],[85,"bâclé",1]]){const l=mkEl("span",`lab${dim?" dim":""}`,t);l.style.left=`${x}%`;g.append(l);}
  if(cursor)g.append(cursor);return g;
 }
 function wallDraw(t=performance.now()){
@@ -2767,7 +2769,7 @@ function wallDraw(t=performance.now()){
  WU.drawWall(wlUi.ctx,wl.cells,wl.view,serverNow(),{bg:wlBg,sel:wl.sel,unroll,hit,flash:wlFlash?.idxs,flashOn:!!wlFlash&&(reduced||Math.floor(t/300)%2===0)});
 }
 // The brush's cursor and the animations, one frame at a time while something moves (reduced motion: the brush only).
-let wlStopping=false;
+let wlStopping=false,wlStopT=0;
 function wallKick(){if(!wlLoop){wlLoop=true;requestAnimationFrame(wallTick);}}
 function wallTick(t){
  if(wl?.brush&&!wlStopping){
@@ -2796,12 +2798,14 @@ async function wallPaste(){
  try{r=await wallPost({op:"start",g});}finally{wlBusy=false;}
  if(!r||!wl){if(wlOpen())wallPaint();return;}
  if(!r.ok){toast(r.error,true);wlSay(r.error);wallLoad();if(wlOpen())wallPaint();return;}   // the server's own words (level, quota, one at a time)
- wl=WU.wallState(wl,{type:"start",brush:{id:r.id,seed:r.seed,g,t0:performance.now()}});wlStopping=false;
+ const brush={id:r.id,seed:r.seed,g,t0:performance.now()};wl=WU.wallState(wl,{type:"start",brush});wlStopping=false;
+ // rAF sleeps in a hidden tab or on a locked phone: the 3 s stop is sent all the same (bâclé), not left to expire.
+ clearTimeout(wlStopT);wlStopT=setTimeout(()=>{if(wl?.brush===brush)wallStop();},WL.BRUSH_MS+50);
  if(!wlOpen()){wallStop();return;}
  wallPaint();wlUi?.stop.focus();wlSay("Le pinceau part. Arrête-le dans la zone dorée, avec Espace ou le bouton.");wallKick();
 }
 async function wallStop(){
- const b=wl?.brush;if(!b||wlStopping)return;wlStopping=true;
+ const b=wl?.brush;if(!b||wlStopping)return;wlStopping=true;clearTimeout(wlStopT);wlStopT=0;
  const ms=Math.round(Math.min(Math.max(performance.now()-b.t0,0),WL.BRUSH_MS));
  let r;try{r=await wallPost({op:"stop",id:b.id,ms});}finally{wlStopping=false;}
  if(!wl||wl.brush!==b)return;
@@ -2822,7 +2826,7 @@ function wallPaint(){
  u.main.hidden=!wl;u.status.hidden=!!wl;
  if(!wl){
   u.status.textContent=wlErr||"Chargement du mur…";
-  if(wlErr&&!u.retry){u.retry=wlEl("div","btn-row");u.retry.append(smallButton("Réessayer","",()=>{wlErr="";u.retry.remove();u.retry=null;wallPaint();wallLoad();}));u.status.after(u.retry);}
+  if(wlErr&&!u.retry){u.retry=mkEl("div","btn-row");u.retry.append(smallButton("Réessayer","",()=>{wlErr="";u.retry.remove();u.retry=null;wallPaint();wallLoad();}));u.status.after(u.retry);}
   return;
  }
  if(u.retry){u.retry.remove();u.retry=null;}
@@ -2844,13 +2848,13 @@ function wallPaint(){
  const cell=wl.sel!=null?wl.cells[wl.sel]??null:null,ik=`${wl.sel}|${JSON.stringify(cell)}|${Math.floor(t/60e3)}|${S.camp}`;
  if(u.ik!==ik){
   u.ik=ik;
-  if(wl.sel==null)u.info.replaceChildren(wlEl("span","fine","Touche une case du mur pour voir qui l'a collée."));
+  if(wl.sel==null)u.info.replaceChildren(mkEl("span","fine","Touche une case du mur pour voir qui l'a collée."));
   else{
-   const L=WU.cellInfo(cell,t,{name:me,camp:S.camp}),live=WL.liveCell(cell,t),head=wlEl("div","head"),h=wlEl("span");
-   h.append(wlEl("b","",L[0]));if(live)h.append(" ",mkCamp(live.camp));
-   head.append(h,wlEl("span","coord",`Mur ${WL.wallOf(wl.sel)+1} · ${WL.cellName(wl.sel)}`));
-   const rows=L.slice(1).map((x,i,a)=>wlEl("span",i===a.length-1?"fine":"",x));
-   if(live){const p=wlEl("span","wl-pips","●".repeat(live.sol)+"○".repeat(3-live.sol)+" ");p.setAttribute("aria-hidden","true");rows[1].prepend(p);}
+   const L=WU.cellInfo(cell,t,{name:me,camp:S.camp}),live=WL.liveCell(cell,t),head=mkEl("div","head"),h=mkEl("span");
+   h.append(mkEl("b","",L[0]));if(live)h.append(" ",mkCamp(live.camp));
+   head.append(h,mkEl("span","coord",`Mur ${WL.wallOf(wl.sel)+1} · ${WL.cellName(wl.sel)}`));
+   const rows=L.slice(1).map((x,i,a)=>mkEl("span",i===a.length-1?"fine":"",x));
+   if(live){const p=mkEl("span","wl-pips","●".repeat(live.sol)+"○".repeat(3-live.sol)+" ");p.setAttribute("aria-hidden","true");rows[1].prepend(p);}
    u.info.replaceChildren(head,...rows);
   }
  }
@@ -2866,12 +2870,12 @@ function wallPaint(){
  if(u.rs!==R0){
   u.rs=R0;u.result.hidden=!R0;
   if(R0){
-   const [head,what,xp,...walls]=WU.resultLines(R0.res,R0.prev),top=wlEl("div","wl-rhead");
-   top.append(wlEl("b",`q ${R0.res.quality}`,head),pill(xp,"new"));
+   const [head,what,xp,...walls]=WU.resultLines(R0.res,R0.prev),top=mkEl("div","wl-rhead");
+   top.append(mkEl("b",`q ${R0.res.quality}`,head),pill(xp,"new"));
    let mini=null;
-   if(R0.res.ms<WL.BRUSH_MS){const c=wlEl("span","wl-cursor");c.style.left=`${WU.gaugeX(R0.res.seed,R0.res.ms)}%`;mini=wallGauge(c,false);}
-   u.result.replaceChildren(top,...(mini?[mini]:[]),wlEl("span","",what),...walls.map(x=>pill(x,"new")),
-    wlEl("span","fine",`Qualité ${WL.QUALITY_LABEL[R0.res.quality]} → solidité ${WL.SOLIDITY[R0.res.quality]}.`));
+   if(R0.res.ms<WL.BRUSH_MS){const c=mkEl("span","wl-cursor");c.style.left=`${WU.gaugeX(R0.res.seed,R0.res.ms)}%`;mini=wallGauge(c,false);}
+   u.result.replaceChildren(top,...(mini?[mini]:[]),mkEl("span","",what),...walls.map(x=>pill(x,"new")),
+    mkEl("span","fine",`Qualité ${WL.QUALITY_LABEL[R0.res.quality]} → solidité ${WL.SOLIDITY[R0.res.quality]}.`));
   }
  }
  wallDraw();

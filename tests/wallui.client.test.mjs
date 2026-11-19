@@ -190,3 +190,10 @@ test("quotaText and tile: the posters left, the day and night names, the night h
  assert.equal(U.tile({counts:null,left:5,hour:9,lvl:2}).sub,"Dès le niveau 3 : colle les affiches de ton camp sur le mur commun.");
  assert.equal(U.nightHint(21),"🌙 XP ×1,5 cette nuit");assert.equal(U.nightHint(12),"XP ×1,5 la nuit (20 h – 8 h)");
 });
+test("brushKey: only a fresh press of Space or Enter stops the brush, a held key never does",()=>{
+ assert.equal(U.brushKey({key:" ",repeat:false}),"stop");assert.equal(U.brushKey({key:"Enter",repeat:false}),"stop");
+ assert.equal(U.brushKey({code:"Space",key:"Spacebar",repeat:false}),"stop");
+ assert.equal(U.brushKey({key:"Enter",repeat:true}),"block","the Enter that started the paste, held down");
+ assert.equal(U.brushKey({key:" ",repeat:true}),"block");
+ assert.equal(U.brushKey({key:"a",repeat:false}),null);assert.equal(U.brushKey({key:"Tab",repeat:true}),null);
+});

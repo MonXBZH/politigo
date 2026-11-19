@@ -188,6 +188,12 @@ export const legendCells=(camp,now)=>[
 
 // ---------------------------------------------------------------- keys
 const MOVES={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1],Home:[-99,0],End:[99,0]};
+// A key during a brush: "stop" for a fresh press of Space or Enter, "block" for the same keys held down (the Enter
+// that started the paste repeats onto « Arrêter le pinceau »: it must not stop it), null for any other key.
+export function brushKey(e){
+ const k=e.key===" "||e.key==="Enter"||e.code==="Space";
+ return !k?null:e.repeat?"block":"stop";
+}
 // The selection after a key, on the wall on view (w); null when the key is no move.
 export function moveSel(sel,w,key){
  const d=MOVES[key];if(!d)return null;
