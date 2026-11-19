@@ -102,6 +102,23 @@ test("night scoring: active colleur rule, ties, line",()=>{
  const none=n(30,60,0,0);assert.deepEqual(none.winners,[]);assert.equal(none.line,null);
 });
 
+test("night line: singular and plural winner count",()=>{
+ const l=(a,b)=>W.scoreNight({left:a,right:b},{left:1,right:1}).line;
+ assert.equal(l(1,0),"🖌️ La Gauche a tenu le mur cette nuit (1 case contre 0).");
+ assert.equal(l(2,1),"🖌️ La Gauche a tenu le mur cette nuit (2 cases contre 1).");
+ assert.match(W.scoreNight({left:1,right:1},{left:1,right:1}).line,/\(1 case chacune\)/);
+});
+
+test("spec constants",()=>{
+ assert.deepEqual(W.ZONE,{perfect:0.06,good:0.2});
+ assert.deepEqual(W.WEAR_H,{pale:24,torn:44,free:48});
+ assert.deepEqual(W.WAVE_HOURS,[10,13,16,19,22]);
+ assert.equal(W.BRUSH_MS,3000);assert.equal(W.BRUSH_MIN_MS,250);
+ assert.deepEqual(W.SOLIDITY,{parfait:3,bon:2,bacle:1});
+ assert.deepEqual(W.XP,{parfait:14,bon:10,bacle:5});
+ assert.equal(W.DAILY_QUOTA,5);assert.equal(W.WALL_W,8);assert.equal(W.WALL_H,6);assert.equal(W.MAX_WALLS,5);
+});
+
 test("volunteers: count min(A-B,B), prorated budget",()=>{
  assert.deepEqual(W.volunteerCounts({left:7,right:3}),{left:0,right:3});
  assert.deepEqual(W.volunteerCounts({left:6,right:5}),{left:0,right:1});

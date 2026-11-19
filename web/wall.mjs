@@ -137,7 +137,7 @@ export function nightLine(winners,counts,can){
  if(winners.length===2)return `🖌️ Égalité : ${CAMP_NAME.left} et ${CAMP_NAME.right} se partagent le mur cette nuit (${cases(counts.left)} chacune).`;
  const w=winners[0],l=otherCamp(w);
  const alone=can.length===1&&counts[w]<=counts[l]?` : ${CAMP_NAME[l]} n'a pas collé.`:".";
- return `🖌️ ${cap(CAMP_NAME[w])} a tenu le mur cette nuit (${counts[w]} cases contre ${counts[l]})${alone}`;
+ return `🖌️ ${cap(CAMP_NAME[w])} a tenu le mur cette nuit (${cases(counts[w])} contre ${counts[l]})${alone}`;
 }
 
 // ---------------------------------------------------------------- the volunteers
