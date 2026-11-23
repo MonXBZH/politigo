@@ -126,8 +126,8 @@ test("1.9.0: the ultra keeps the légendaire counter, the forced légendaire is 
  const d=play(F,{type:"draw",pay:"bulletin"},10,seq(0.99,0));   // all owned: a duplicate, as before
  assert.equal(d.item.rarity,"legendaire");assert.equal(d.item.id,legs[0]);assert.equal(d.dup,true);
  const N=game();N.wardrobe.bulletins=5;N.wardrobe.own=[legs[0]];
- const r=play(N,{type:"draw",pay:"bulletin"},10,seq(0.01,0));   // a légendaire rolled by luck keeps its plain pick
- assert.equal(r.item.id,legs[0]);assert.equal(r.dup,true);
+ const r=play(N,{type:"draw",pay:"bulletin"},10,seq(0.01,0));   // 1.10.0 : un légendaire de chance est aussi un nouveau
+ assert.equal(r.item.id,legs[1]);assert.equal(r.dup,false);
  const P=game();P.wardrobe.bulletins=5;P.wardrobe.pity={epique:0,legendaire:49,ultra:79};
  assert.equal(play(P,{type:"draw",pay:"bulletin"},10,never).item.rarity,"ultra");
  assert.equal(P.wardrobe.pity.legendaire,49,"both due: the ultra first, the légendaire stays due for the next draw");
@@ -137,12 +137,13 @@ test("1.9.0: the ultra keeps the légendaire counter, the forced légendaire is 
 test("a duplicate turns into confetti; 100 confetti buy a missing commun, rare or épique",()=>{
  const S=game();S.wardrobe.bulletins=50;
  const first=play(S,{type:"draw",pay:"bulletin"},10,seq(0.5,0));
+ play(S,{type:"draw",pay:"bulletin"},10,seq(0.5,0));   // 1.10.0 : the 2nd copy stacks, the 3rd is confetti
  const dup=play(S,{type:"draw",pay:"bulletin"},10,seq(0.5,0));
  assert.equal(dup.item.id,first.item.id);assert.equal(dup.dup,true);assert.equal(dup.confetti,5);assert.equal(S.wardrobe.confetti,5);
  assert.equal(S.wardrobe.own.filter(id=>id===first.item.id).length,1);
  const r=game();r.wardrobe.own=["camarade"];r.wardrobe.pity.ultra=79;r.wardrobe.bulletins=1;
  assert.equal(play(r,{type:"draw",pay:"bulletin"},10,never).confetti,100,"an ultra duplicate is worth 100");
- assert.deepEqual(W.EXCHANGE.cost,{commun:100,rare:200,epique:300});
+ assert.deepEqual(W.EXCHANGE.cost,{commun:100,rare:200,epique:300,legendaire:500});
  S.wardrobe.confetti=299;
  assert.match(play(S,{type:"exchange",id:"urne"}).error,/300 confettis/,"épique");
  S.wardrobe.confetti=199;
@@ -150,7 +151,7 @@ test("a duplicate turns into confetti; 100 confetti buy a missing commun, rare o
  S.wardrobe.confetti=99;
  assert.match(play(S,{type:"exchange",id:"kway"}).error,/100 confettis/,"commun");
  S.wardrobe.confetti=350;
- assert.match(play(S,{type:"exchange",id:"cle"}).error,/ne s'échange pas/,"légendaire");
+ assert.match(play(S,{type:"exchange",id:"cle"}).error,/500 confettis/,"légendaire, 1.10.0");
  assert.match(play(S,{type:"exchange",id:"sacre"}).error,/ne s'échange pas/,"the other camp's");
  assert.match(play(S,{type:"exchange",id:"camarade"}).error,/ne s'échange pas/,"ultra");
  assert.match(play(S,{type:"exchange",id:"baton"}).error,/ne s'échange pas/);
@@ -214,6 +215,53 @@ test("cosmetics survive a death and a change of camp; sanitize keeps only real, 
  const bad=structuredClone(S);
  bad.wardrobe={own:["kway","kway","nope",3,"__proto__","baton"],worn:{outfit:"cocarde",object:"baton"},confetti:-5,bulletins:1e9,freeDay:"x",pity:{epique:99,legendaire:-1,ultra:"3"},draws:2.6};
  const o=R.sanitize(bad,at(10)).wardrobe;
- assert.deepEqual(o,{own:["kway","baton"],worn:{outfit:null,object:"baton"},confetti:0,bulletins:9999,freeDay:-1,pity:{epique:9,legendaire:0,ultra:0},draws:3});
+ assert.deepEqual(o,{own:["kway","baton"],worn:{outfit:null,object:"baton"},confetti:0,bulletins:9999,freeDay:-1,pity:{epique:9,legendaire:0,ultra:0},draws:3,dup:[],noStack:[]});
  assert.deepEqual(R.sanitize({...structuredClone(S),wardrobe:"x"},at(10)).wardrobe,W.freshWardrobe());
+});
+
+test("1.10.0 : un doublon se cumule (2 au plus), le 3e et les réglés « confettis » donnent des confettis",()=>{
+ const S=game();S.wardrobe.bulletins=5;const id=W.poolItems("left","commun")[0];S.wardrobe.own=[id];
+ const a=play(S,{type:"draw",pay:"bulletin"},10,seq(0.99,0));
+ assert.equal(a.item.id,id);assert.equal(a.dup,true);assert.equal(a.stacked,true);assert.equal(a.confetti,0);
+ assert.deepEqual(S.wardrobe.dup,[id]);assert.equal(W.copies(S,id),2);
+ const b=play(S,{type:"draw",pay:"bulletin"},10,seq(0.99,0));
+ assert.equal(b.stacked,false);assert.equal(b.confetti,5);assert.equal(W.copies(S,id),2);
+ const T=game();T.wardrobe.bulletins=5;T.wardrobe.own=[id];T.wardrobe.noStack=[id];
+ const c=play(T,{type:"draw",pay:"bulletin"},10,seq(0.99,0));
+ assert.equal(c.stacked,false);assert.equal(c.confetti,5);assert.deepEqual(T.wardrobe.dup,[]);
+});
+test("1.10.0 : un ultra en double reste 100 confettis, jamais cumulé",()=>{
+ const S=game();S.wardrobe.bulletins=5;const u=W.poolItems("left","ultra")[0];S.wardrobe.own=[u];S.wardrobe.pity.ultra=79;
+ const r=play(S,{type:"draw",pay:"bulletin"},10,never);
+ assert.equal(r.item.id,u);assert.equal(r.stacked,false);assert.equal(r.confetti,100);assert.deepEqual(S.wardrobe.dup,[]);
+});
+test("1.10.0 : revendre un exemplaire, puis tout ; la pièce portée est ôtée quand la dernière part",()=>{
+ const S=game();const id=W.poolItems("left","rare").find(i=>W.ITEMS[i].kind==="outfit");
+ S.wardrobe.own=[id];S.wardrobe.dup=[id];S.wardrobe.worn.outfit=id;
+ const one=play(S,{type:"sell",id,all:false});
+ assert.deepEqual(one,{ok:true,n:1,confetti:10,gone:false});assert.equal(S.wardrobe.worn.outfit,id);assert.equal(W.copies(S,id),1);
+ S.wardrobe.dup=[id];
+ const all=play(S,{type:"sell",id,all:true});
+ assert.deepEqual(all,{ok:true,n:2,confetti:20,gone:true});assert.equal(S.wardrobe.worn.outfit,null);assert.equal(W.copies(S,id),0);
+ assert.equal(S.wardrobe.confetti,30);
+ assert.equal(play(S,{type:"sell",id,all:false}).ok,false,"plus possédée");
+ const U=game();const u=W.poolItems("left","ultra")[0];U.wardrobe.own=[u];
+ assert.equal(play(U,{type:"sell",id:u,all:false}).ok,false,"un ultra ne se revend pas");
+});
+test("1.10.0 : le réglage « Doubles en confettis » s'active et se retire, sans toucher au 2e exemplaire",()=>{
+ const S=game();const id=W.poolItems("left","epique")[0];S.wardrobe.own=[id];S.wardrobe.dup=[id];
+ assert.ok(play(S,{type:"stack",id,on:false}).ok);assert.deepEqual(S.wardrobe.noStack,[id]);assert.deepEqual(S.wardrobe.dup,[id]);
+ assert.ok(play(S,{type:"stack",id,on:true}).ok);assert.deepEqual(S.wardrobe.noStack,[]);
+ assert.equal(play(S,{type:"stack",id:W.poolItems("left","ultra")[0],on:false}).ok,false);
+});
+test("1.10.0 : sanitize garde dup ⊂ own et cumulable, noStack cumulable ; une vieille sauvegarde a deux listes vides",()=>{
+ const c=W.poolItems("left","commun")[0],r=W.poolItems("left","rare")[0],u=W.poolItems("left","ultra")[0];
+ const o=W.sanitizeWardrobe({own:[c,u],dup:[c,c,r,u,"zz"],noStack:[r,u,r,"zz"]});
+ assert.deepEqual(o.dup,[c]);assert.deepEqual(o.noStack,[r]);
+ const old=W.sanitizeWardrobe({own:[c]});assert.deepEqual(old.dup,[]);assert.deepEqual(old.noStack,[]);
+});
+test("1.10.0 : la boutique vend un légendaire manquant 500 confettis",()=>{
+ const S=game();const l=W.poolItems("left","legendaire")[0];S.wardrobe.confetti=499;
+ assert.equal(play(S,{type:"exchange",id:l}).ok,false);
+ S.wardrobe.confetti=500;assert.ok(play(S,{type:"exchange",id:l}).ok);assert.equal(S.wardrobe.confetti,0);assert.ok(S.wardrobe.own.includes(l));
 });
