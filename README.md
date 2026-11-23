@@ -165,7 +165,7 @@ dans la main. **Purement cosmétique** : aucun effet sur le jeu, et **jamais d'a
 - 🌈 **Cinq raretés** : commun (60 %), rare (28 %), épique (9,5 %), légendaire (2 %) et ultra rare (0,5 %). Un tirage
   garanti épique au 10ᵉ sans en voir, légendaire au 50ᵉ, ultra rare au 80ᵉ. Un ultra rare ne remet pas à zéro le compteur du légendaire, et le légendaire garanti est un
   légendaire que tu n'as pas encore, tant qu'il t'en manque un.
-- 🎊 **Les doublons deviennent des confettis**. Ils s'échangent contre la case de ton choix : 100 pour une commune, 200 pour une rare, 300 pour une épique.
+- 🎊 **Les doublons s'empilent, puis deviennent des confettis**. Un doublon commun, rare, épique ou légendaire rejoint la Garde-robe en 2e exemplaire (badge ×2, à échanger à la Brocante ou à revendre) ; le suivant devient des confettis. Un réglage par pièce coupe le cumul. Les confettis s'échangent contre la case de ton choix : 100 pour une commune, 200 pour une rare, 300 pour une épique, 500 pour une légendaire.
 - 👔 **La Garde-robe** (Dossier) : une vingtaine de tenues par camp, du *Bleu de travail* au *Front populaire, 1936*,
   du *Pull sur les épaules* au *Général, 1958*, et une cinquantaine d'objets à brandir, plus **la vague satirique** (35 pièces : 14 tenues et 21 objets, dont 9 pour les deux
   camps). La tenue se superpose à tous les personnages de la collection.

@@ -665,3 +665,8 @@ body[data-season=noel],body[data-camp][data-season=noel]{--accent-2:#f4c84a;--bg
 .wl-result .q.parfait{color:#f4c84a}.wl-result .q.bon{color:#8fe0ac}.wl-result .q.bacle{color:#ffb0b8}
 .wl-badge{margin:10px 0 0;text-align:center}
 @media(max-width:420px){.wl-wrap{padding:4px}}
+
+.ward-x2{position:absolute;top:-8px;left:4px;font-size:10px;font-weight:800;background:var(--accent);color:#1b1230;padding:1px 7px;border-radius:99px}
+.ward-card.picked{box-shadow:0 0 0 2px var(--accent-2)}
+.ward-sell{margin:0 0 8px;padding:8px 10px;border:1px solid var(--accent-2);border-radius:12px;display:flex;flex-direction:column;gap:6px;font-size:13px}
+.ward-sell label{display:flex;align-items:flex-start;gap:6px}
