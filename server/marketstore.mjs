@@ -112,6 +112,7 @@ CREATE INDEX IF NOT EXISTS market_offers_p ON market_offers(player_id,status);`)
   // The player's pending offers and the `limit` latest ones, newest first.
   offersBy:(playerId,limit=20)=>q.byLim.all(playerId,playerId,Math.max(0,limit|0)).map(O),
   openOf:playerId=>q.openOfL.all(playerId).map(L),
+  pendingBy:playerId=>q.pendO.all(playerId).map(O),
   pendingOffersOn:listingId=>q.pendOnL.all(listingId).map(O),
   offersOf:(listingId,playerId)=>q.ofLP.all(listingId,playerId).map(O),   // the latest 20, newest first
   refusedOn:(listingId,playerId)=>q.refused.get(listingId,playerId).n,

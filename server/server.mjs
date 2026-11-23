@@ -1763,9 +1763,10 @@ function doTrade(l,o,taker,tGives,now){
  try{
   try{M.trade({listingId:l.id,offerId:o?.id??null,aId:author.id,bId:taker.id,aGave:aGives,bGave:tGives,sameNet:same,now});}
   catch(e){const m=e?.message;throw m==="Offre indisponible."?new HttpError(409,MK_GONE_O):m==="Annonce indisponible."?new HttpError(409,MK_GONE):e;}   // a failed write stays a 500
-  // Closed with the trade: each side's listings and offers holding what it gave, and its listings asking by name for
-  // what it received (they could never be taken now).
-  const ca=M.closeUsing(author.id,aGives.items),cb=M.closeUsing(taker.id,tGives.items),wa=M.closeWanting(author.id,tGives.items),wb=M.closeWanting(taker.id,aGives.items);
+  // Closed with the trade: what a side no longer holds at all (its last copy went), and its listings asking by name for
+  // a piece it now holds twice (a first copy can still be asked a second time).
+  const once=(S,ids)=>ids.filter(i=>W.copies(S,i)===1);   // one copy now: the trade takes it away, or makes it two
+  const ca=M.closeUsing(author.id,once(author.state,aGives.items)),cb=M.closeUsing(taker.id,once(taker.state,tGives.items)),wa=M.closeWanting(author.id,once(author.state,tGives.items)),wb=M.closeWanting(taker.id,once(taker.state,aGives.items));
   told=[ca,cb,wa,wb].flatMap(c=>c.told).filter(id=>id!==author.id&&id!==taker.id);
   update(author,SA=>{
    update(taker,SB=>{
@@ -2168,6 +2169,8 @@ async function route(req,res){
   if(b.type==="miniEnd"&&p.state.mini?.k==="debate")throw new HttpError(422,"Le Débat chrono se joue question par question.");
   const opts={now,speed:SPEED,random:rand,event:ev,boost:fxOf(p)},won={v:false};
   if(b.type==="draw")opts.mythic=mythicOpts(p,now,won);
+  // Selling the piece's last copy would leave a listing or an offer holding what its owner no longer has.
+  if(b.type==="sell"&&typeof b.id==="string"&&(b.all===true||W.copies(p.state,b.id)===1)&&[...M.openOf(p.id),...M.pendingBy(p.id)].some(x=>x.give?.items?.includes(b.id)))throw new HttpError(409,"Engagée à la Brocante : retire l'annonce ou l'offre d'abord.");
   // A challenge is the server's to give (snowchallenges): the body only names it.
   if(b.type==="snowStart"&&b.challenge!==undefined&&b.challenge!==null)opts.challenge=snowChallengeOpts(p,b.challenge,now);
   const started=b.type==="miniEnd"&&p.state.mini?.k==="snowball"?p.state.mini:null;
