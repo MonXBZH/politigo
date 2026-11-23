@@ -68,7 +68,7 @@ test("listingView: the gate comes first, then what would be received twice",()=>
  const v=U.listingView(lst(["golf"],want),st(["baguette"]),"Échanges à partir du niveau 5.");
  assert.equal(v.takeOk,false);assert.equal(v.takeWhy,"Échanges à partir du niveau 5.");
  const d=U.listingView(lst(["golf","pantalonrouge"],want),st(["baguette","golf"],{dup:["golf"]}),"");
- assert.equal(d.takeOk,false);assert.equal(d.takeWhy,"Déjà dans ta garde-robe : Club de golf");
+ assert.equal(d.takeOk,false);assert.equal(d.takeWhy,"Déjà en 2 exemplaires : Club de golf");
  // a listing of offers only never shows the gate as a Troquer reason (no Troquer at all)
  assert.equal(U.listingView(lst(["golf"],{kind:"offer"}),st(),"Échanges à partir du niveau 5.").takeWhy,"");
 });
@@ -128,6 +128,9 @@ test("tradeRecap: what I give and receive, the worn piece leaving, a listing tha
  assert.deepEqual(r.give,{items:["chasuble"],bulletins:2});assert.deepEqual(r.get,{items:["golf"],bulletins:0});
  assert.equal(r.ready,true);
  assert.deepEqual(r.worn,["Chasuble syndicale"]);assert.deepEqual(r.closes,["Chasuble syndicale"]);
+ // held twice: the piece stays, nothing leaves the outfit, no listing closes
+ const D=st(["chasuble","baguette"],{dup:["chasuble"],worn:{outfit:"chasuble",object:null}});
+ const d=U.tradeRecap(lst(["golf"],want),D,"chasuble",["chasuble"]);assert.deepEqual(d.worn,[]);assert.deepEqual(d.closes,[]);
  // a pick that does not match is not taken
  assert.equal(U.tradeRecap(lst(["golf"],want),S,"baguette",[]).ready,false);
  const it=U.tradeRecap(lst(["golf"],{kind:"items",items:["baguette"],bulletins:0}),S,null,[]);
@@ -144,7 +147,7 @@ test("offerCheck: gate, already sent, refused before, received twice, five pendi
  assert.deepEqual(U.offerCheck(l,st(),[],"Échanges à partir du niveau 5."),{ok:false,why:"Échanges à partir du niveau 5.",sent:false});
  assert.deepEqual(U.offerCheck(l,st(),[{id:1,listingId:9,status:"pending"}],""),{ok:false,why:"Offre envoyée : en attente de réponse",sent:true});
  assert.deepEqual(U.offerCheck(l,st(),[{id:1,listingId:9,status:"refused"}],""),{ok:false,why:"Ton offre sur cette annonce a été refusée",sent:false});
- assert.deepEqual(U.offerCheck(l,st(["golf"],{dup:["golf"]}),[],""),{ok:false,why:"Déjà dans ta garde-robe : Club de golf",sent:false});
+ assert.deepEqual(U.offerCheck(l,st(["golf"],{dup:["golf"]}),[],""),{ok:false,why:"Déjà en 2 exemplaires : Club de golf",sent:false});
  const five=[1,2,3,4,5].map(i=>({id:i,listingId:100+i,status:"pending"}));
  assert.deepEqual(U.offerCheck(l,st(),five,""),{ok:false,why:"5 offres en attente au plus",sent:false});
  // a withdrawn or closed one does not count
@@ -161,7 +164,7 @@ test("freshIds: the newCount newest listings of the board",()=>{
 
 // ---------------------------------------------------------------- catalogue
 test("catalogue: every tradable item not owned, grouped by kind and rarity; never the excluded",()=>{
- const S=st(["baguette"]);
+ const S=st(["baguette"],{dup:["baguette"]});
  const g=U.catalogue(S,["megaphone"]);
  assert.deepEqual(g.map(x=>x.label).slice(0,2),["Tenues · Commun","Objets · Commun"]);
  const ids=g.flatMap(x=>x.items.map(i=>i.id));

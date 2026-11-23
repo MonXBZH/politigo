@@ -42,7 +42,7 @@ export function listingView(l,S,block){
 function takeWhy(l,S,block){
  if(block)return block;
  const has=own(S),dup=(l.give?.items??[]).filter(id=>(S.wardrobe.dup??[]).includes(id));
- if(dup.length)return `Déjà dans ta garde-robe : ${dup.map(nm).join(", ")}`;
+ if(dup.length)return `Déjà en 2 exemplaires : ${dup.map(nm).join(", ")}`;
  const w=l.want??{},lack=[];
  if(!["items","rarity","bulletins"].includes(w.kind))return "Cette annonce n'est plus disponible.";   // unreadable: never taken
  if(w.kind==="items")lack.push(...(w.items??[]).filter(id=>!has.includes(id)).map(nm));
@@ -72,9 +72,9 @@ export function tradeRecap(l,S,pick,listedIds){
  const w=l.want??{},b=w.bulletins??0;
  const items=w.kind==="items"?[...(w.items??[])]:w.kind==="rarity"&&pick&&candidates(S,w).includes(pick)?[pick]:[];
  const give={items,bulletins:w.kind==="offer"?0:b},get={items:[...(l.give?.items??[])],bulletins:l.give?.bulletins??0};
- const wo=S?.wardrobe?.worn??{},listed=new Set(listedIds??[]);
+ const wo=S?.wardrobe?.worn??{},listed=new Set(listedIds??[]),last=items.filter(id=>!(S?.wardrobe?.dup??[]).includes(id));   // a piece held twice stays
  const ready=w.kind==="items"||w.kind==="bulletins"||(w.kind==="rarity"&&items.length===1);
- return {give,get,ready,worn:items.filter(id=>wo.outfit===id||wo.object===id).map(nm),closes:items.filter(id=>listed.has(id)).map(nm)};
+ return {give,get,ready,worn:last.filter(id=>wo.outfit===id||wo.object===id).map(nm),closes:last.filter(id=>listed.has(id)).map(nm)};
 }
 
 // « Faire une offre »: open, or why not. offers: mine (GET /api/market .offers, {listingId, status}).
@@ -84,7 +84,7 @@ export function offerCheck(l,S,offers,block){
  if(block)return {ok:false,why:block,sent:false};
  if(mine.some(o=>o.status==="refused"))return {ok:false,why:"Ton offre sur cette annonce a été refusée",sent:false};
  const dup=(l.give?.items??[]).filter(id=>(S.wardrobe.dup??[]).includes(id));
- if(dup.length)return {ok:false,why:`Déjà dans ta garde-robe : ${dup.map(nm).join(", ")}`,sent:false};
+ if(dup.length)return {ok:false,why:`Déjà en 2 exemplaires : ${dup.map(nm).join(", ")}`,sent:false};
  if((offers??[]).filter(o=>o.status==="pending").length>=MARKET.maxOffers)return {ok:false,why:`${MARKET.maxOffers} offres en attente au plus`,sent:false};
  return {ok:true,why:"",sent:false};
 }
@@ -95,10 +95,10 @@ export function freshIds(board,newCount){
  return new Set([...board].sort((a,b)=>(b.created??0)-(a.created??0)).slice(0,newCount).map(l=>l.id));
 }
 
-// What a deposit may ask for by name: every tradable item not owned (both camps), by kind and rarity. A legendary not
-// owned is never named (it stays a surprise): « une tenue/un objet Légendaire » asks for one, and an owned one is not asked.
+// What a deposit may ask for by name: every tradable item not held twice (both camps), by kind and rarity: a 2nd copy
+// may be asked. A legendary is never named (it stays a surprise): « une tenue/un objet Légendaire » asks for one.
 export function catalogue(S,exclude=[]){
- const have=new Set([...own(S),...exclude]),out=[];
+ const have=new Set([...(S?.wardrobe?.dup??[]),...exclude]),out=[];
  for(const r of TRADE_RARITIES)for(const kind of ["outfit","object"]){
   const items=Object.keys(ITEMS).filter(id=>ITEMS[id].rarity===r&&r!=="legendaire"&&ITEMS[id].kind===kind&&tradable(id)&&!have.has(id))
    .map(id=>({id,label:`${nm(id)}${ITEMS[id].pool==="all"?"":` (${campWord(ITEMS[id].pool)})`}`}));

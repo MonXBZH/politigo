@@ -1758,7 +1758,7 @@ function renderActivities(body){
 // ---------- the wardrobe (wardrobe.mjs, looks.mjs) ----------
 const RANK_ORDER=["mythique","ultra","legendaire","epique","rare","commun"];
 let wardTab="outfit",wardSwap=false,wardSell=false,wardPick=null;
-const dupNote="Un doublon rejoint ta garde-robe en 2e exemplaire (à échanger à la Brocante ou à revendre) ; au-delà, il devient des confettis : 5 pour un commun, jusqu'à 100 pour un ultra rare.";
+const dupNote="Un doublon rejoint ta garde-robe en 2e exemplaire (à échanger à la Brocante ou à revendre) ; au-delà, et pour tout doublon ultra rare, il devient des confettis (de 5 pour un commun à 100 pour un ultra rare).";
 const sellable=id=>owns(id)&&W.STACK.includes(W.ITEMS[id].rarity);
 const owns=id=>S.wardrobe.own.includes(id);
 // What this camp's wardrobe shows: its own and the shared items. The mythic only once won: never a spoiler.
@@ -1767,7 +1767,7 @@ const wardItems=kind=>Object.entries(W.ITEMS).filter(([id,it])=>it.kind===kind&&
 const ownLook=()=>R.look(S);                       // the élu without the wardrobe, for the previews
 async function wearItem(kind,id){const r=await send({type:"wear",kind,id});if(r?.ok&&id)playAnim("win",1500);liveSheet(true);return r;}
 const exchangePrices=()=>`${W.EXCHANGE.cost.commun} confettis pour une case commune, ${W.EXCHANGE.cost.rare} pour une rare, ${W.EXCHANGE.cost.epique} pour une épique, ${W.EXCHANGE.cost.legendaire} pour une légendaire`;
-async function sellItem(id,all){const r=await send({type:"sell",id,all});if(r?.ok){if(r.gone)wardPick=null;toast(`+${r.confetti} confettis : ${W.ITEMS[id].name} revendu${r.n>1?" (2 exemplaires)":""}.`,true);}liveSheet(true);}
+async function sellItem(id,all){const r=await send({type:"sell",id,all});if(r?.ok){if(r.gone)wardPick=null;toast(`Revente : ${W.ITEMS[id].name}${r.n>1?" (2 exemplaires)":""}, +${r.confetti} confettis.`,true);}liveSheet(true);}
 async function stackItem(id,on){await send({type:"stack",id,on});liveSheet(true);}
 function sellPanel(id){
  const it=W.ITEMS[id],c=W.copies(S,id),v=W.CONFETTI[it.rarity],box=document.createElement("div");box.className="ward-sell";
@@ -2649,7 +2649,7 @@ function mkMineSheet(body,set,back){
   const offers=mkArr(l.offers);
   d.append(offers.length?mkEl("span","block-title",`Offres reçues · ${offers.length}`):mkEl("span","fine","Pas encore d'offre."));
   for(const o of offers){
-   const g=mkGive(o.give),dup=dupes(S,g.items),why=block||(dup.length?`Déjà dans ta garde-robe : ${dup.map(id=>W.ITEMS[id]?.name??id).join(", ")}`:"");
+   const g=mkGive(o.give),dup=dupes(S,g.items),why=block||(dup.length?`Déjà en 2 exemplaires : ${dup.map(id=>W.ITEMS[id]?.name??id).join(", ")}`:"");
    const who=typeof o.from?.name==="string"?o.from.name:"?",r=mkEl("div","mk-recap"),btns=mkEl("div","btn-row");
    btns.append(why?smallButton("Accepter","go",()=>{},true):armedButton("Accepter","Confirmer l'échange","go",()=>mkAccept(o,l,who)),
     armedButton("Refuser","Confirmer le refus","",()=>mkPost({op:"refuse",id:o.id},`Offre ${/^[aeiouyhàâéèêîôûœ]/i.test(who)?"d'":"de "}${who} refusée.`)));

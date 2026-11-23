@@ -1808,7 +1808,7 @@ async function marketRoute(req,res){
  };
  // What p would receive and what the other would receive: never something already owned (the other's, unnamed).
  const noDupes=(o,give,l)=>{
-  const d=MK.dupes(p.state,l.give.items);if(d.length)throw new HttpError(422,`Tu as déjà : ${itemNames(d)}.`);
+  const d=MK.dupes(p.state,l.give.items);if(d.length)throw new HttpError(422,`Tu l'as déjà en 2 exemplaires : ${itemNames(d)}.`);
   if(MK.dupes(o.state,give.items).length)throw new HttpError(422,"Échange impossible : objet déjà possédé.");
  };
  const holds=give=>{const m=MK.missing(p.state,give);if(m)throw new HttpError(422,m+".");};
@@ -1817,7 +1817,7 @@ async function marketRoute(req,res){
   const give=readGive(b.give,true),want=MK.cleanWant(b.want);
   if(!want)throw new HttpError(422,`Dis ce que tu cherches : des objets, une rareté, des bulletins (1 à ${MK.MARKET.maxBulletins}) ou une offre.`);
   holds(give);
-  if(want.kind==="items"){const d=MK.dupes(p.state,want.items);if(d.length)throw new HttpError(422,`Tu as déjà : ${itemNames(d)}.`);}
+  if(want.kind==="items"){const d=MK.dupes(p.state,want.items);if(d.length)throw new HttpError(422,`Tu l'as déjà en 2 exemplaires : ${itemNames(d)}.`);}
   const listed=new Set(M.openOf(p.id).flatMap(l=>l.give?.items??[])),twice=give.items.filter(i=>listed.has(i));
   if(twice.length)throw new HttpError(422,`Déjà en vitrine dans une autre annonce : ${itemNames(twice)}.`);
   // Deposit, withdraw, deposit again: 10 listings a server day, whatever became of them.

@@ -9,7 +9,7 @@ export const CHANGELOG=[
   added:[
    "Les doublons s'empilent : une pièce commune, rare, épique ou légendaire tirée une deuxième fois rejoint ta Garde-robe en 2e exemplaire (badge ×2). Le troisième devient des confettis.",
    "« Revendre » dans la Garde-robe : un exemplaire ou les deux contre des confettis, avec une confirmation en deux touches. Une case « Doubles en confettis » désactive le cumul pour une pièce.",
-   "Les légendaires s'échangent désormais contre 500 confettis.",
+   "Une légendaire qui te manque s'obtient contre 500 confettis dans la Garde-robe.",
    "À la Brocante, tu peux recevoir un objet que tu as déjà (2e exemplaire) et céder un double sans perdre la pièce."
   ],
   fixed:["Un légendaire tiré au hasard est d'abord un légendaire que tu n'as pas encore."],
