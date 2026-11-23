@@ -485,6 +485,27 @@ it("trade: a listing stays open when the piece it gives is a spare copy; a name-
  }finally{await stop(srv);}
 });
 
+it("two copies owned by a gift: a listing asking for it is hidden and refused, an offer holding it is refused at accept",async()=>{
+ const dir=mkdtempSync(join(tmpdir(),"market-")),port=18939,sock=join(dir,"admin.sock");
+ let srv=await boot(port,dir,menv(dir));
+ try{
+  const a=await player(port,"Cadeau Auteur"),c=await player(port,"Cadeau Passant","right"),b=await player(port,"Cadeau Offrant","right");
+  await stock(sock,"Cadeau Auteur",["cocarde","chasuble","doudoune"]);await stock(sock,"Cadeau Passant",["kway","blazer"]);await stock(sock,"Cadeau Offrant",["loden","chasuble"]);
+  const lb=await listOk(a,{items:["cocarde"]},{kind:"items",items:["tract"],bulletins:0});   // asks for a piece it holds 0 times
+  const la=await listOk(a,{items:["chasuble"]},{kind:"offer"});
+  const ob=await mk(b,"offer",{id:la,give:{items:["loden"]}});assert.equal(ob.status,200,JSON.stringify(ob.json));
+  assert.ok((await view(c)).board.some(l=>l.id===lb));
+  await stop(srv);
+  editDb(dir,db=>{editState(db,"Cadeau Auteur",S=>{S.wardrobe.own.push("tract");S.wardrobe.own.push("tract");S.wardrobe.dup.push("tract");});editState(db,"Cadeau Offrant",S=>{S.wardrobe.dup.push("chasuble");});});
+  srv=await boot(port,dir,menv(dir));
+  assert.ok(!(await view(c)).board.some(l=>l.id===lb),"hidden: its author holds two tracts");
+  refused(await mk(c,"take",{id:lb,give:{items:["blazer"]}}),409,GONE_L);
+  assert.ok((await view(a)).mine.some(l=>l.id===lb),"not closed: the author still sees it");
+  refused(await mk(a,"accept",{id:ob.json.id}),409,`L'offre ne tient plus : Cadeau Offrant a déjà ${NAME.chasuble}.`);
+  assert.equal((await view(b)).offers.find(o=>o.id===ob.json.id).status,"closed");
+ }finally{await stop(srv);}
+});
+
 it("a listing offering an item that no longer trades is closed, never traded",async()=>{
  const u=await mp("Vitrine Interdite","left",["camarade"]),b=await mp("Curieux Bro","right",["kway"],3);
  let id1,id2,ob;const now=Date.now();

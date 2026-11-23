@@ -116,7 +116,7 @@ test("the Bâton is claimed exactly once, even with dozens of eligible draws at 
  assert.deepEqual(owners,[winner.name]);
  assert.deepEqual(db.prepare("SELECT item,player_id FROM mythics").all().map(r=>({...r})),[{item:"baton",player_id:idOf(winner.name)}]);
  // No draw ever says more than the rules give.
- for(const x of ok)assert.deepEqual(Object.keys(x.r.json).filter(k=>!["ok","item","dup","confetti","mythic","transfuge","me"].includes(k)),[]);
+ for(const x of ok)assert.deepEqual(Object.keys(x.r.json).filter(k=>!["ok","item","dup","confetti","mythic","transfuge","stacked","me"].includes(k)),[]);
  // The win, everywhere: the feed, every open screen, every other subscriber, never the winner's own devices.
  assert.ok(await until(()=>got(so,"mythic").length),"the open screens are told");
  assert.deepEqual(got(so,"mythic")[0],{name:winner.name,camp:winner.camp});
