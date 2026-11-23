@@ -3,7 +3,7 @@ import {test} from "node:test";
 import assert from "node:assert/strict";
 import * as M from "../web/market.mjs";
 
-const st=(own=[],o={})=>({lvl:10,wardrobe:{own:[...own],worn:{outfit:null,object:null},bulletins:0,...o}});
+const st=(own=[],o={})=>({lvl:10,wardrobe:{own:[...own],dup:[],worn:{outfit:null,object:null},bulletins:0,...o}});
 
 test("MARKET constants",()=>{
  assert.deepEqual(M.MARKET,{maxItems:3,maxListings:3,maxOffers:5,perDay:3,maxBulletins:20,minAgeMs:3*864e5,awayMs:14*864e5,excluded:["ultra","mythique"]});
@@ -74,7 +74,7 @@ test("missing and dupes",()=>{
  assert.match(M.missing(S,{items:["cocarde"],bulletins:0}),/^Il te manque : .*Cocarde/i);
  assert.equal(M.missing(S,{items:[],bulletins:3}),"Il te manque 3 bulletins");
  assert.equal(M.missing(S,{items:[],bulletins:0}),"");
- assert.deepEqual(M.dupes(S,["megaphone","cocarde"]),["megaphone"]);
+ assert.deepEqual(M.dupes(S,["megaphone","cocarde"]),[]);
 });
 
 test("applyTrade empties the worn slot of a given item",()=>{
@@ -86,8 +86,30 @@ test("applyTrade empties the worn slot of a given item",()=>{
  assert.equal(A.wardrobe.bulletins,5-2+1);assert.equal(B.wardrobe.bulletins,1+2-1);
 });
 
+test("1.10.0 : on reçoit une pièce qu'on a en 1 exemplaire (2e copie), refusé à 2",()=>{
+ const A=st(["megaphone"]),B=st(["cocarde"]);
+ M.applyTrade(A,{items:["megaphone"],bulletins:0},B,{items:[],bulletins:0});
+ assert.deepEqual(B.wardrobe.own,["cocarde","megaphone"]);
+ const G=st(["megaphone"]),H=st(["megaphone"]);
+ M.applyTrade(G,{items:["megaphone"],bulletins:0},H,{items:[],bulletins:0});
+ assert.deepEqual([H.wardrobe.own,H.wardrobe.dup],[["megaphone"],["megaphone"]]);
+ assert.deepEqual([G.wardrobe.own,G.wardrobe.dup],[[],[]]);
+ const X=st(["megaphone"]),Y=st(["megaphone"],{dup:["megaphone"]});
+ assert.throws(()=>M.applyTrade(X,{items:["megaphone"],bulletins:0},Y,{items:[],bulletins:0}),/déjà possédé/);
+});
+test("1.10.0 : céder une pièce qu'on a en double la garde (et la tenue portée) ; céder la dernière l'ôte",()=>{
+ const A=st(["bleutravail","megaphone"],{dup:["bleutravail"]}),B=st(["cocarde"]);
+ A.wardrobe.worn={outfit:"bleutravail",object:"megaphone"};
+ M.applyTrade(A,{items:["bleutravail","megaphone"],bulletins:0},B,{items:[],bulletins:0});
+ assert.deepEqual(A.wardrobe.own,["bleutravail"]);assert.deepEqual(A.wardrobe.dup,[]);
+ assert.deepEqual(A.wardrobe.worn,{outfit:"bleutravail",object:null});
+});
+test("1.10.0 : dupes ne signale que les pièces à 2 exemplaires",()=>{
+ assert.deepEqual(M.dupes(st(["megaphone","cocarde"],{dup:["cocarde"]}),["megaphone","cocarde","bleutravail"]),["cocarde"]);
+});
+
 test("applyTrade throws on dupe or missing and leaves both states untouched",()=>{
- const A=st(["megaphone"],{bulletins:1}),B=st(["megaphone","cocarde"]);
+ const A=st(["megaphone"],{bulletins:1}),B=st(["megaphone","cocarde"],{dup:["megaphone"]});
  const a0=structuredClone(A),b0=structuredClone(B);
  assert.throws(()=>M.applyTrade(A,{items:["megaphone"],bulletins:0},B,{items:["cocarde"],bulletins:0}),Error);
  assert.throws(()=>M.applyTrade(A,{items:[],bulletins:2},B,{items:[],bulletins:0}),Error);
@@ -125,7 +147,7 @@ test("applyTrade refuses malformed gives and a same-state trade, before any muta
 });
 
 test("applyTrade: an item a side both gives and receives is a dupe",()=>{
- const A=st(["megaphone"]),B=st(["megaphone"]),a0=structuredClone(A),b0=structuredClone(B);
+ const A=st(["megaphone"],{dup:["megaphone"]}),B=st(["megaphone"],{dup:["megaphone"]}),a0=structuredClone(A),b0=structuredClone(B);
  assert.throws(()=>M.applyTrade(A,{items:["megaphone"],bulletins:0},B,{items:["megaphone"],bulletins:0}),Error);
  assert.deepEqual(A,a0);assert.deepEqual(B,b0);
 });

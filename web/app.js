@@ -15,7 +15,7 @@ import {createBatonDuel,screenOf,feedParts} from "./batonduel.mjs";
 import {noelMoment,noelYear,voeuxText,adventCells,adventGiftText,etProgress,
  cheersPhase,cheersClock,cheersNamesLine,cheersAnnounce,frontLine,newYearYear,newYearScreen,CHEERS_MS,CHEERS_REPLAY_MS,nyFrameDue} from "./noelui.mjs";
 import {endSummary,frontBar,challengeText,sentText,challengeLists,dareView,sendsOnDeath} from "./snowui.mjs";
-import {MARKET,tradable} from "./market.mjs";
+import {MARKET,tradable,dupes} from "./market.mjs";
 import {listingView,forMe,pickable,tradeRecap,offerCheck,freshIds,catalogue,candidates,kindWord} from "./marketui.mjs";
 import * as WL from "./wall.mjs";
 import * as WU from "./wallui.mjs";
@@ -2627,7 +2627,7 @@ function mkMineSheet(body,set,back){
   const offers=mkArr(l.offers);
   d.append(offers.length?mkEl("span","block-title",`Offres reçues · ${offers.length}`):mkEl("span","fine","Pas encore d'offre."));
   for(const o of offers){
-   const g=mkGive(o.give),dup=g.items.filter(id=>S.wardrobe.own.includes(id)),why=block||(dup.length?`Déjà dans ta garde-robe : ${dup.map(id=>W.ITEMS[id]?.name??id).join(", ")}`:"");
+   const g=mkGive(o.give),dup=dupes(S,g.items),why=block||(dup.length?`Déjà dans ta garde-robe : ${dup.map(id=>W.ITEMS[id]?.name??id).join(", ")}`:"");
    const who=typeof o.from?.name==="string"?o.from.name:"?",r=mkEl("div","mk-recap"),btns=mkEl("div","btn-row");
    btns.append(why?smallButton("Accepter","go",()=>{},true):armedButton("Accepter","Confirmer l'échange","go",()=>mkAccept(o,l,who)),
     armedButton("Refuser","Confirmer le refus","",()=>mkPost({op:"refuse",id:o.id},`Offre ${/^[aeiouyhàâéèêîôûœ]/i.test(who)?"d'":"de "}${who} refusée.`)));

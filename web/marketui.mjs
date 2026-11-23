@@ -41,7 +41,7 @@ export function listingView(l,S,block){
 }
 function takeWhy(l,S,block){
  if(block)return block;
- const has=own(S),dup=(l.give?.items??[]).filter(id=>has.includes(id));
+ const has=own(S),dup=(l.give?.items??[]).filter(id=>(S.wardrobe.dup??[]).includes(id));
  if(dup.length)return `Déjà dans ta garde-robe : ${dup.map(nm).join(", ")}`;
  const w=l.want??{},lack=[];
  if(!["items","rarity","bulletins"].includes(w.kind))return "Cette annonce n'est plus disponible.";   // unreadable: never taken
@@ -83,7 +83,7 @@ export function offerCheck(l,S,offers,block){
  if(mine.some(o=>o.status==="pending"))return {ok:false,why:"Offre envoyée : en attente de réponse",sent:true};
  if(block)return {ok:false,why:block,sent:false};
  if(mine.some(o=>o.status==="refused"))return {ok:false,why:"Ton offre sur cette annonce a été refusée",sent:false};
- const dup=(l.give?.items??[]).filter(id=>own(S).includes(id));
+ const dup=(l.give?.items??[]).filter(id=>(S.wardrobe.dup??[]).includes(id));
  if(dup.length)return {ok:false,why:`Déjà dans ta garde-robe : ${dup.map(nm).join(", ")}`,sent:false};
  if((offers??[]).filter(o=>o.status==="pending").length>=MARKET.maxOffers)return {ok:false,why:`${MARKET.maxOffers} offres en attente au plus`,sent:false};
  return {ok:true,why:"",sent:false};
