@@ -798,6 +798,8 @@ function actOn(S,a,{now,speed=1,random=Math.random,event="",mythic=null,boost=NO
  case "draw":return WR.draw(S,a.pay,{random,mythic,fx});
  case "exchange":return WR.exchange(S,a.id);
  case "wear":return WR.wear(S,a.kind,a.id);
+ case "sell":return WR.sell(S,a.id,a.all===true);
+ case "stack":return WR.setStack(S,a.id,a.on);
  default:return fail("Action inconnue.");
  }
 }

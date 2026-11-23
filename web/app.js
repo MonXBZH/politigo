@@ -15,7 +15,7 @@ import {createBatonDuel,screenOf,feedParts} from "./batonduel.mjs";
 import {noelMoment,noelYear,voeuxText,adventCells,adventGiftText,etProgress,
  cheersPhase,cheersClock,cheersNamesLine,cheersAnnounce,frontLine,newYearYear,newYearScreen,CHEERS_MS,CHEERS_REPLAY_MS,nyFrameDue} from "./noelui.mjs";
 import {endSummary,frontBar,challengeText,sentText,challengeLists,dareView,sendsOnDeath} from "./snowui.mjs";
-import {MARKET,tradable} from "./market.mjs";
+import {MARKET,tradable,dupes} from "./market.mjs";
 import {listingView,forMe,pickable,tradeRecap,offerCheck,freshIds,catalogue,candidates,kindWord} from "./marketui.mjs";
 import * as WL from "./wall.mjs";
 import * as WU from "./wallui.mjs";
@@ -1433,7 +1433,7 @@ function armedButton(label,armedLabel,cls,onConfirm){
 // 1.6.0: the missions (a report ready), the letter, the goals' progress, the wardrobe and the urn.
 const sheetSig=()=>[S.fm,curIdx(),R.actsToday(S),R.actsThisVisit(S),S.energy<20,S.coffees,S.breadIdx,S.lvl,S.best,S.equipped[person().name]||0,isAsleep(),S.camp,!rematchBlock(),season(),S.treatDay,
  S.missions?.cur?.id,A.missionReady(S),A.missionsToday(S),S.energy<A.MISSION_RULES.minEnergy,S.mail?.letter?.id,A.lettersWaiting(S),A.lettersToday(S),S.mail?.b,S.goals?.list?.map(x=>`${x.n}${x.done?"d":""}`).join(),
- running().map(e=>e.id).join(),S.wardrobe?.own?.length,worn().outfit,worn().object,S.wardrobe?.bulletins,S.wardrobe?.confetti,W.freeDrawToday(S),A.flameOf(S),urnHint,batonSig(),S.advent?.y,S.advent?.opened?.join("-"),mkNewCount,[...mkListedIds].join(),wlLeft,wlCounts?.left,wlCounts?.right,WL.isWallNight(wlHour())].join("|");
+ running().map(e=>e.id).join(),S.wardrobe?.own?.length,worn().outfit,worn().object,S.wardrobe?.bulletins,S.wardrobe?.confetti,S.wardrobe?.dup?.join(),S.wardrobe?.noStack?.join(),W.freeDrawToday(S),A.flameOf(S),urnHint,batonSig(),S.advent?.y,S.advent?.opened?.join("-"),mkNewCount,[...mkListedIds].join(),wlLeft,wlCounts?.left,wlCounts?.right,WL.isWallNight(wlHour())].join("|");
 let shownSig="";
 function setBackgroundInert(on){for(const el of document.querySelectorAll(".topbar,.app,footer"))el.inert=on;lockScroll(on);}
 // The page behind an open sheet does not move: a swipe that reaches the end of a list (the chat) no longer scrolls the
@@ -1757,14 +1757,29 @@ function renderActivities(body){
 
 // ---------- the wardrobe (wardrobe.mjs, looks.mjs) ----------
 const RANK_ORDER=["mythique","ultra","legendaire","epique","rare","commun"];
-let wardTab="outfit",wardSwap=false;
+let wardTab="outfit",wardSwap=false,wardSell=false,wardPick=null;
+const dupNote="Un doublon rejoint ta garde-robe en 2e exemplaire (à échanger à la Brocante ou à revendre) ; au-delà, et pour tout doublon ultra rare, il devient des confettis (de 5 pour un commun à 100 pour un ultra rare).";
+const sellable=id=>owns(id)&&W.STACK.includes(W.ITEMS[id].rarity);
 const owns=id=>S.wardrobe.own.includes(id);
 // What this camp's wardrobe shows: its own and the shared items. The mythic only once won: never a spoiler.
 const wardVisible=(id,it)=>owns(id)||(it.rarity!=="mythique"&&(it.pool==="all"||it.pool===S.camp));
 const wardItems=kind=>Object.entries(W.ITEMS).filter(([id,it])=>it.kind===kind&&wardVisible(id,it));
 const ownLook=()=>R.look(S);                       // the élu without the wardrobe, for the previews
 async function wearItem(kind,id){const r=await send({type:"wear",kind,id});if(r?.ok&&id)playAnim("win",1500);liveSheet(true);return r;}
-const exchangePrices=()=>`${W.EXCHANGE.cost.commun} confettis pour une case commune, ${W.EXCHANGE.cost.rare} pour une rare, ${W.EXCHANGE.cost.epique} pour une épique`;
+const exchangePrices=()=>`${W.EXCHANGE.cost.commun} confettis pour une case commune, ${W.EXCHANGE.cost.rare} pour une rare, ${W.EXCHANGE.cost.epique} pour une épique, ${W.EXCHANGE.cost.legendaire} pour une légendaire`;
+async function sellItem(id,all){const r=await send({type:"sell",id,all});if(r?.ok){if(r.gone)wardPick=null;toast(`Revente : ${W.ITEMS[id].name}${r.n>1?" (2 exemplaires)":""}, +${r.confetti} confettis.`,true);}liveSheet(true);}
+async function stackItem(id,on){await send({type:"stack",id,on});liveSheet(true);}
+function sellPanel(id){
+ const it=W.ITEMS[id],c=W.copies(S,id),v=W.CONFETTI[it.rarity],box=document.createElement("div");box.className="ward-sell";
+ const h=document.createElement("b");h.textContent=`${it.name} · ${W.RARITY_LABEL[it.rarity]} · ×${c}`;
+ const row=document.createElement("div");row.className="btn-row";row.append(armedButton(`Revendre 1 · +${v} 🎊`,"Touche encore","",()=>sellItem(id,false)));
+ if(c===2)row.append(armedButton(`Tout revendre · +${2*v} 🎊`,"Touche encore","",()=>sellItem(id,true)));
+ const lab=document.createElement("label"),cb=document.createElement("input");cb.type="checkbox";cb.checked=S.wardrobe.noStack.includes(id);
+ cb.addEventListener("change",()=>stackItem(id,!cb.checked));lab.append(cb," Doubles en confettis (ne plus cumuler)");
+ box.append(h,row,lab);
+ box.append(fine(`${c===2?"Tout revendre : tu":"Tu"} ne l'auras plus.${Object.values(worn()).includes(id)?" Tu ne la porteras plus.":""}`));
+ return box;
+}
 async function exchangeItem(id){const r=await send({type:"exchange",id});if(r?.ok){wardSwap=false;toast(`${W.ITEMS[id].name} rejoint ta garde-robe contre ${W.EXCHANGE.cost[W.ITEMS[id].rarity]} confettis.`,true);}liveSheet(true);}
 function flameMeter(){
  const pts=A.flameOf(S),d=document.createElement("div"),head=document.createElement("div"),l=document.createElement("span"),v=document.createElement("b"),bar=document.createElement("div"),fill=document.createElement("i");
@@ -1774,21 +1789,23 @@ function flameMeter(){
  return d;
 }
 function wardCard(id,it,i){
- const own=owns(id),on=worn()[it.kind]===id,label=W.RARITY_LABEL[it.rarity];
+ const own=owns(id),on=worn()[it.kind]===id,label=W.RARITY_LABEL[it.rarity],x2=W.copies(S,id)===2,sel=wardSell&&sellable(id);
  const cost=W.EXCHANGE.cost[it.rarity],swap=wardSwap&&!own&&W.EXCHANGE.rarities.includes(it.rarity)&&S.wardrobe.confetti>=cost,shown=own||swap;
  const b=document.createElement("button");b.type="button";
- b.className=`ward-card${own?"":" locked"}${on?" on":""}${swap?" swap":""} r-${it.rarity}`;
+ b.className=`ward-card${own?"":" locked"}${on?" on":""}${swap?" swap":""}${wardSell&&wardPick===id?" picked":""} r-${it.rarity}`;
  b.style.setProperty("--r",shown?W.RARITY_COLOR[it.rarity]:"#4a4258");   // CSSOM: allowed by the CSP
  const cv=document.createElement("canvas"),rk=document.createElement("span"),nm=document.createElement("span"),st=document.createElement("small");
  cv.setAttribute("aria-hidden","true");rk.className="rk";rk.textContent=label;nm.className="nm";nm.textContent=shown?it.name:"???";
- const idle=on?"Porté":own?(it.kind==="outfit"?"Porter":"Brandir"):swap?`Échanger · ${cost} 🎊`:"À gagner";
+ const idle=sel?"Revendre":on?"Porté":own?(it.kind==="outfit"?"Porter":"Brandir"):swap?`Échanger · ${cost} 🎊`:"À gagner";
  st.className="st";st.textContent=idle;
  b.append(cv,rk,nm,st);
+ if(x2){const x=document.createElement("span");x.className="ward-x2";x.textContent="×2";b.append(x);}
  const vit=own&&mkListed().has(id);                  // in one of my open listings (me.marketListed)
  if(vit){const v=document.createElement("span");v.className="mk-badge";v.textContent="En vitrine";b.append(v);}
- b.setAttribute("aria-label",own?`${it.name}, ${label}${vit?", en vitrine à la Brocante":""}. ${on?"Porté : toucher pour l'enlever.":"Toucher pour le porter."}`:swap?`${it.name}, ${label} : échanger ${cost} confettis contre lui.`:`${label}, pas encore gagné.`);
+ if(sel)b.setAttribute("aria-pressed",String(wardPick===id));
+ b.setAttribute("aria-label",own?`${it.name}, ${label}${x2?", 2 exemplaires":""}${vit?", en vitrine à la Brocante":""}. ${sel?"Toucher pour la revendre.":on?"Porté : toucher pour l'enlever.":"Toucher pour le porter."}`:swap?`${it.name}, ${label} : échanger ${cost} confettis contre lui.`:`${label}, pas encore gagné.`);
  if(own)b.title=it.desc;
- if(!own&&!swap)b.setAttribute("aria-disabled","true");
+ if(wardSell?!sel:!own&&!swap)b.setAttribute("aria-disabled","true");
  const p=ownLook(),off=i*331;
  portrait(cv,(c,t)=>{
   if(!shown){sprite(c,p,0,"idle");greyOut(c);return;}
@@ -1796,6 +1813,7 @@ function wardCard(id,it,i){
  },{size:96});
  let armed=0;
  b.addEventListener("click",()=>{
+  if(wardSell){if(sel){wardPick=id;renderSheet("wardrobe");$("#sheet-body .ward-card.picked")?.focus();}return;}
   if(own){wearItem(it.kind,on?null:id);return;}
   if(!swap)return;
   // Two taps: 100 confetti are not spent by a stray one.
@@ -1810,13 +1828,16 @@ function renderWardrobe(body,set){
  body.append(flameMeter());
  if(batonV?.mine&&batonV.warn){const h=fine("La flamme du Bâton vacille… Ta Flamme est passée sous 200 : sous 150, le Bâton retournera dans l'urne.");h.classList.add("urn-hint");body.append(h);}
  const tabs=document.createElement("div");tabs.className="tabs small ward-tabs";tabs.setAttribute("role","group");tabs.setAttribute("aria-label","Tenues ou objets");
- for(const [k,t] of [["outfit","Tenues"],["object","Objets"]]){const b=document.createElement("button");b.type="button";b.textContent=t;b.setAttribute("aria-pressed",String(wardTab===k));b.addEventListener("click",()=>{wardTab=k;renderSheet("wardrobe");$("#sheet-body .ward-tabs [aria-pressed=true]")?.focus();});tabs.append(b);}
+ for(const [k,t] of [["outfit","Tenues"],["object","Objets"]]){const b=document.createElement("button");b.type="button";b.textContent=t;b.setAttribute("aria-pressed",String(wardTab===k));b.addEventListener("click",()=>{wardTab=k;wardPick=null;renderSheet("wardrobe");$("#sheet-body .ward-tabs [aria-pressed=true]")?.focus();});tabs.append(b);}
  const row=document.createElement("div");row.className="btn-row ward-bar";
- const swap=smallButton(wardSwap?"Annuler l'échange":"Échanger des confettis","",()=>{wardSwap=!wardSwap;renderSheet("wardrobe");$("#sheet-body .ward-bar .swap-btn")?.focus();},!wardSwap&&w.confetti<W.EXCHANGE.cost.commun);
- swap.classList.add("swap-btn");swap.setAttribute("aria-pressed",String(wardSwap));row.append(pill(`🎊 ${w.confetti} confetti${w.confetti>1?"s":""}`),swap);
+ const swap=smallButton(wardSwap?"Annuler l'échange":"Échanger des confettis","",()=>{wardSwap=!wardSwap;wardSell=false;wardPick=null;renderSheet("wardrobe");$("#sheet-body .ward-bar .swap-btn")?.focus();},!wardSwap&&w.confetti<W.EXCHANGE.cost.commun);
+ swap.classList.add("swap-btn");swap.setAttribute("aria-pressed",String(wardSwap));
+ const sell=smallButton(wardSell?"Annuler la revente":"Revendre","",()=>{wardSell=!wardSell;wardSwap=false;wardPick=null;renderSheet("wardrobe");$("#sheet-body .ward-bar .sell-btn")?.focus();},!wardSell&&!w.own.some(sellable));
+ sell.classList.add("sell-btn");sell.setAttribute("aria-pressed",String(wardSell));row.append(pill(`🎊 ${w.confetti} confetti${w.confetti>1?"s":""}`),swap,sell);
  if(owns("baton"))row.append(smallButton("Lire la légende","",()=>{closeSheet();legend.play($(".pad-btn[data-sheet=more]"));}));
  body.append(tabs,row);
  if(wardSwap)body.append(fine(`Touche une case à gagner : ${exchangePrices()} (deux touches pour confirmer).`));
+ if(wardSell){if(wardPick&&!sellable(wardPick))wardPick=null;body.append(wardPick?sellPanel(wardPick):fine("Touche une pièce marquée « Revendre » pour la choisir (les doublons rapportent le prix de leur rareté)."));}
  const all=wardItems(wardTab);let i=0;
  for(const r of RANK_ORDER){
   const l=all.filter(([,it])=>it.rarity===r);if(!l.length)continue;
@@ -1825,7 +1846,7 @@ function renderWardrobe(body,set){
   body.append(h,g);
  }
  body.append(fine(wardTab==="object"?"Un objet de la garde-robe remplace l'objet personnel dans sa main ; équiper un objet personnel (Dossier) le range.":"Une tenue s'enfile par-dessus son costume ; touche-la de nouveau pour l'enlever."),
-  fine("Les doublons d'un tirage deviennent des confettis : 5 pour un commun, jusqu'à 100 pour un ultra rare."));
+  fine(dupNote));
  const go=document.createElement("div");go.className="btn-row";go.append(smallButton(`Aller à ${urnName(S.camp)}`,"go",()=>openSheet("urn")));body.append(go);
 }
 
@@ -1890,9 +1911,9 @@ async function drawUrn(pay){
  // The one and only: the screen dims and the legend plays (legend.mjs), then its own reveal card.
  if(r.mythic){closeSheet();legend.play($(".pad-btn[data-sheet=more]"));return;}
  const it=W.ITEMS[r.item.id];if(!it){liveSheet(true);return;}
- urnLast={id:r.item.id,dup:!!r.dup,confetti:r.confetti||0,transfuge:!!r.transfuge};
+ urnLast={id:r.item.id,dup:!!r.dup,stacked:!!r.stacked,confetti:r.confetti||0,transfuge:!!r.transfuge};
  if(sheetKind==="urn"){liveSheet(true);$("#sheet-body .reveal h3")?.focus();}
- toast(r.dup?`${it.name} : déjà dans ta garde-robe, +${r.confetti} confettis.`:`${it.name} (${W.RARITY_LABEL[it.rarity]}) rejoint ta garde-robe !`,true);
+ toast(r.stacked?`${it.name} : 2e exemplaire dans ta garde-robe (à échanger à la Brocante).`:r.dup?`${it.name} : déjà dans ta garde-robe, +${r.confetti} confettis.`:`${it.name} (${W.RARITY_LABEL[it.rarity]}) rejoint ta garde-robe !`,true);
  if(!r.dup&&RANK_ORDER.indexOf(it.rarity)<=RANK_ORDER.indexOf("epique"))playAnim("win",2500);
 }
 function revealCard(){
@@ -1901,7 +1922,8 @@ function revealCard(){
  const tag=Object.assign(document.createElement("span"),{className:"tag",textContent:W.RARITY_LABEL[it.rarity]});
  const h=Object.assign(document.createElement("h3"),{textContent:it.name,tabIndex:-1});
  box.append(rays,cv,tag,h,fine(it.desc));
- if(d.dup)box.append(fine(`Déjà dans ta garde-robe : +${d.confetti} confettis.`));
+ if(d.stacked)box.append(fine("2e exemplaire dans ta garde-robe (à échanger à la Brocante)."));
+ else if(d.dup)box.append(fine(`Déjà dans ta garde-robe : +${d.confetti} confettis.`));
  else if(d.transfuge)box.append(fine("La carte du camp d'en face… Le fil de la République en parle déjà."));
  const p=ownLook();
  portrait(cv,(c,t)=>sprite(c,{...p,outfit:it.kind==="outfit"?d.id:worn().outfit,object:it.kind==="object"?d.id:null},t,"win"),{size:176});
@@ -1935,7 +1957,7 @@ function renderUrn(body,set){
   bar.className="bar";bar.setAttribute("aria-hidden","true");fill.style.width=`${Math.round(100*n/W.PITY[k])}%`;fill.style.background=W.RARITY_COLOR[k];bar.append(fill);   // CSSOM
   pity.append(row,bar);
  }
- body.append(pity,fine(`Un doublon devient des confettis, à échanger dans la Garde-robe : ${exchangePrices()}.`));
+ body.append(pity,fine(`${dupNote} À échanger dans la Garde-robe : ${exchangePrices()}.`));
  const go=document.createElement("div");go.className="btn-row";go.append(smallButton("Ouvrir la garde-robe","",()=>openSheet("wardrobe")));body.append(go);
 }
 
@@ -2627,7 +2649,7 @@ function mkMineSheet(body,set,back){
   const offers=mkArr(l.offers);
   d.append(offers.length?mkEl("span","block-title",`Offres reçues · ${offers.length}`):mkEl("span","fine","Pas encore d'offre."));
   for(const o of offers){
-   const g=mkGive(o.give),dup=g.items.filter(id=>S.wardrobe.own.includes(id)),why=block||(dup.length?`Déjà dans ta garde-robe : ${dup.map(id=>W.ITEMS[id]?.name??id).join(", ")}`:"");
+   const g=mkGive(o.give),dup=dupes(S,g.items),why=block||(dup.length?`Déjà en 2 exemplaires : ${dup.map(id=>W.ITEMS[id]?.name??id).join(", ")}`:"");
    const who=typeof o.from?.name==="string"?o.from.name:"?",r=mkEl("div","mk-recap"),btns=mkEl("div","btn-row");
    btns.append(why?smallButton("Accepter","go",()=>{},true):armedButton("Accepter","Confirmer l'échange","go",()=>mkAccept(o,l,who)),
     armedButton("Refuser","Confirmer le refus","",()=>mkPost({op:"refuse",id:o.id},`Offre ${/^[aeiouyhàâéèêîôûœ]/i.test(who)?"d'":"de "}${who} refusée.`)));
@@ -3036,7 +3058,7 @@ const authErr=$("#auth-error"),authErrHome=authErr.parentNode,authErrNext=authEr
 const homeAuthErr=()=>{authErrHome.insertBefore(authErr,authErrNext);for(const i of authEl.querySelectorAll("input[aria-invalid]"))i.removeAttribute("aria-invalid");};
 let regCamp="left";
 function showAuth(message=""){
- closeSheet();wl=null;wlLeft=wlCounts=null;chat.reset();chatFlags(null);es?.close();es=null;S=null;anim=pong=mini=scene=null;newsPending=false;toastQ.length=0;announceQ.length=0;$("#announce").hidden=true;$("#push-ask").hidden=true;pushAskWanted=pushAsked=false;duelData=null;duelErr="";duelSeq++;pushOn=null;pushSynced=false;setNet(true);$("#tips").hidden=true;urnLast=null;wardSwap=false;urnHint=false;batonV=null;bd.close();
+ closeSheet();wl=null;wlLeft=wlCounts=null;chat.reset();chatFlags(null);es?.close();es=null;S=null;anim=pong=mini=scene=null;newsPending=false;toastQ.length=0;announceQ.length=0;$("#announce").hidden=true;$("#push-ask").hidden=true;pushAskWanted=pushAsked=false;duelData=null;duelErr="";duelSeq++;pushOn=null;pushSynced=false;setNet(true);$("#tips").hidden=true;urnLast=null;wardSwap=wardSell=false;wardPick=null;urnHint=false;batonV=null;bd.close();
  authEl.hidden=false;setBackgroundInert(true);
  newYear=null;newYearBannerOn=false;nyClosed=false;nyReplayEnd=0;nyView={scene:null,banner:false};nyBanner.hidden=true;nyClose.hidden=true;nySay.textContent="";   // nothing of the midnight toast outlives the session
  homeAuthErr();$("#auth-error").textContent=message;regQuizShow(false);$("#camp-note").textContent="";document.body.dataset.camp=regCamp;

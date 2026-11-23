@@ -158,7 +158,6 @@ it("same camp: no feed line",async()=>{
  const a=await mp("Gauche Un","left",["cheminot","bleutravail"]),b=await mp("Gauche Deux","left",["kway","bleutravail"]);
  const id=await listOk(a,{items:["cheminot"]},{kind:"rarity",rarity:"commun",slot:"outfit",bulletins:0});
  refused(await mk(b,"take",{id,give:{items:["megaphone"]}}),422);   // not what it asks for
- refused(await mk(b,"take",{id,give:{items:["bleutravail"]}}),422,"Échange impossible : objet déjà possédé.");   // the author has it: not said which
  const r=await mk(b,"take",{id,give:{items:["kway"],bulletins:0}});assert.equal(r.status,200,JSON.stringify(r.json));
  assert.ok((await wr(b)).own.includes("cheminot"));
  assert.ok(!(await feedOf(a)).some(e=>e.kind==="market"&&(e.player==="Gauche Un"||e.text.includes("Gauche Deux"))));
@@ -288,10 +287,6 @@ it("accept fails cleanly when the offer no longer holds",async()=>{
  const id=await listOk(a,{items:["chasuble"]},{kind:"offer"});
  const ob=await mk(b,"offer",{id,give:{items:["loden"]}});assert.equal(ob.status,200);
  const oc=await mk(c,"offer",{id,give:{items:["doudoune"],bulletins:5}});assert.equal(oc.status,200);
- // b now owns the listed item (a draw, a gift): accepting is refused, the offer closes, the listing stays open
- await stock(SOCK,"Offrant Chanceux",["chasuble"]);
- refused(await mk(a,"accept",{id:ob.json.id}),409,`L'offre ne tient plus : Offrant Chanceux a déjà ${NAME.chasuble}.`);
- assert.equal((await view(b)).offers.find(o=>o.id===ob.json.id).status,"closed");
  // c spent the offered bulletins elsewhere: refused too
  const ls=await listOk(s,{items:["tract"]},{kind:"bulletins",bulletins:5});
  assert.equal((await mk(c,"take",{id:ls,give:{items:[],bulletins:5}})).status,200);
@@ -430,23 +425,85 @@ it("same network flag stored on the trade",async()=>{
  const r=await b.call("GET","/api/market");assert.equal(r.status,200);assert.ok(!/same_?net|net_?fp|10\.9\.5/i.test(r.text),"never in an answer");
 });
 
-it("a listing asking by name for what its author now owns: closed after a trade, hidden after a gift",async()=>{
+it("a listing asking by name for a piece: stays open when the first copy arrives",async()=>{
  const a=await mp("Chercheur Bro","left",["megaphone","cocarde"],1),s=await mp("Fournisseur Bro","right",["loden"]),c=await mp("Passant Bro","right",["kway","blazer"]);
  const la=await listOk(a,{items:["megaphone"]},{kind:"items",items:["loden"],bulletins:0});
  const oc=await mk(c,"offer",{id:la,give:{items:["kway"]}});assert.equal(oc.status,200,JSON.stringify(oc.json));
  const ls=await listOk(s,{items:["loden"]},{kind:"bulletins",bulletins:1});
- assert.equal((await mk(a,"take",{id:ls,give:{items:[],bulletins:1}})).status,200);   // a now owns loden: la can never be taken
- assert.ok(!(await view(a)).mine.some(l=>l.id===la),"closed");
- assert.equal((await view(c)).offers.find(o=>o.id===oc.json.id).status,"closed","its pending offer too");
- assert.ok((await meOf(a)).state.journal.some(e=>e.k==="market"&&e.text==="Brocante : une de tes annonces est fermée, l'objet a changé de mains."));
- // a gift (the admin, a draw): no trade to close it, hidden and refused instead
- const lb=await listOk(a,{items:["cocarde"]},{kind:"items",items:["doudoune"],bulletins:0});
- assert.ok((await view(c)).board.some(l=>l.id===lb));
- await stock(SOCK,"Chercheur Bro",["doudoune"]);
- assert.ok(!(await view(c)).board.some(l=>l.id===lb),"hidden");
- refused(await mk(c,"take",{id:lb,give:{items:["doudoune"]}}),409,GONE_L);
- refused(await mk(c,"offer",{id:lb,give:{items:["blazer"]}}),409,GONE_L);
- assert.ok((await view(a)).mine.some(l=>l.id===lb),"not closed: the author still sees it");
+ assert.equal((await mk(a,"take",{id:ls,give:{items:[],bulletins:1}})).status,200);   // a now owns loden once: a second copy is still welcome
+ assert.ok((await view(a)).mine.some(l=>l.id===la),"still open");
+ assert.equal((await view(c)).offers.find(o=>o.id===oc.json.id).status,"pending","its pending offer too");
+});
+
+// Two copies of a piece: the admin gives one, so the second is written into the state between two boots.
+async function duped(port,names,own){
+ const dir=mkdtempSync(join(tmpdir(),"market-")),sock=join(dir,"admin.sock");let srv=await boot(port,dir,menv(dir));
+ const cs={};for(const [n,camp] of names)cs[n]=await player(port,n,camp);
+ for(const [n,items] of Object.entries(own))await stock(sock,n,items.filter((x,i,l)=>l.indexOf(x)===i),5);
+ await stop(srv);
+ editDb(dir,db=>{for(const [n,items] of Object.entries(own))editState(db,n,S=>{for(const x of items)if(S.wardrobe.own.includes(x)&&items.indexOf(x)!==items.lastIndexOf(x)&&!S.wardrobe.dup.includes(x))S.wardrobe.dup.push(x);});});
+ srv=await boot(port,dir,menv(dir));return {cs,srv};
+}
+
+it("sell: the last copy of a piece in a listing or a pending offer is refused; a spare copy sells",async()=>{
+ const {cs,srv}=await duped(18937,[["Revendeur Bro","left"],["Offrant Rev","right"]],{"Revendeur Bro":["blazer","kway","loden","loden"],"Offrant Rev":["cheminot"]});
+ try{
+  const r=cs["Revendeur Bro"],o=cs["Offrant Rev"];
+  const l=await listOk(r,{items:["blazer"]},{kind:"offer"});
+  const before=await wr(r);
+  const x=await r.call("POST","/api/action",{type:"sell",id:"blazer",all:false});
+  assert.ok(x.status===409||x.status===422,JSON.stringify(x.json));assert.match(x.json.error,/Brocante/);
+  const x2=await r.call("POST","/api/action",{type:"sell",id:"blazer",all:true});assert.match(x2.json.error??"",/Brocante/);
+  const after=await wr(r);assert.deepEqual([after.own,after.bulletins,after.confetti],[before.own,before.bulletins,before.confetti],"state unchanged");
+  // a pending offer engages its items too
+  const lo=await listOk(o,{items:["cheminot"]},{kind:"offer"});assert.ok(lo);
+  const l2=await listOk(r,{items:["kway"]},{kind:"offer"});
+  assert.equal((await mk(o,"offer",{id:l2,give:{items:["cheminot"]}})).status,200);
+  assert.equal((await mk(r,"offer",{id:lo,give:{items:["loden"]}})).status,200);
+  const x3=await r.call("POST","/api/action",{type:"sell",id:"loden",all:true});assert.match(x3.json.error??"",/Brocante/);
+  // two copies, one of them in a listing: one copy sells
+  const l3=await listOk(r,{items:["loden"]},{kind:"offer"});assert.ok(l3);
+  const x4=await r.call("POST","/api/action",{type:"sell",id:"loden",all:false});assert.equal(x4.status,200,JSON.stringify(x4.json));
+ }finally{await stop(srv);}
+});
+
+it("trade: a listing stays open when the piece it gives is a spare copy; a name-asking listing closes at the second copy",async()=>{
+ const {cs,srv}=await duped(18938,[["Double Auteur","left"],["Double Preneur","right"],["Double Tiers","right"]],{"Double Auteur":["blazer","blazer","kway"],"Double Preneur":["loden"],"Double Tiers":["megaphone","kway","cocarde"]});
+ try{
+  const a=cs["Double Auteur"],t=cs["Double Preneur"],u=cs["Double Tiers"];
+  const l1=await listOk(a,{items:["blazer"]},{kind:"bulletins",bulletins:1});
+  const lu=await listOk(u,{items:["megaphone"]},{kind:"offer"});   // one listing per piece: the second use of a blazer is an offer
+  const oa=await mk(a,"offer",{id:lu,give:{items:["blazer"]}});assert.equal(oa.status,200,JSON.stringify(oa.json));
+  assert.equal((await mk(t,"take",{id:l1,give:{items:[],bulletins:1}})).status,200);
+  assert.equal((await view(a)).offers.find(o=>o.id===oa.json.id).status,"pending","the author keeps one blazer: the offer stays pending");
+  assert.ok((await wr(a)).own.includes("blazer"));
+  // u owns one kway and asks for a second by name; taking a's kway gives it the 2nd copy (allowed) and closes that listing
+  const w=await listOk(u,{items:["cocarde"]},{kind:"items",items:["kway"],bulletins:0});
+  const ls=await listOk(a,{items:["kway"]},{kind:"bulletins",bulletins:1});
+  assert.equal((await mk(u,"take",{id:ls,give:{items:[],bulletins:1}})).status,200);
+  assert.ok(!(await view(u)).mine.some(l=>l.id===w),"closed: u holds two kways now");
+ }finally{await stop(srv);}
+});
+
+it("two copies owned by a gift: a listing asking for it is hidden and refused, an offer holding it is refused at accept",async()=>{
+ const dir=mkdtempSync(join(tmpdir(),"market-")),port=18939,sock=join(dir,"admin.sock");
+ let srv=await boot(port,dir,menv(dir));
+ try{
+  const a=await player(port,"Cadeau Auteur"),c=await player(port,"Cadeau Passant","right"),b=await player(port,"Cadeau Offrant","right");
+  await stock(sock,"Cadeau Auteur",["cocarde","chasuble","doudoune"]);await stock(sock,"Cadeau Passant",["kway","blazer"]);await stock(sock,"Cadeau Offrant",["loden","chasuble"]);
+  const lb=await listOk(a,{items:["cocarde"]},{kind:"items",items:["tract"],bulletins:0});   // asks for a piece it holds 0 times
+  const la=await listOk(a,{items:["chasuble"]},{kind:"offer"});
+  const ob=await mk(b,"offer",{id:la,give:{items:["loden"]}});assert.equal(ob.status,200,JSON.stringify(ob.json));
+  assert.ok((await view(c)).board.some(l=>l.id===lb));
+  await stop(srv);
+  editDb(dir,db=>{editState(db,"Cadeau Auteur",S=>{S.wardrobe.own.push("tract");S.wardrobe.own.push("tract");S.wardrobe.dup.push("tract");});editState(db,"Cadeau Offrant",S=>{S.wardrobe.dup.push("chasuble");});});
+  srv=await boot(port,dir,menv(dir));
+  assert.ok(!(await view(c)).board.some(l=>l.id===lb),"hidden: its author holds two tracts");
+  refused(await mk(c,"take",{id:lb,give:{items:["blazer"]}}),409,GONE_L);
+  assert.ok((await view(a)).mine.some(l=>l.id===lb),"not closed: the author still sees it");
+  refused(await mk(a,"accept",{id:ob.json.id}),409,`L'offre ne tient plus : Cadeau Offrant a déjà ${NAME.chasuble}.`);
+  assert.equal((await view(b)).offers.find(o=>o.id===ob.json.id).status,"closed");
+ }finally{await stop(srv);}
 });
 
 it("a listing offering an item that no longer trades is closed, never traded",async()=>{

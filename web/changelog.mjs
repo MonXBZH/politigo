@@ -5,6 +5,16 @@
 import {cmpRelease} from "./rules.mjs";
 
 export const CHANGELOG=[
+ {version:"1.10.0",date:"2026-11-23",help:["tombola","brocante"],
+  added:[
+   "Les doublons s'empilent : une pièce commune, rare, épique ou légendaire tirée une deuxième fois rejoint ta Garde-robe en 2e exemplaire (badge ×2). Le troisième devient des confettis.",
+   "« Revendre » dans la Garde-robe : un exemplaire ou les deux contre des confettis, avec une confirmation en deux touches. Une case « Doubles en confettis » désactive le cumul pour une pièce.",
+   "Une légendaire qui te manque s'obtient contre 500 confettis dans la Garde-robe.",
+   "À la Brocante, tu peux recevoir un objet que tu as déjà (2e exemplaire) et céder un double sans perdre la pièce."
+  ],
+  fixed:["Un légendaire tiré au hasard est d'abord un légendaire que tu n'as pas encore."],
+  admin:[]
+ },
  {version:"1.9.0",date:"2026-11-19",help:["brocante","tombola","collage","xp"],
   added:[
    "La Brocante : un tableau d'annonces où les joueurs échangent tenues et objets de leur Garde-robe. Dépose une annonce, troque tout de suite si tu as ce qu'elle demande, ou fais une offre que l'auteur accepte ou refuse.",

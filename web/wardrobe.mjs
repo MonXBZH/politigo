@@ -161,7 +161,9 @@ export const URN_NAME={left:"La Tombola de la Fête",right:"La Loterie du Gala"}
 export const ODDS={commun:60,rare:28,epique:9.5,legendaire:2,ultra:0.5};
 export const PITY={epique:10,legendaire:50,ultra:80};
 export const CONFETTI={commun:5,rare:10,epique:25,legendaire:50,ultra:100,mythique:100};
-export const EXCHANGE={cost:{commun:100,rare:200,epique:300},rarities:["commun","rare","epique"]};
+export const EXCHANGE={cost:{commun:100,rare:200,epique:300,legendaire:500},rarities:["commun","rare","epique","legendaire"]};
+// Rarities that can hold a 2nd copy (ultra and mythique never stack).
+export const STACK=["commun","rare","epique","legendaire"];
 export const MYTHIC={item:"baton",minDays:21,minFlame:300,base:0.01,step:0.001,per:10,cap:0.03};
 const rank=r=>RARITIES.indexOf(r);
 const DRAWN=["commun","rare","epique","legendaire","ultra"];
@@ -169,12 +171,14 @@ const DRAWN=["commun","rare","epique","legendaire","ultra"];
 export const inPool=(id,camp)=>{const it=ITEMS[id];return !!it&&it.rarity!=="mythique"&&(it.pool===camp||it.pool==="all");};
 export const poolItems=(camp,rarity)=>Object.keys(ITEMS).filter(id=>inPool(id,camp)&&ITEMS[id].rarity===rarity);
 
-export const freshWardrobe=()=>({own:[],worn:{outfit:null,object:null},confetti:0,bulletins:0,freeDay:-1,pity:{epique:0,legendaire:0,ultra:0},draws:0});
+export const freshWardrobe=()=>({own:[],worn:{outfit:null,object:null},confetti:0,bulletins:0,freeDay:-1,pity:{epique:0,legendaire:0,ultra:0},draws:0,dup:[],noStack:[]});
 // A stored wardrobe re-derived field by field (rules.mjs sanitize).
 export function sanitizeWardrobe(w){
  const o=freshWardrobe();if(!w||typeof w!=="object")return o;
  const int=(v,min,max,def)=>Number.isFinite(v)?Math.round(Math.min(max,Math.max(min,v))):def;
  if(Array.isArray(w.own))o.own=[...new Set(w.own.filter(id=>typeof id==="string"&&Object.hasOwn(ITEMS,id)))];
+ const stk=l=>Array.isArray(l)?[...new Set(l.filter(id=>typeof id==="string"&&Object.hasOwn(ITEMS,id)&&STACK.includes(ITEMS[id].rarity)))]:[];
+ o.dup=stk(w.dup).filter(id=>o.own.includes(id));o.noStack=stk(w.noStack);
  for(const k of ["outfit","object"]){const id=w.worn?.[k];if(typeof id==="string"&&o.own.includes(id)&&ITEMS[id].kind===k)o.worn[k]=id;}
  o.confetti=int(w.confetti,0,1e6,0);o.bulletins=int(w.bulletins,0,9999,0);o.freeDay=int(w.freeDay,-1,1e9,-1);o.draws=int(w.draws,0,1e9,0);
  if(w.ev&&Array.isArray(w.ev.ids)){const ids=w.ev.ids.filter(i=>Number.isSafeInteger(i)&&i>0).slice(-8);if(ids.length)o.ev={ids,n:int(w.ev.n,0,9,0)};}
@@ -200,6 +204,7 @@ export const mythicChance=(S,m)=>mythicOk(S,m)?Math.min(MYTHIC.cap,MYTHIC.base+M
 // The merguez smell and the sparks around the urn: shown exactly when the mythic roll is live.
 export const urnHint=(S,opts)=>mythicOk(S,opts?.mythic??opts);
 export const owns=(S,id)=>S.wardrobe.own.includes(id);
+export const copies=(S,id)=>S.wardrobe.own.includes(id)?S.wardrobe.dup.includes(id)?2:1:0;
 
 // ---------- mutations (server side, through rules.mjs act) ----------
 function rollRarity(random){
@@ -208,9 +213,10 @@ function rollRarity(random){
  return "commun";
 }
 function gain(S,id){
- const W=S.wardrobe,it=ITEMS[id],dup=W.own.includes(id),confetti=dup?CONFETTI[it.rarity]:0;
- if(dup)W.confetti=Math.min(1e6,W.confetti+confetti);else W.own.push(id);
- return {dup,confetti};
+ const W=S.wardrobe,it=ITEMS[id],dup=W.own.includes(id);
+ if(!dup){W.own.push(id);return {dup,stacked:false,confetti:0};}
+ if(STACK.includes(it.rarity)&&!W.noStack.includes(id)&&!W.dup.includes(id)){W.dup.push(id);return {dup,stacked:true,confetti:0};}
+ const confetti=CONFETTI[it.rarity];W.confetti=Math.min(1e6,W.confetti+confetti);return {dup,stacked:false,confetti};
 }
 // pay "free" (once per calendar day) or "bulletin". mythic: the server's {available, ageDays, clean, claim}.
 export function draw(S,pay,{random=Math.random,mythic=null,fx=null}={}){
@@ -233,13 +239,13 @@ export function draw(S,pay,{random=Math.random,mythic=null,fx=null}={}){
  else if(n.epique>=PITY.epique&&rank(r)<rank("epique"))r="epique";
  const resets=k=>k==="legendaire"?r==="legendaire":rank(r)>=rank(k);
  for(const k of Object.keys(PITY))W.pity[k]=resets(k)?0:Math.min(PITY[k]-1,n[k]);
- const all=poolItems(S.camp,r),fresh=forced?all.filter(i=>!W.own.includes(i)):[],ids=fresh.length?fresh:all,id=ids[Math.min(ids.length-1,Math.floor(random()*ids.length))],it=ITEMS[id],g=gain(S,id);
- logEntry(S,"draw",`${urn} : ${it.name} (${RARITY_LABEL[r]})${g.dup?`, déjà dans la garde-robe : +${g.confetti} confettis`:" rejoint la garde-robe"}.`,{id,rarity:r,dup:g.dup});
- const out={ok:true,item:{id,kind:it.kind,rarity:r},dup:g.dup,confetti:g.confetti};
+ const all=poolItems(S.camp,r),fresh=forced||r==="legendaire"?all.filter(i=>!W.own.includes(i)):[],ids=fresh.length?fresh:all,id=ids[Math.min(ids.length-1,Math.floor(random()*ids.length))],it=ITEMS[id],g=gain(S,id);
+ logEntry(S,"draw",`${urn} : ${it.name} (${RARITY_LABEL[r]})${g.stacked?", 2e exemplaire dans la garde-robe":g.dup?`, déjà dans la garde-robe : +${g.confetti} confettis`:" rejoint la garde-robe"}.`,{id,rarity:r,dup:g.dup});
+ const out={ok:true,item:{id,kind:it.kind,rarity:r},dup:g.dup,stacked:g.stacked,confetti:g.confetti};
  if(id==="transfugeL"||id==="transfugeR")out.transfuge=true;
  return out;
 }
-// 100 confetti for any missing commun, rare or épique item of the player's pools.
+// 100 to 500 confetti for any missing commun, rare, épique or légendaire item of the player's pools.
 export function exchange(S,id){
  const W=S.wardrobe,it=ITEMS[id];
  if(typeof id!=="string"||!it||!inPool(id,S.camp)||!EXCHANGE.rarities.includes(it.rarity))return {ok:false,error:"Cet objet ne s'échange pas."};
@@ -249,6 +255,26 @@ export function exchange(S,id){
  W.confetti-=cost;W.own.push(id);
  logEntry(S,"draw",`Échange : ${cost} confettis contre ${it.name}.`,{id,rarity:it.rarity,exchange:true});
  return {ok:true,item:{id,kind:it.kind,rarity:it.rarity}};
+}
+// Sells one spare copy (or all copies) of a stackable piece for its confetti value; the worn piece comes off when the last goes.
+export function sell(S,id,all){
+ const W=S.wardrobe,it=ITEMS[id];
+ if(typeof id!=="string"||!it||!W.own.includes(id))return {ok:false,error:"Pas dans ta garde-robe."};
+ if(!STACK.includes(it.rarity))return {ok:false,error:"Cette pièce ne se revend pas."};
+ const two=W.dup.includes(id),n=all?1+two:1,confetti=n*CONFETTI[it.rarity],gone=all||!two;
+ if(two)W.dup=W.dup.filter(i=>i!==id);
+ if(gone){W.own=W.own.filter(i=>i!==id);for(const k of Object.keys(W.worn))if(W.worn[k]===id)W.worn[k]=null;}
+ W.confetti=Math.min(1e6,W.confetti+confetti);
+ logEntry(S,"draw",`Revente : ${n} × ${it.name}, +${confetti} confettis.`,{id,rarity:it.rarity,sell:true});
+ return {ok:true,n,confetti,gone};
+}
+// Turns the 2nd-copy stacking off (on false: further duplicates become confetti) or back on, for one piece.
+export function setStack(S,id,on){
+ const W=S.wardrobe,it=ITEMS[id];
+ if(typeof id!=="string"||!it||!STACK.includes(it.rarity))return {ok:false,error:"Ce réglage ne concerne pas cette pièce."};
+ if(typeof on!=="boolean")return {ok:false,error:"Réglage invalide."};
+ W.noStack=W.noStack.filter(i=>i!==id);if(!on)W.noStack.push(id);
+ return {ok:true};
 }
 // Wears an owned item of that kind, or takes it off (id null).
 export function wear(S,kind,id){

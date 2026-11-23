@@ -50,7 +50,8 @@ export function missing(S,give){
  if(give.bulletins>W.bulletins)return `Il te manque ${give.bulletins} bulletins`;
  return "";
 }
-export const dupes=(S,list)=>list.filter(i=>S.wardrobe.own.includes(i));
+// A piece is refused only when already held twice (the 2nd copy is welcome).
+export const dupes=(S,list)=>list.filter(i=>(S.wardrobe.dup??[]).includes(i));
 
 // The referee: everything is validated before anything moves (well-formed gives, two states, holdings, no dupe received).
 export function applyTrade(Sa,aGives,Sb,bGives){
@@ -59,9 +60,13 @@ export function applyTrade(Sa,aGives,Sb,bGives){
  const ma=missing(Sa,aGives)||missing(Sb,bGives);if(ma)throw new Error(ma);
  if(dupes(Sb,aGives.items).length||dupes(Sa,bGives.items).length)throw new Error("Objet déjà possédé");
  const move=(S,out,inn,bOut,bIn)=>{
-  const W=S.wardrobe;W.own=W.own.filter(i=>!out.includes(i));
-  for(const k of ["outfit","object"])if(out.includes(W.worn[k]))W.worn[k]=null;
-  W.own.push(...inn);W.bulletins+=bIn-bOut;
+  const W=S.wardrobe,dup=W.dup??=[];
+  // giving a double keeps the piece (and what is worn); giving the last copy takes it away
+  const gone=out.filter(i=>!dup.includes(i));W.dup=dup.filter(i=>!out.includes(i));
+  W.own=W.own.filter(i=>!gone.includes(i));
+  for(const k of ["outfit","object"])if(gone.includes(W.worn[k]))W.worn[k]=null;
+  for(const i of inn)(W.own.includes(i)?W.dup:W.own).push(i);   // received copies ignore noStack: the trade was a choice
+  W.bulletins+=bIn-bOut;
  };
  move(Sa,aGives.items,bGives.items,aGives.bulletins,bGives.bulletins);
  move(Sb,bGives.items,aGives.items,bGives.bulletins,aGives.bulletins);
