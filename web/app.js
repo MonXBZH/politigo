@@ -1769,18 +1769,11 @@ async function wearItem(kind,id){const r=await send({type:"wear",kind,id});if(r?
 const exchangePrices=()=>`${W.EXCHANGE.cost.commun} confettis pour une case commune, ${W.EXCHANGE.cost.rare} pour une rare, ${W.EXCHANGE.cost.epique} pour une épique, ${W.EXCHANGE.cost.legendaire} pour une légendaire`;
 async function sellItem(id,all){const r=await send({type:"sell",id,all});if(r?.ok){if(r.gone)wardPick=null;toast(`+${r.confetti} confettis : ${W.ITEMS[id].name} revendu${r.n>1?" (2 exemplaires)":""}.`,true);}liveSheet(true);}
 async function stackItem(id,on){await send({type:"stack",id,on});liveSheet(true);}
-// Two taps, like the exchange: nothing is sold by a stray one.
-function confirmButton(label,onGo){
- let armed=0;const b=smallButton(label,"",()=>{
-  if(!armed){armed=setTimeout(()=>{armed=0;b.textContent=label;},8000);b.textContent="Touche encore";return;}
-  clearTimeout(armed);armed=0;b.disabled=true;onGo();
- });return b;
-}
 function sellPanel(id){
  const it=W.ITEMS[id],c=W.copies(S,id),v=W.CONFETTI[it.rarity],box=document.createElement("div");box.className="ward-sell";
  const h=document.createElement("b");h.textContent=`${it.name} · ${W.RARITY_LABEL[it.rarity]} · ×${c}`;
- const row=document.createElement("div");row.className="btn-row";row.append(confirmButton(`Revendre 1 · +${v} 🎊`,()=>sellItem(id,false)));
- if(c===2)row.append(confirmButton(`Tout revendre · +${2*v} 🎊`,()=>sellItem(id,true)));
+ const row=document.createElement("div");row.className="btn-row";row.append(armedButton(`Revendre 1 · +${v} 🎊`,"Touche encore","",()=>sellItem(id,false)));
+ if(c===2)row.append(armedButton(`Tout revendre · +${2*v} 🎊`,"Touche encore","",()=>sellItem(id,true)));
  const lab=document.createElement("label"),cb=document.createElement("input");cb.type="checkbox";cb.checked=S.wardrobe.noStack.includes(id);
  cb.addEventListener("change",()=>stackItem(id,!cb.checked));lab.append(cb," Doubles en confettis (ne plus cumuler)");
  box.append(h,row,lab);
@@ -1809,6 +1802,7 @@ function wardCard(id,it,i){
  if(x2){const x=document.createElement("span");x.className="ward-x2";x.textContent="×2";b.append(x);}
  const vit=own&&mkListed().has(id);                  // in one of my open listings (me.marketListed)
  if(vit){const v=document.createElement("span");v.className="mk-badge";v.textContent="En vitrine";b.append(v);}
+ if(sel)b.setAttribute("aria-pressed",String(wardPick===id));
  b.setAttribute("aria-label",own?`${it.name}, ${label}${x2?", 2 exemplaires":""}${vit?", en vitrine à la Brocante":""}. ${sel?"Toucher pour la revendre.":on?"Porté : toucher pour l'enlever.":"Toucher pour le porter."}`:swap?`${it.name}, ${label} : échanger ${cost} confettis contre lui.`:`${label}, pas encore gagné.`);
  if(own)b.title=it.desc;
  if(wardSell?!sel:!own&&!swap)b.setAttribute("aria-disabled","true");
@@ -1819,7 +1813,7 @@ function wardCard(id,it,i){
  },{size:96});
  let armed=0;
  b.addEventListener("click",()=>{
-  if(wardSell){if(sel){wardPick=id;renderSheet("wardrobe");}return;}
+  if(wardSell){if(sel){wardPick=id;renderSheet("wardrobe");$("#sheet-body .ward-card.picked")?.focus();}return;}
   if(own){wearItem(it.kind,on?null:id);return;}
   if(!swap)return;
   // Two taps: 100 confetti are not spent by a stray one.
@@ -1834,7 +1828,7 @@ function renderWardrobe(body,set){
  body.append(flameMeter());
  if(batonV?.mine&&batonV.warn){const h=fine("La flamme du Bâton vacille… Ta Flamme est passée sous 200 : sous 150, le Bâton retournera dans l'urne.");h.classList.add("urn-hint");body.append(h);}
  const tabs=document.createElement("div");tabs.className="tabs small ward-tabs";tabs.setAttribute("role","group");tabs.setAttribute("aria-label","Tenues ou objets");
- for(const [k,t] of [["outfit","Tenues"],["object","Objets"]]){const b=document.createElement("button");b.type="button";b.textContent=t;b.setAttribute("aria-pressed",String(wardTab===k));b.addEventListener("click",()=>{wardTab=k;renderSheet("wardrobe");$("#sheet-body .ward-tabs [aria-pressed=true]")?.focus();});tabs.append(b);}
+ for(const [k,t] of [["outfit","Tenues"],["object","Objets"]]){const b=document.createElement("button");b.type="button";b.textContent=t;b.setAttribute("aria-pressed",String(wardTab===k));b.addEventListener("click",()=>{wardTab=k;wardPick=null;renderSheet("wardrobe");$("#sheet-body .ward-tabs [aria-pressed=true]")?.focus();});tabs.append(b);}
  const row=document.createElement("div");row.className="btn-row ward-bar";
  const swap=smallButton(wardSwap?"Annuler l'échange":"Échanger des confettis","",()=>{wardSwap=!wardSwap;wardSell=false;wardPick=null;renderSheet("wardrobe");$("#sheet-body .ward-bar .swap-btn")?.focus();},!wardSwap&&w.confetti<W.EXCHANGE.cost.commun);
  swap.classList.add("swap-btn");swap.setAttribute("aria-pressed",String(wardSwap));

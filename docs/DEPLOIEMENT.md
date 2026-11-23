@@ -516,7 +516,7 @@ Le panneau **Events** de l'administration crée et gère des événements à dur
   puis un bulletin par tirage ; bulletins gagnés uniquement en jouant (de 1 à 3 par mission, au plus 6 par jour ; +1 par
   objectif, 3 par jour ; +1 toutes les 3 lettres, 2 par jour au plus). Chances : commun 60 %, rare 28 %, épique 9,5 %, légendaire 2 %, ultra
   rare 0,5 % ; tirages garantis : épique au 10ᵉ, légendaire au 50ᵉ, ultra rare au 80ᵉ. Doublons → 2e exemplaire (sauf ultra rare), puis confettis (5, 10, 25,
-  50, 100 selon la rareté) ; une case au choix contre 100 confettis (commune), 200 (rare) ou 300 (épique) ou 500 (légendaire). La fiche d'un joueur dans
+  50, 100 selon la rareté) ; une case au choix contre 100 confettis (commune), 200 (rare), 300 (épique) ou 500 (légendaire). La fiche d'un joueur dans
   l'administration montre sa Flamme, ses bulletins, ses confettis, ce qu'il possède et ce qu'il porte.
 
 <details>

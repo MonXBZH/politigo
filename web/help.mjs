@@ -79,7 +79,7 @@ export const HELP=[
    "Les bulletins n'accompagnent que des objets : jamais de bulletins seuls contre rien, et 20 au plus par côté.",
    "Pour échanger : niveau 5, un compte d'au moins 3 jours, et 3 échanges par jour. Tout le monde peut regarder. Une annonce est masquée tant que son auteur est absent depuis plus de 14 jours, suspendu, sous le niveau 5 ou à sa limite du jour.",
    "Tu peux recevoir un objet que tu possèdes déjà : il devient ton 2e exemplaire. Et tu peux céder un objet en double sans perdre la pièce. Certains objets très rares ne s'échangent pas.",
-   "Un objet échangé quitte ta Garde-robe : si tu en tires un autre exemplaire plus tard, c'est un nouvel objet. Rien d'autre ne change : ni XP, ni jauges, ni confettis.",
+   "Céder une pièce en double te laisse ton exemplaire ; céder ta dernière la retire de ta Garde-robe, et si tu la tires plus tard, c'est une nouvelle pièce. Rien d'autre ne change : ni XP, ni jauges, ni confettis.",
    "Tu es prévenu d'une offre reçue, d'un échange conclu ou d'une réponse à ton offre. Les échanges entre camps s'affichent dans le fil.",
    "Vie privée : le jeu garde une empreinte non réversible de ta dernière adresse de connexion, pour repérer les échanges entre comptes d'une même personne ; jamais l'adresse elle-même."]]},
  {id:"collage",title:"Collage et la Nuit du collage",parts:[
