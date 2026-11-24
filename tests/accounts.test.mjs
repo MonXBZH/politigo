@@ -55,5 +55,5 @@ test("a resignation opens a life nobody played yet: left there, its deaths count
  const S=R.freshState("left",t0+10*H);
  assert.ok(R.act(S,{type:"buy",key:"soup"},{now:t0+10*H,random:never}).ok);
  assert.ok(R.act(S,{type:"restart",camp:"right"},{now:t0+10*H,random:never}).ok);assert.equal(S.played,false);
- idle(S,10,30);assert.equal(S.idleDeaths,1,"the first death after it counts");
+ idle(S,10,10+R.XP.deathHours+8);assert.equal(S.idleDeaths,1,"the first death after it counts");
 });

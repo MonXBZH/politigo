@@ -94,7 +94,7 @@ Ton élu traverse ensuite sa collection, une nouvelle figure tous les 10 niveaux
 | ⚡ | **Énergie** | avec les heures éveillées et les activités | la nuit, la sieste, le hamac, le café (trois par jour) |
 | 🫧 | **Hygiène** | doucement, heure après heure | le savon |
 
-Une jauge **à zéro pendant 12 heures**, et c'est la **mort politique** : la partie repart au niveau 1, avec une animation
+Une jauge **à zéro pendant 24 heures**, et c'est la **mort politique** : la partie repart au niveau 1, avec une animation
 de renaissance propre à chaque camp (la *primaire unitaire* à gauche, *le parti change de nom* à droite).
 
 ### Le rythme d'une journée

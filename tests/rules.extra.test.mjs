@@ -38,7 +38,7 @@ test("A2 a death resets in place and keeps the record",()=>{
  const S=game();const ref=S;
  S.equipped={"Olivier Faure":1};S.bestStreak=7;S.best=12;S.fm=50;S.sleeping=true;S.pong={t:at(10)};S.rematchT=at(10);
  S.lvl=12;S.xp=R.xpFloor(12);zeroed(S);
- const r=R.advance(S,at(10)+13*H,1,noRandom);
+ const r=R.advance(S,at(10)+(XP.deathHours+1)*H,1,noRandom);
  assert.equal(r,true);
  assert.strictEqual(S,ref,"same object identity");
  assert.equal(S.deaths,1);assert.equal(S.sleeping,false);assert.equal(S.pong,null);
@@ -59,7 +59,7 @@ test("A3 death happens at exactly the configured zero-hours threshold, not one h
   assert.equal(S.deaths,0,`still alive after ${i} h`);assert.equal(S.zero,i);
  }
  R.advance(S,at(10+XP.deathHours),1,noRandom);
- assert.equal(S.deaths,1,"dead on the 12th hour");
+ assert.equal(S.deaths,1,"dead on the last hour");
 });
 
 // ------------------------------------------------------------------ A4
@@ -430,11 +430,12 @@ test("A16 restart: same camp allowed, counters reset, record kept, 1 h cooldown 
  assert.equal(R.score(S),Math.max(0,Math.round(0+18-150)));
 
  const N=game();zeroed(N);
- R.advance(N,at(23),1,noRandom);
+ const d=10+XP.deathHours+1;   // the hour of the neglect death
+ R.advance(N,at(d),1,noRandom);
  assert.equal(N.deaths,1);
- const f=play(N,{type:"restart",camp:"right"},23.5);assert.equal(f.ok,false);assert.match(f.error,/Une démission par heure/);
+ const f=play(N,{type:"restart",camp:"right"},d+0.5);assert.equal(f.ok,false);assert.match(f.error,/Une démission par heure/);
  assert.equal(N.deaths,1);assert.equal(N.camp,"left");
- assert.ok(play(N,{type:"restart",camp:"right"},24).ok,"exactly one hour later");
+ assert.ok(play(N,{type:"restart",camp:"right"},d+1).ok,"exactly one hour later");
  assert.equal(N.camp,"right");assert.equal(N.deaths,2);
 });
 

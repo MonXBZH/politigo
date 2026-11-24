@@ -105,12 +105,12 @@ test("R8 after resync, advance plays exactly one hour for one real hour: the mis
  assert.ok(C.deaths>0||C.sat<S.sat,"control: no resync means many hours replayed");
 });
 
-test("R9 a neglected companion (all gauges 0, zero=11) survives a 3-day downtime, on the real hour of day",()=>{
+test("R9 a neglected companion (all gauges 0, an hour from death) survives a 3-day downtime, on the real hour of day",()=>{
  needs();
- const S=game();gauges.forEach(g=>S[g]=0);S.zero=11;
+ const S=game();gauges.forEach(g=>S[g]=0);S.zero=R.XP.deathHours-1;
  const realNow=at(10)+3*24*H+25*MIN;
  R.resync(S,realNow);
- assert.equal(S.deaths,0);assert.equal(S.zero,11);gauges.forEach(g=>assert.equal(S[g],0));
+ assert.equal(S.deaths,0);assert.equal(S.zero,R.XP.deathHours-1);gauges.forEach(g=>assert.equal(S[g],0));
  const hour=Number(new Intl.DateTimeFormat("en-GB",{timeZone:"Europe/Paris",hour:"2-digit",hourCycle:"h23"}).format(realNow));
  assert.equal(R.hodOf(R.curIdx(S)),hour);
 });
@@ -179,7 +179,7 @@ async function outage(port,name,edit){
  return {p,c,port};
 }
 const past=(st,ms)=>{const t=Date.now()-ms;st.vclock=t;st.lastReal=t;st.hourIdx=Math.floor(t/H);};
-// These tests need no real hour to tick while they run (a tick drains, or kills the zero=11 companion): near
+// These tests need no real hour to tick while they run (a tick drains, or kills the companion an hour from death): near
 // the top of an hour, wait for the next one to begin.
 async function awayFromHourEdge(){const left=H-Date.now()%H;if(left<30000)await sleep(left+2000);}
 
@@ -206,10 +206,10 @@ test("S1 server: a 5 h outage is skipped, gauges and fm untouched, a sync entry 
  }finally{await stop(p);}
 });
 
-test("S2 server: a neglected companion (zero=11, gauges 0) survives 2 days of downtime",async()=>{
+test("S2 server: a neglected companion (an hour from death, gauges 0) survives 2 days of downtime",async()=>{
  await awayFromHourEdge();
  const {p,c}=await outage(BASE_PORT+1,"Negligé",st=>{
-  past(st,48*H);Object.assign(st,{sat:0,moral:0,energy:0,hyg:0,zero:11});
+  past(st,48*H);Object.assign(st,{sat:0,moral:0,energy:0,hyg:0,zero:R.XP.deathHours-1});
  });
  try{
   const me=await poll(async()=>{const r=await c.call("GET","/api/me");return r.status===200&&r.json.state.journal[0]?.k==="sync"?r.json:null;});
@@ -217,7 +217,7 @@ test("S2 server: a neglected companion (zero=11, gauges 0) survives 2 days of do
   await sleep(1000);
   const s=(await c.call("GET","/api/me")).json.state;
   assert.equal(s.deaths,0);
-  assert.ok(s.zero<=11,"no extra zero hour was played during the outage: "+s.zero);
+  assert.ok(s.zero<=R.XP.deathHours-1,"no extra zero hour was played during the outage: "+s.zero);
   assert.ok(Math.abs(s.vclock-Date.now())<8000);
  }finally{await stop(p);}
 });
