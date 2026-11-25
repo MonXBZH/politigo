@@ -614,7 +614,7 @@ async function viewAnnounces(){
   if(!ids.length)return toast("Coche au moins une partie.",true);
   act(e.currentTarget,async()=>{
    const bad=[];
-   for(const id of ids){try{await srvCall(id,"schedule-add",b);}catch(x){bad.push(`Échec sur ${servers.find(s=>s.id===id)?.name||id} : ${x.message}`);}}
+   for(const id of ids){try{await srvCall(id,"schedule-add",b);}catch(x){if(x instanceof Unauthorized)throw x;bad.push(`Échec sur ${servers.find(s=>s.id===id)?.name||id} : ${x.message}`);}}
    if(bad.length){toast(`${ids.length>bad.length?`${ids.length-bad.length} planifiée(s). `:""}${bad.join(" ; ")}`,true);await render();return false;}   // the others exist: refresh, no success toast
    return ids.length;
   },n=>n>1?`Annonce planifiée sur ${n} parties.`:"Annonce planifiée.");
