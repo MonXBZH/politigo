@@ -49,9 +49,11 @@ test("night and naps: nothing can be bought or played, free bread included",()=>
  assert.ok(!D.sleeping,"he wakes up by himself once rested");assert.equal(D.journal.find(j=>j.k==="wake")?.k,"wake");
 });
 
-test("neglect kills after 12 h at zero and restarts at level 1, keeping the record",()=>{
+test("1.10.1 : neglect kills after 24 h at zero (not 12) and restarts at level 1, keeping the record",()=>{
+ assert.equal(R.XP.deathHours,24);
  const S=game();S.lvl=S.best=20;S.xp=R.xpFloor(20);S.sat=S.moral=S.energy=S.hyg=0;
- R.advance(S,at(10+13),1,noRandom);
+ R.advance(S,at(10+13),1,noRandom);assert.equal(S.deaths,0,"still alive after 13 h at zero");
+ R.advance(S,at(10+25),1,noRandom);
  assert.equal(S.deaths,1);assert.equal(S.lvl,1);assert.equal(S.fm,10);assert.equal(S.best,20);
  assert.equal(S.journal[0].k,"death");assert.equal(S.journal[0].d.reason,"neglect");
 });

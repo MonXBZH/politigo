@@ -289,7 +289,7 @@ export const ECO={income:2,cap:99,nightEnd:6,awake:{sat:13,moral:4,energy:8,hyg:
 // Tuned by simulation: 6 visits + 6 activities a day reach level 100 around day 15 (mini-game bonuses aside: with good
 // scores, around day 11-13); 3 bare visits survive and reach it on day ~39. What an activity pays when it starts is
 // each game's xp (PONG_RULES, MINI): the harder the game, the more.
-export const XP={base:5,visit:25,visitGap:2,visitsPerDay:8,actsPerVisit:2,actsPerDay:8,deathHours:12,
+export const XP={base:5,visit:25,visitGap:2,visitsPerDay:8,actsPerVisit:2,actsPerDay:8,deathHours:24,
  excellent:50,correct:25,a:17,b:1.15,streakStep:0.01,streakCap:0.25,stressMin:0.03,stressMax:0.15,napFactor:0.5};
 // The hourly stress risk follows his moral: 3 % at full moral, 15 % at rock bottom. A sulking candidate spirals.
 export const stressChance=S=>XP.stressMin+(XP.stressMax-XP.stressMin)*(100-S.moral)/100;

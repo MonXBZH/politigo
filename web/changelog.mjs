@@ -5,6 +5,12 @@
 import {cmpRelease} from "./rules.mjs";
 
 export const CHANGELOG=[
+ {version:"1.10.1",date:"2026-11-24",help:["jauges"],
+  added:[],
+  changed:["La mort politique arrive moins vite : une jauge doit rester à zéro 24 heures (au lieu de 12) avant que ton élu tombe. Oublié une journée, il s'en sort, mais il perd de l'XP tant que ses jauges restent à zéro."],
+  fixed:[],
+  admin:["Une annonce planifiée se crée en une fois sur plusieurs parties : coche-les sous la cible."]
+ },
  {version:"1.10.0",date:"2026-11-23",help:["tombola","brocante"],
   added:[
    "Les doublons s'empilent : une pièce commune, rare, épique ou légendaire tirée une deuxième fois rejoint ta Garde-robe en 2e exemplaire (badge ×2). Le troisième devient des confettis.",

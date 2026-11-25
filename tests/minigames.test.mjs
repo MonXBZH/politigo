@@ -187,7 +187,7 @@ test("sanitize keeps a valid mini-game (seed, id) and drops anything else",()=>{
 test("a death clears the mini-game",()=>{
  const S=game();play(S,{type:"debate"},10);assert.ok(S.mini);
  S.sat=S.moral=S.energy=S.hyg=0;
- R.advance(S,at(10)+13*H,1,noRandom);
+ R.advance(S,at(10)+(R.XP.deathHours+1)*H,1,noRandom);
  assert.equal(S.deaths,1);assert.equal(S.mini,null);
  const T=game();play(T,{type:"manifStart"},10);
  assert.ok(play(T,{type:"restart",camp:"right"},12).ok);assert.equal(T.mini,null);

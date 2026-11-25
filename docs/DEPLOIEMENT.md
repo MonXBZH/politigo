@@ -249,7 +249,7 @@ Une seule console peut gérer plusieurs parties, sur cette machine ou ailleurs (
   (affiché une fois), déblocage, renommage, suspension (connexion refusée, compagnon figé, caché du classement ; à la levée, le
   temps suspendu est sauté et non joué), privation de chat pour une durée.
 - **Annonces** : tout de suite ou planifiées (une fois, chaque jour, certains jours de la semaine, avec date de fin), à tous, à
-  un camp ou à un joueur ; aperçu, historique. Une annonce planifiée part même si le conteneur `admin` est arrêté (c'est
+  un camp ou à un joueur ; aperçu, historique. « Planifier » peut créer la même annonce sur plusieurs parties d'un coup (cases « Parties » ; des copies indépendantes, à mettre en pause ou supprimer partie par partie). Une annonce planifiée part même si le conteneur `admin` est arrêté (c'est
   l'API qui les envoie) ; une annonce manquée de plus de 30 min (serveur arrêté) est sautée, pas envoyée en retard.
 - **Chat** : messages signalés (avec l'image), suppression, privation de chat de l'auteur. **Fil** : supprimer une ligne.
   **Duels** : annuler un duel bloqué.

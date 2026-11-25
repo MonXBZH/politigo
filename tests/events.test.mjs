@@ -139,8 +139,8 @@ test("Immunité parlementaire: the gauges fall slower, the night's rest stays wh
  const S=game("left",10);S.sat=S.moral=S.energy=S.hyg=80;R.advance(S,at(11),1,never,()=>fx);
  assert.equal(S.sat,80-Math.ceil(day.sat/2));assert.equal(S.hyg,80-Math.ceil(day.hyg/2));
  const N=game("left",1);N.energy=50;R.advance(N,at(2),1,never,()=>fx);assert.equal(N.energy,50-R.ECO.night.energy,"the night still rests him");
- const D=game("left",10);D.sat=D.moral=D.energy=D.hyg=0;D.zero=11;const deaths=D.deaths;
- R.advance(D,at(16),1,never,()=>fx);assert.equal(D.deaths,deaths);assert.equal(D.zero,11);
+ const D=game("left",10);D.sat=D.moral=D.energy=D.hyg=0;D.zero=R.XP.deathHours-1;const deaths=D.deaths;
+ R.advance(D,at(16),1,never,()=>fx);assert.equal(D.deaths,deaths);assert.equal(D.zero,R.XP.deathHours-1);
  D.sat=D.moral=D.energy=D.hyg=0;R.advance(D,at(17),1,never);assert.equal(D.deaths,deaths+1,"the event is over");
  // Only the hours of the event count: a catch-up over a longer gap asks hour by hour.
  const C=game("left",10);C.sat=C.moral=C.energy=C.hyg=90;const seen=[];R.advance(C,at(13),1,never,t=>{seen.push(t);return E.NO_FX;});
@@ -153,7 +153,7 @@ test("an event counts for the hours that land while it runs, and not one after",
  R.advance(S,at(11),1,never,fxAt);assert.equal(S.sat,90-Math.ceil(day.sat/3),"launched at 10:45, it covers 11:00");
  R.advance(S,at(12),1,never,fxAt);assert.equal(S.sat,90-2*Math.ceil(day.sat/3));
  R.advance(S,at(13),1,never,fxAt);assert.equal(S.sat,90-2*Math.ceil(day.sat/3)-day.sat,"over at 12:45: 13:00 is a normal hour");
- const D=game("left",10);D.sat=D.moral=D.energy=D.hyg=0;D.zero=11;const deaths=D.deaths;
+ const D=game("left",10);D.sat=D.moral=D.energy=D.hyg=0;D.zero=R.XP.deathHours-1;const deaths=D.deaths;
  R.advance(D,at(11),1,never,fxAt);assert.equal(D.deaths,deaths,"no death in the first hour of the immunity");
 });
 

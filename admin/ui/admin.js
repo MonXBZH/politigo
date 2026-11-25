@@ -595,6 +595,9 @@ async function viewAnnounces(){
  const repBox=h("div",{},h("div",{class:"field-row"},h("div",{},lab("Heure (fuseau du jeu, Paris)",time),time),h("div",{},lab("Jusqu'au (facultatif, inclus)",until),until)),h("div",{hidden:true},lbl("Jours"),days));
  const showKind=()=>{onceBox.hidden=kindSel.value!=="once";repBox.hidden=kindSel.value==="once";repBox.lastChild.hidden=kindSel.value!=="weekly";};
  kindSel.addEventListener("change",showKind);showKind();
+ const srvBoxes=servers.map(s=>h("input",{type:"checkbox",value:s.id,checked:s.up&&s.id===cur,disabled:!s.up}));
+ const srvBox=h("div",{hidden:servers.length<2},lbl("Parties"),h("div",{class:"checks"},srvBoxes.map((x,i)=>h("label",{class:"check"},x,servers[i].name))));
+ const showSrv=()=>{srvBox.hidden=servers.length<2||t2.sel.value==="player";};t2.sel.addEventListener("change",showSrv);
  const plan=h("button",{class:"btn go",type:"button",onclick:e=>{
   let b;
   try{
@@ -606,7 +609,15 @@ async function viewAnnounces(){
     b.until=until.value?new Date(`${until.value}T23:59:59`).getTime():null;
    }
   }catch(x){return toast(x.message,true);}
-  act(e.currentTarget,()=>call("schedule-add",b),"Annonce planifiée.");
+  // A named player exists on this game only; otherwise one schedule-add per ticked game, one after the other.
+  const ids=b.target.kind==="player"?[cur]:srvBoxes.filter(x=>x.checked).map(x=>x.value);
+  if(!ids.length)return toast("Coche au moins une partie.",true);
+  act(e.currentTarget,async()=>{
+   const bad=[];
+   for(const id of ids){try{await srvCall(id,"schedule-add",b);}catch(x){if(x instanceof Unauthorized)throw x;bad.push(`Échec sur ${servers.find(s=>s.id===id)?.name||id} : ${x.message}`);}}
+   if(bad.length){toast(`${ids.length>bad.length?`${ids.length-bad.length} planifiée(s). `:""}${bad.join(" ; ")}`,true);await render();return false;}   // the others exist: refresh, no success toast
+   return ids.length;
+  },n=>n>1?`Annonce planifiée sur ${n} parties.`:"Annonce planifiée.");
  }},"Planifier");
  const schedRows=schedules.length?h("ul",{class:"list"},schedules.map(s=>{
   const tog=h("input",{type:"checkbox",checked:!!s.enabled,disabled:!can("announce"),"aria-label":"Active",onchange:e=>act(null,()=>call("schedule-toggle",{id:s.id,enabled:e.target.checked}),e.target.checked?"Planification activée.":"Planification en pause.")});
@@ -621,7 +632,7 @@ async function viewAnnounces(){
   can("announce")&&h("div",{class:"grid wide"},
    h("div",{class:"card"},h("h2",{},"Envoyer maintenant"),lab("Destinataires",t1.sel),t1.node,lab("Texte",c1.ta),c1.ta,c1.counter,lbl("Aperçu"),c1.preview,
     h("p",{class:"muted small"},"Bandeau sur les écrans ouverts (jamais en pleine partie), notification aux abonnés et, envoyée à tous, une ligne dans le fil."),h("div",{class:"btn-row"},send)),
-   h("div",{class:"card"},h("h2",{},"Planifier"),lab("Destinataires",t2.sel),t2.node,lab("Texte",c2.ta),c2.ta,c2.counter,c2.preview,
+   h("div",{class:"card"},h("h2",{},"Planifier"),lab("Destinataires",t2.sel),t2.node,srvBox,lab("Texte",c2.ta),c2.ta,c2.counter,c2.preview,
     lab("Fréquence",kindSel),kindSel,onceBox,repBox,h("div",{class:"btn-row"},plan))),
   h("div",{class:"card"},h("h2",{},"Planifiées"),schedRows),
   h("div",{class:"card"},h("h2",{},"Historique"),items.length?h("div",{class:"table-wrap"},h("table",{},
