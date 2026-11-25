@@ -9,7 +9,7 @@ export const CHANGELOG=[
   added:[],
   changed:["La mort politique arrive moins vite : une jauge doit rester à zéro 24 heures (au lieu de 12) avant que ton élu tombe. Oublié une journée, il s'en sort, mais il perd de l'XP tant que ses jauges restent à zéro."],
   fixed:[],
-  admin:[]
+  admin:["Une annonce planifiée se crée en une fois sur plusieurs parties : coche-les sous la cible."]
  },
  {version:"1.10.0",date:"2026-11-23",help:["tombola","brocante"],
   added:[

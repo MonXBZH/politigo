@@ -128,6 +128,24 @@ test("several servers: listed with their names, unknown id 404, actions routed t
  assert.ok(audit.some(i=>i.cmd==="announce"&&i.via==="web"),"logged as a web action");
 });
 
+test("scheduled announcements: one schedule-add per game, each game keeps its own; a moderator of one game is refused on the other",async()=>{
+ const b=browser();assert.equal((await b.login()).status,200);
+ const add=(srv,text,who=b)=>who.call(srv,"schedule-add",{text,target:{kind:"all"},kind:"daily",time:"12:00",until:null});
+ const texts=async srv=>(await b.call(srv,"schedule-list")).json.schedules.map(x=>x.text);
+ for(const s of ["prod","test-e"])assert.equal((await add(s,"Annonce commune")).status,200,s);
+ assert.equal((await add("prod","Seulement Prod")).status,200);
+ assert.ok((await texts("prod")).includes("Annonce commune")&&(await texts("test-e")).includes("Annonce commune"));
+ assert.ok((await texts("prod")).includes("Seulement Prod"));assert.ok(!(await texts("test-e")).includes("Seulement Prod"),"not created on the other game");
+ await player(API1,"Modo Annonce");
+ const id=(await b.call("prod","list")).json.players.find(p=>p.name==="Modo Annonce").id;
+ const made=await b.req("/api/mods/save",{server:"prod",player:id,panels:["annonces"],actions:["announce"],servers:[]});assert.equal(made.status,200,JSON.stringify(made.json));
+ const m=browser();assert.equal((await m.req("/api/login",{name:"Modo Annonce",password:made.json.password})).status,200);
+ assert.equal((await add("prod","Par le modo",m)).status,200);
+ assert.equal((await add("test-e","Hors de ses parties",m)).status,403);
+ assert.ok(!(await texts("test-e")).includes("Hors de ses parties"),"nothing created there");
+ assert.equal((await b.req("/api/mods/delete",{id:made.json.mod.id})).status,200);
+});
+
 test("chat rooms: closed by default, switched one by one through the admin, on that server only",async()=>{
  const b=browser();await b.login();
  const rooms=async n=>(await b.call(n,"stats")).json.chatRooms;
