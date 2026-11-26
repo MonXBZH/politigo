@@ -2523,6 +2523,7 @@ function mkPicker(rows,chosen,full,onTap,f){
   const ft=f.filt??={kind:"all",rarity:"all",dupOnly:false};
   bar=mkEl("div","mk-filt");bar.setAttribute("role","group");bar.setAttribute("aria-label","Filtrer tes objets");
   for(const [k,t] of [["all","Tout"],["outfit","Tenues"],["object","Objets"]]){const b=smallButton(t,"",()=>{ft.kind=k;liveSheet(true);});b.setAttribute("aria-pressed",String(ft.kind===k));bar.append(b);}
+  if(ft.rarity!=="all"&&!rows.some(x=>W.ITEMS[x.id]?.rarity===ft.rarity))ft.rarity="all";
   const rs=mkEl("select");rs.setAttribute("aria-label","Rareté");
   rs.append(Object.assign(mkEl("option","","Toutes"),{value:"all"}));
   for(const r of W.RARITIES)if(rows.some(x=>W.ITEMS[x.id]?.rarity===r))rs.append(Object.assign(mkEl("option","",W.RARITY_LABEL[r]),{value:r,selected:ft.rarity===r}));
@@ -2670,7 +2671,7 @@ function mkMineSheet(body,set,back){
   const d=mkEl("div","mk-lst"),head=mkEl("div","mk-head");
   head.append(mkEl("span","fine",Number.isFinite(l.created)?`Déposée ${when(l.created)}`:"Annonce ouverte"),
    armedButton("Retirer l'annonce","Confirmer le retrait","danger",()=>mkPost({op:"withdraw",id:l.id},"Annonce retirée.")));
-  d.append(head,mkRow("Propose",mkSide(mkGive(l.give).items,mkGive(l.give).bulletins)),mkRow("Cherche",mkWant(l.want)));
+  d.append(head,mkRow("Propose",mkSide(mkGive(l.give).items,mkGive(l.give).bulletins)),mkRow("Cherche",mkWant(l.want,l.want?.check===true)));
   const offers=mkArr(l.offers);
   d.append(offers.length?mkEl("span","block-title",`Offres reçues · ${offers.length}`):mkEl("span","fine","Pas encore d'offre."));
   for(const o of offers){
