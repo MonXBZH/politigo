@@ -1,7 +1,7 @@
 // La Brocante on screen: the pure pieces behind the Brocante sheets (app.js). No DOM, no clock, no I/O. The server
 // checks everything again: these only say, before a tap, what it would answer.
-import {ITEMS,RARITY_LABEL} from "./wardrobe.mjs";
-import {MARKET,tradable} from "./market.mjs";
+import {ITEMS,RARITY_LABEL,copies} from "./wardrobe.mjs";
+import {MARKET,tradable,dupes} from "./market.mjs";
 
 const TRADE_RARITIES=["commun","rare","epique","legendaire"];
 const nm=id=>ITEMS[id]?.name??id;
@@ -14,12 +14,12 @@ export const itemView=id=>({id,name:nm(id),rarity:ITEMS[id]?.rarity??"commun",ki
 // What a listing asks for, in one line.
 export function wantText(w){
  if(!w||typeof w!=="object")return "";
- const plus=w.bulletins?` + ${w.bulletins} 🗳️`:"";
+ const chk=w.check===true?" · l'auteur valide":"",plus=w.bulletins?` + ${w.bulletins} 🗳️`:"";
  switch(w.kind){
   case "offer":return "Faites-moi une offre";
-  case "bulletins":return `${w.bulletins} 🗳️`;
-  case "rarity":return kindWord(w.slot,w.rarity)+plus;
-  case "items":return (w.items??[]).map(nm).join(", ")+plus;
+  case "bulletins":return `${w.bulletins} 🗳️`+chk;
+  case "rarity":return kindWord(w.slot,w.rarity)+plus+chk;
+  case "items":return (w.items??[]).map(nm).join(", ")+plus+chk;
  }
  return "";
 }
@@ -33,16 +33,16 @@ export function candidates(S,want){
 // A card of the board: who, what it gives, what it asks, and whether « Troquer » is open (else why not).
 // block: the server's tradeBlock ("" when I may trade). A listing of offers only has no « Troquer » (offerOnly).
 export function listingView(l,S,block){
- const w=l.want??{},gives=(l.give?.items??[]).map(itemView),offerOnly=w.kind==="offer";
+ const w=l.want??{},gives=(l.give?.items??[]).map(itemView),offerOnly=w.kind==="offer"||w.check===true;
  const v={who:l.author?.name??"?",camp:l.author?.camp??null,campTag:campWord(l.author?.camp),gives,giveBulletins:l.give?.bulletins??0,
-  wantText:wantText(w),takeOk:false,takeWhy:"",needsPick:w.kind==="rarity",offerOnly};
+  wantText:wantText(w),takeOk:false,takeWhy:"",needsPick:w.kind==="rarity",offerOnly,checked:w.check===true};
  if(offerOnly)return v;
  const why=takeWhy(l,S,block);v.takeOk=!why;v.takeWhy=why;return v;
 }
 function takeWhy(l,S,block){
  if(block)return block;
- const has=own(S),dup=(l.give?.items??[]).filter(id=>(S.wardrobe.dup??[]).includes(id));
- if(dup.length)return `Déjà en 2 exemplaires : ${dup.map(nm).join(", ")}`;
+ const has=own(S),dup=dupes(S,l.give?.items??[]);
+ if(dup.length)return `Déjà au complet : ${dup.map(nm).join(", ")}`;
  const w=l.want??{},lack=[];
  if(!["items","rarity","bulletins"].includes(w.kind))return "Cette annonce n'est plus disponible.";   // unreadable: never taken
  if(w.kind==="items")lack.push(...(w.items??[]).filter(id=>!has.includes(id)).map(nm));
@@ -83,8 +83,8 @@ export function offerCheck(l,S,offers,block){
  if(mine.some(o=>o.status==="pending"))return {ok:false,why:"Offre envoyée : en attente de réponse",sent:true};
  if(block)return {ok:false,why:block,sent:false};
  if(mine.some(o=>o.status==="refused"))return {ok:false,why:"Ton offre sur cette annonce a été refusée",sent:false};
- const dup=(l.give?.items??[]).filter(id=>(S.wardrobe.dup??[]).includes(id));
- if(dup.length)return {ok:false,why:`Déjà en 2 exemplaires : ${dup.map(nm).join(", ")}`,sent:false};
+ const dup=dupes(S,l.give?.items??[]);
+ if(dup.length)return {ok:false,why:`Déjà au complet : ${dup.map(nm).join(", ")}`,sent:false};
  if((offers??[]).filter(o=>o.status==="pending").length>=MARKET.maxOffers)return {ok:false,why:`${MARKET.maxOffers} offres en attente au plus`,sent:false};
  return {ok:true,why:"",sent:false};
 }
@@ -105,4 +105,12 @@ export function catalogue(S,exclude=[]){
   if(items.length)out.push({label:`${kind==="outfit"?"Tenues":"Objets"} · ${RARITY_LABEL[r]}`,items});
  }
  return out;
+}
+
+// The pick sheet's rows (from pickable) filtered by kind / rarity / « doubles only », best rarity first then by name.
+const RANK=["mythique","ultra","legendaire","epique","rare","commun"];
+export function pickView(rows,{kind="all",rarity="all",dupOnly=false}={},S){
+ return rows.filter(r=>(kind==="all"||ITEMS[r.id]?.kind===kind)&&(rarity==="all"||ITEMS[r.id]?.rarity===rarity)&&(!dupOnly||copies(S,r.id)===2))
+  .map(r=>({...r,n:copies(S,r.id)}))
+  .sort((a,b)=>RANK.indexOf(ITEMS[a.id]?.rarity)-RANK.indexOf(ITEMS[b.id]?.rarity)||nm(a.id).localeCompare(nm(b.id),"fr"));
 }

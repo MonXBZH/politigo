@@ -2649,7 +2649,7 @@ function mkMineSheet(body,set,back){
   const offers=mkArr(l.offers);
   d.append(offers.length?mkEl("span","block-title",`Offres reçues · ${offers.length}`):mkEl("span","fine","Pas encore d'offre."));
   for(const o of offers){
-   const g=mkGive(o.give),dup=dupes(S,g.items),why=block||(dup.length?`Déjà en 2 exemplaires : ${dup.map(id=>W.ITEMS[id]?.name??id).join(", ")}`:"");
+   const g=mkGive(o.give),dup=dupes(S,g.items),why=block||(dup.length?`Déjà au complet : ${dup.map(id=>W.ITEMS[id]?.name??id).join(", ")}`:"");
    const who=typeof o.from?.name==="string"?o.from.name:"?",r=mkEl("div","mk-recap"),btns=mkEl("div","btn-row");
    btns.append(why?smallButton("Accepter","go",()=>{},true):armedButton("Accepter","Confirmer l'échange","go",()=>mkAccept(o,l,who)),
     armedButton("Refuser","Confirmer le refus","",()=>mkPost({op:"refuse",id:o.id},`Offre ${/^[aeiouyhàâéèêîôûœ]/i.test(who)?"d'":"de "}${who} refusée.`)));
