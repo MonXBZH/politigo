@@ -1,7 +1,7 @@
 // La Brocante: the pure trading rules shared by the server and the browser (no clock, no DOM, no I/O).
-import {ITEMS,RARITIES} from "./wardrobe.mjs";
+import {ITEMS,RARITIES,STACK} from "./wardrobe.mjs";
 
-export const MARKET={maxItems:3,maxListings:3,maxOffers:5,perDay:3,maxBulletins:20,minAgeMs:3*864e5,awayMs:14*864e5,excluded:["ultra","mythique"]};
+export const MARKET={maxItems:3,maxListings:3,maxOffers:5,perDay:3,maxBulletins:20,minAgeMs:3*864e5,awayMs:14*864e5,excluded:["mythique"]};
 const SLOTS=["outfit","object","any"];
 const has=Object.prototype.hasOwnProperty;
 // An item that can change hands: it exists and its rarity is not excluded.
@@ -19,11 +19,11 @@ export function cleanGive(x,{needItem=true}={}){
 }
 export function cleanWant(x){
  if(!x||typeof x!=="object")return null;
- const b=x.bulletins??0;
+ const b=x.bulletins??0,chk=x.check===true?{check:true}:{};   // check: the author validates each offer
  switch(x.kind){
-  case "items":{const items=ids(x.items,1);return items&&bul(b,0)?{kind:"items",items,bulletins:b}:null;}
-  case "rarity":return RARITIES.includes(x.rarity)&&!MARKET.excluded.includes(x.rarity)&&SLOTS.includes(x.slot)&&bul(b,0)?{kind:"rarity",rarity:x.rarity,slot:x.slot,bulletins:b}:null;
-  case "bulletins":return bul(b,1)?{kind:"bulletins",bulletins:b}:null;
+  case "items":{const items=ids(x.items,1);return items&&bul(b,0)?{kind:"items",items,bulletins:b,...chk}:null;}
+  case "rarity":return RARITIES.includes(x.rarity)&&!MARKET.excluded.includes(x.rarity)&&SLOTS.includes(x.slot)&&bul(b,0)?{kind:"rarity",rarity:x.rarity,slot:x.slot,bulletins:b,...chk}:null;
+  case "bulletins":return bul(b,1)?{kind:"bulletins",bulletins:b,...chk}:null;
   case "offer":return {kind:"offer"};
  }
  return null;
@@ -50,8 +50,8 @@ export function missing(S,give){
  if(give.bulletins>W.bulletins)return `Il te manque ${give.bulletins} bulletins`;
  return "";
 }
-// A piece is refused only when already held twice (the 2nd copy is welcome).
-export const dupes=(S,list)=>list.filter(i=>(S.wardrobe.dup??[]).includes(i));
+// A piece S can no longer receive: held twice, or held and not stackable (ultra).
+export const dupes=(S,list)=>list.filter(i=>(S.wardrobe.dup??[]).includes(i)||(S.wardrobe.own.includes(i)&&!STACK.includes(ITEMS[i]?.rarity)));
 
 // The referee: everything is validated before anything moves (well-formed gives, two states, holdings, no dupe received).
 export function applyTrade(Sa,aGives,Sb,bGives){

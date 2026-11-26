@@ -192,8 +192,8 @@ dans la main. **Purement cosmétique** : aucun effet sur le jeu, et **jamais d'a
   ni descendre une jauge sous 25. Dès le niveau 5, trois défis par jour.
 - 🧺 **La Brocante** : un tableau d'annonces où les joueurs échangent tenues et objets de leur Garde-robe, y compris entre les
   deux camps. Dépose une annonce (1 à 3 objets, ce que tu cherches), **troque** tout de suite si tu as ce qu'elle demande, ou
-  fais une **offre** que l'auteur accepte ou refuse. Dès le niveau 5 et 3 jours de compte, 3 échanges par jour ; certains objets
-  très rares ne s'échangent pas. Tu es prévenu des offres, et les échanges entre camps s'affichent dans le fil.
+  fais une **offre** que l'auteur accepte ou refuse. Dès le niveau 5 et 3 jours de compte, 3 échanges par jour ; les ultra rares s'échangent (pas en double chez le receveur) ; une annonce peut
+  demander « l'auteur valide » : les joueurs n'envoient que des offres. Tu es prévenu des offres, et les échanges entre camps s'affichent dans le fil.
 - 🖌️ **Collage et La Nuit du collage** (dès le niveau 3, 24 h sur 24) : les deux camps se disputent des murs d'affiches de 8 × 6 cases.
   5 affiches par jour, un coup de pinceau de 3 secondes : plus il est juste, plus l'affiche est solide (et l'XP, ×1,5 de 20 h à 8 h). On rafraîchit les siennes, on
   abîme celles de l'adversaire jusqu'à retourner la case ; une affiche s'use et disparaît au bout de 48 h. À minuit, le camp qui

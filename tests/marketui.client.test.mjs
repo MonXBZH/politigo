@@ -4,6 +4,7 @@
 import {test} from "node:test";
 import assert from "node:assert/strict";
 import * as U from "../web/marketui.mjs";
+import {ITEMS} from "../web/wardrobe.mjs";
 
 const st=(own=[],o={})=>({lvl:10,camp:"left",wardrobe:{own:[...own],dup:[],worn:{outfit:null,object:null},bulletins:0,confetti:0,...o}});
 const lst=(give,want,o={})=>({id:7,author:{name:"Hugo",camp:"right"},give:{items:give,bulletins:0},want,created:1000,mine:false,...o});
@@ -68,7 +69,7 @@ test("listingView: the gate comes first, then what would be received twice",()=>
  const v=U.listingView(lst(["golf"],want),st(["baguette"]),"Échanges à partir du niveau 5.");
  assert.equal(v.takeOk,false);assert.equal(v.takeWhy,"Échanges à partir du niveau 5.");
  const d=U.listingView(lst(["golf","pantalonrouge"],want),st(["baguette","golf"],{dup:["golf"]}),"");
- assert.equal(d.takeOk,false);assert.equal(d.takeWhy,"Déjà en 2 exemplaires : Club de golf");
+ assert.equal(d.takeOk,false);assert.equal(d.takeWhy,"Déjà au complet : Club de golf");
  // a listing of offers only never shows the gate as a Troquer reason (no Troquer at all)
  assert.equal(U.listingView(lst(["golf"],{kind:"offer"}),st(),"Échanges à partir du niveau 5.").takeWhy,"");
 });
@@ -85,7 +86,8 @@ test("candidates: owned, tradable, of the rarity and the slot asked",()=>{
  assert.deepEqual(U.candidates(S,{kind:"rarity",rarity:"rare",slot:"outfit"}),["chasuble","troispieces","giletjaune"]);
  assert.deepEqual(U.candidates(S,{kind:"rarity",rarity:"rare",slot:"object"}),["microtv"]);
  assert.deepEqual(U.candidates(S,{kind:"rarity",rarity:"rare",slot:"any"}),["chasuble","troispieces","microtv","giletjaune"]);
- assert.deepEqual(U.candidates(S,{kind:"rarity",rarity:"ultra",slot:"any"}),[]);   // never the excluded
+ assert.deepEqual(U.candidates(S,{kind:"rarity",rarity:"ultra",slot:"any"}),["camarade"]);
+ assert.deepEqual(U.candidates(st(["baton"]),{kind:"rarity",rarity:"mythique",slot:"any"}),[]);   // never the mythic
  assert.deepEqual(U.candidates(S,{kind:"items",items:["chasuble"]}),[]);
 });
 
@@ -104,18 +106,18 @@ test("forMe: only the listings one can take right now (never the offers-only one
 
 // ---------------------------------------------------------------- pickable
 test("pickable: the deposit greys the excluded and what is already in a listing",()=>{
- const S=st(["chasuble","camarade","baguette","megaphone"]);
+ const S=st(["chasuble","baton","baguette","megaphone"]);
  assert.deepEqual(U.pickable(S,"list",["baguette"]),[
-  {id:"chasuble",ok:true,why:""},{id:"camarade",ok:false,why:"Ne s'échange pas"},
+  {id:"chasuble",ok:true,why:""},{id:"baton",ok:false,why:"Ne s'échange pas"},
   {id:"baguette",ok:false,why:"Déjà dans une annonce"},{id:"megaphone",ok:true,why:""}]);
 });
 test("pickable: an offer only badges what is in a listing (« En vitrine »), the excluded stay greyed",()=>{
- const S=st(["chasuble","camarade","baguette","baton"]);
+ const S=st(["chasuble","baton","baguette","megaphone"]);
  assert.deepEqual(U.pickable(S,"offer",new Set(["baguette"])),[
-  {id:"chasuble",ok:true,why:""},{id:"camarade",ok:false,why:"Ne s'échange pas"},
-  {id:"baguette",ok:true,why:"En vitrine"},{id:"baton",ok:false,why:"Ne s'échange pas"}]);
+  {id:"chasuble",ok:true,why:""},{id:"baton",ok:false,why:"Ne s'échange pas"},
+  {id:"baguette",ok:true,why:"En vitrine"},{id:"megaphone",ok:true,why:""}]);
  assert.deepEqual(U.pickable(st(),"offer",[]),[]);
- assert.deepEqual(U.pickable(S,"list",undefined).map(x=>x.ok),[true,false,true,false]);
+ assert.deepEqual(U.pickable(S,"list",undefined).map(x=>x.ok),[true,false,true,true]);
 });
 
 // ---------------------------------------------------------------- tradeRecap
@@ -147,7 +149,7 @@ test("offerCheck: gate, already sent, refused before, received twice, five pendi
  assert.deepEqual(U.offerCheck(l,st(),[],"Échanges à partir du niveau 5."),{ok:false,why:"Échanges à partir du niveau 5.",sent:false});
  assert.deepEqual(U.offerCheck(l,st(),[{id:1,listingId:9,status:"pending"}],""),{ok:false,why:"Offre envoyée : en attente de réponse",sent:true});
  assert.deepEqual(U.offerCheck(l,st(),[{id:1,listingId:9,status:"refused"}],""),{ok:false,why:"Ton offre sur cette annonce a été refusée",sent:false});
- assert.deepEqual(U.offerCheck(l,st(["golf"],{dup:["golf"]}),[],""),{ok:false,why:"Déjà en 2 exemplaires : Club de golf",sent:false});
+ assert.deepEqual(U.offerCheck(l,st(["golf"],{dup:["golf"]}),[],""),{ok:false,why:"Déjà au complet : Club de golf",sent:false});
  const five=[1,2,3,4,5].map(i=>({id:i,listingId:100+i,status:"pending"}));
  assert.deepEqual(U.offerCheck(l,st(),five,""),{ok:false,why:"5 offres en attente au plus",sent:false});
  // a withdrawn or closed one does not count
@@ -169,7 +171,7 @@ test("catalogue: every tradable item not owned, grouped by kind and rarity; neve
  assert.deepEqual(g.map(x=>x.label).slice(0,2),["Tenues · Commun","Objets · Commun"]);
  const ids=g.flatMap(x=>x.items.map(i=>i.id));
  assert.ok(!ids.includes("baguette"));assert.ok(!ids.includes("megaphone"));
- for(const bad of ["camarade","sacre","baton"])assert.ok(!ids.includes(bad),bad);
+ for(const bad of ["camarade","sacre","baton","communard"])assert.ok(!ids.includes(bad),bad);
  assert.ok(ids.includes("pantalonrouge")&&ids.includes("chasuble"));   // both camps' items
  const pr=g.flatMap(x=>x.items).find(i=>i.id==="pantalonrouge");assert.equal(pr.label,"Pantalon rouge (droite)");
  assert.equal(g.flatMap(x=>x.items).find(i=>i.id==="cocarde").label,"Cocarde");
@@ -193,4 +195,30 @@ test("listingView, tradeRecap: a listing whose want is null or missing never thr
   assert.equal(U.tradeRecap(l,st(),null,[]).ready,false);
   assert.deepEqual(U.forMe([l],st(),""),[]);
  }
+});
+
+test("annonce « l'auteur valide » : pas de Troquer, sans la clé l'annonce reste prenable",()=>{
+ const w={kind:"items",items:["baguette"],bulletins:0},S=st(["baguette"]);
+ const v=U.listingView(lst(["golf"],{...w,check:true}),S,"");
+ assert.deepEqual([v.offerOnly,v.takeOk,v.checked],[true,false,true]);
+ assert.deepEqual(U.forMe([lst(["golf"],{...w,check:true})],S,""),[]);
+ assert.ok(U.wantText({...w,check:true}).endsWith(" · l'auteur valide"));
+ const n=U.listingView(lst(["golf"],w),S,"");
+ assert.deepEqual([n.offerOnly,n.takeOk,n.checked],[false,true,false]);
+ assert.ok(!U.wantText(w).includes("valide"));
+});
+
+test("pickView : filtre par genre, rareté, doublons ; tri rareté décroissante puis nom ; n",()=>{
+ const S=st(["bleutravail","golf","camarade","baguette","pantalonrouge"],{dup:["golf"]});
+ const rows=U.pickable(S,"offer",[]);
+ const all=U.pickView(rows,{},S);
+ assert.equal(all[0].id,"camarade");assert.equal(ITEMS[all.at(-1).id].rarity,"commun");
+ const rk=["mythique","ultra","legendaire","epique","rare","commun"],r=all.map(x=>rk.indexOf(ITEMS[x.id].rarity));
+ assert.deepEqual(r,[...r].sort((a,b)=>a-b));
+ const com=all.filter(x=>ITEMS[x.id].rarity==="commun").map(x=>ITEMS[x.id].name);
+ assert.deepEqual(com,[...com].sort((a,b)=>a.localeCompare(b,"fr")));
+ assert.ok(U.pickView(rows,{kind:"outfit"},S).every(x=>ITEMS[x.id].kind==="outfit"));
+ assert.deepEqual(U.pickView(rows,{rarity:"rare"},S).map(x=>x.id),["golf"]);
+ assert.deepEqual(U.pickView(rows,{dupOnly:true},S).map(x=>x.id),["golf"]);
+ assert.equal(all.find(x=>x.id==="golf").n,2);assert.equal(all.find(x=>x.id==="camarade").n,1);
 });

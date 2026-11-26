@@ -164,8 +164,8 @@ it("same camp: no feed line",async()=>{
 });
 
 it("refused gives",async()=>{
- const c=await mp("Vitrine Pleine","left",["camarade","megaphone","cocarde","baguette","parapluie"],30);
- refused(await mk(c,"list",{give:{items:["camarade"]},want:{kind:"offer"}}),422,"Certains objets très rares ne s'échangent pas.");
+ const c=await mp("Vitrine Pleine","left",["megaphone","cocarde","baguette","parapluie"],30);
+ refused(await mk(c,"list",{give:{items:["baton"]},want:{kind:"offer"}}),422,"Certains objets très rares ne s'échangent pas.");
  refused(await mk(c,"list",{give:{items:["megaphone","cocarde","baguette","parapluie"]},want:{kind:"offer"}}),422,"Choisis de 1 à 3 objets.");
  refused(await mk(c,"list",{give:{items:["megaphone"],bulletins:21},want:{kind:"offer"}}),422,"Bulletins : de 0 à 20 par côté.");
  refused(await mk(c,"list",{give:{items:[],bulletins:5},want:{kind:"offer"}}),422,"Choisis de 1 à 3 objets.");
@@ -507,11 +507,11 @@ it("two copies owned by a gift: a listing asking for it is hidden and refused, a
 });
 
 it("a listing offering an item that no longer trades is closed, never traded",async()=>{
- const u=await mp("Vitrine Interdite","left",["camarade"]),b=await mp("Curieux Bro","right",["kway"],3);
+ const u=await mp("Vitrine Interdite","left",[]),b=await mp("Curieux Bro","right",["kway"],3);
  let id1,id2,ob;const now=Date.now();
  editDb(mdir,db=>{
   const uid=db.prepare("SELECT id FROM players WHERE name=?").get("Vitrine Interdite").id,bid=db.prepare("SELECT id FROM players WHERE name=?").get("Curieux Bro").id;
-  const ins=db.prepare("INSERT INTO market_listings(player_id,give,want,created) VALUES(?,?,?,?)"),g=JSON.stringify({items:["camarade"],bulletins:0});
+  const ins=db.prepare("INSERT INTO market_listings(player_id,give,want,created) VALUES(?,?,?,?)"),g=JSON.stringify({items:["baton"],bulletins:0});
   id1=Number(ins.run(uid,g,JSON.stringify({kind:"bulletins",bulletins:1}),now).lastInsertRowid);
   id2=Number(ins.run(uid,g,JSON.stringify({kind:"offer"}),now).lastInsertRowid);
   ob=Number(db.prepare("INSERT INTO market_offers(listing_id,player_id,give,created) VALUES(?,?,?,?)").run(id2,bid,JSON.stringify({items:["kway"],bulletins:0}),now).lastInsertRowid);
@@ -523,7 +523,7 @@ it("a listing offering an item that no longer trades is closed, never traded",as
  assert.ok(!(await view(b)).board.some(l=>l.id===id1),"never shown");
  assert.deepEqual(st(),["closed","closed","closed",0]);
  refused(await mk(b,"take",{id:id1,give:{items:[],bulletins:1}}),409,GONE_L);
- assert.ok((await wr(u)).own.includes("camarade"));assert.ok((await wr(b)).own.includes("kway"));
+ assert.ok((await wr(b)).own.includes("kway"));
 });
 
 it("offers closed along the way are told live: an item that changed hands, a deleted account",async()=>{
@@ -541,6 +541,28 @@ it("offers closed along the way are told live: an item that changed hands, a del
   assert.equal((await e.call("DELETE","/api/account",{password:PW})).status,200);
   assert.ok(await until(()=>told(sd),2000),"so does an offerer on a deleted author's listing");
  }finally{sc.close();sd.close();}
+});
+
+it("check listing: shown with check, take refused, offer then accept trades; ultra tradable, owned ultra 'au complet'",async()=>{
+ const a=await mp("Valide Auteur","left",["chasuble"]),b=await mp("Valide Preneur","right",["loden"]);
+ const id=await listOk(a,{items:["chasuble"]},{kind:"items",items:["loden"],bulletins:0,check:true});
+ assert.equal((await view(b)).board.find(l=>l.id===id).want.check,true);
+ refused(await mk(b,"take",{id,give:{items:["loden"]}}),422,"Cette annonce attend des offres : fais une offre.");
+ assert.ok((await wr(a)).own.includes("chasuble")&&(await wr(b)).own.includes("loden"),"nothing moved");
+ const o=await mk(b,"offer",{id,give:{items:["loden"]}});assert.equal(o.status,200,JSON.stringify(o.json));
+ assert.equal((await mk(a,"accept",{id:o.json.id})).status,200);
+ assert.ok((await wr(b)).own.includes("chasuble")&&(await wr(a)).own.includes("loden"));
+ // an ultra is tradable; whoever owns it already cannot receive it
+ const u=await mp("Ultra Auteur","left",["camarade"]),n=await mp("Ultra Neuf","right",[],2),h=await mp("Ultra Plein","right",["camarade","kway"],2);
+ const lu=await listOk(u,{items:["camarade"]},{kind:"bulletins",bulletins:1});
+ refused(await mk(h,"take",{id:lu,give:{items:[],bulletins:1}}),422,"Tu l'as déjà au complet : "+NAME.camarade+".");
+ assert.equal((await mk(n,"take",{id:lu,give:{items:[],bulletins:1}})).status,200);
+ assert.ok((await wr(n)).own.includes("camarade"));
+ // an offer on an owned ultra is refused too; the other side owning it is refused without naming it
+ const u2=await mp("Ultra Second","left",["camarade","kway"]),lw=await listOk(u2,{items:["camarade"]},{kind:"offer"});
+ const ro=await mk(h,"offer",{id:lw,give:{items:["kway"]}});assert.equal(ro.status,422,JSON.stringify(ro.json));assert.match(ro.json.error,/au complet/);
+ const lt=await listOk(u2,{items:["kway"]},{kind:"rarity",rarity:"ultra",slot:"any",bulletins:0});
+ refused(await mk(h,"take",{id:lt,give:{items:["camarade"]}}),422,"Échange impossible : objet déjà possédé.");
 });
 
 it("10 listings a server day, whatever became of them",async()=>{
