@@ -16,7 +16,7 @@ import {noelMoment,noelYear,voeuxText,adventCells,adventGiftText,etProgress,
  cheersPhase,cheersClock,cheersNamesLine,cheersAnnounce,frontLine,newYearYear,newYearScreen,CHEERS_MS,CHEERS_REPLAY_MS,nyFrameDue} from "./noelui.mjs";
 import {endSummary,frontBar,challengeText,sentText,challengeLists,dareView,sendsOnDeath} from "./snowui.mjs";
 import {MARKET,tradable,dupes} from "./market.mjs";
-import {listingView,forMe,pickable,tradeRecap,offerCheck,freshIds,catalogue,candidates,kindWord} from "./marketui.mjs";
+import {listingView,forMe,pickable,pickView,tradeRecap,offerCheck,freshIds,catalogue,candidates,kindWord} from "./marketui.mjs";
 import * as WL from "./wall.mjs";
 import * as WU from "./wallui.mjs";
 const {people,personalItems,stresses,shop,fxNames,XP,xpCost,xpFloor,stage}=R;
@@ -2433,12 +2433,13 @@ const mkSide=(items,bul)=>{const s=mkEl("span","mk-side");s.append(...items.map(
 function mkRow(k,...kids){const r=mkEl("div","mk-row");r.append(mkEl("span","k",k),...kids);return r;}
 function mkWho(name,camp,...rest){const s=mkEl("span","mk-who");s.append(mkEl("b",camp==="right"?"right":camp==="left"?"left":"",name));if(camp)s.append(mkCamp(camp));s.append(...rest);return s;}
 // What a listing asks for, as chips: the items, a rarity, bulletins, or « Faites-moi une offre ».
-function mkWant(w){
+function mkWant(w,checked){
  const s=mkEl("span","mk-side");
  if(w?.kind==="offer")s.append(mkEl("i","","Faites-moi une offre"));
  else if(w?.kind==="bulletins")s.append(mkBul(w.bulletins,false));
  else if(w?.kind==="rarity"){s.append(mkEl("b","",kindWord(w.slot,w.rarity)));if(w.bulletins)s.append(mkBul(w.bulletins));}
  else if(w?.kind==="items"){s.append(...mkArrIds(w.items).map(mkChip));if(w.bulletins)s.append(mkBul(w.bulletins));}
+ if(checked)s.append(pill("l'auteur valide",""));
  return s;
 }
 const mkArrIds=v=>Array.isArray(v)?v.filter(x=>typeof x==="string"):[];
@@ -2449,7 +2450,7 @@ function mkCard(l){
  if(mkFresh.has(l.id))side.append(pill("nouveau","new"));
  if(Number.isFinite(l.created))side.append(mkEl("small","",when(l.created)));
  head.append(mkWho(v.who,v.camp),side);
- d.append(head,mkRow("Propose",mkSide(v.gives.map(x=>x.id),v.giveBulletins)),mkRow("Cherche",mkWant(l.want)));
+ d.append(head,mkRow("Propose",mkSide(v.gives.map(x=>x.id),v.giveBulletins)),mkRow("Cherche",mkWant(l.want,v.checked)));
  const row=mkEl("div","btn-row");
  if(!v.offerOnly)row.append(smallButton("Troquer","go",()=>mkGo({type:"trade",id:l.id,pick:candidates(S,l.want)[0]??null}),!v.takeOk));
  row.append(smallButton(oc.sent?"Offre envoyée ✓":"Faire une offre","",()=>mkGo({type:"offer",id:l.id,items:[],bul:0}),!oc.ok));
@@ -2514,16 +2515,34 @@ function mkRecap(give,get){
  return r;
 }
 // A grid of my items to tap: chosen (aria-pressed), unavailable with the reason, or badged « En vitrine ».
-function mkPicker(rows,chosen,full,onTap){
+// With f (deposit, offer): filters above the grid (kind, rarity, doubles only); chosen items stay chosen when hidden.
+function mkPicker(rows,chosen,full,onTap,f){
  const g=mkEl("div","mk-pick");
+ let bar=null;
+ if(f){
+  const ft=f.filt??={kind:"all",rarity:"all",dupOnly:false};
+  bar=mkEl("div","mk-filt");bar.setAttribute("role","group");bar.setAttribute("aria-label","Filtrer tes objets");
+  for(const [k,t] of [["all","Tout"],["outfit","Tenues"],["object","Objets"]]){const b=smallButton(t,"",()=>{ft.kind=k;liveSheet(true);});b.setAttribute("aria-pressed",String(ft.kind===k));bar.append(b);}
+  const rs=mkEl("select");rs.setAttribute("aria-label","Rareté");
+  rs.append(Object.assign(mkEl("option","","Toutes"),{value:"all"}));
+  for(const r of W.RARITIES)if(rows.some(x=>W.ITEMS[x.id]?.rarity===r))rs.append(Object.assign(mkEl("option","",W.RARITY_LABEL[r]),{value:r,selected:ft.rarity===r}));
+  rs.addEventListener("change",()=>{ft.rarity=rs.value;liveSheet(true,true);});
+  const lb=mkEl("label","mk-dup"),cb=mkEl("input");cb.type="checkbox";cb.checked=ft.dupOnly;
+  cb.addEventListener("change",()=>{ft.dupOnly=cb.checked;liveSheet(true,true);});lb.append(cb," Doubles seulement");
+  bar.append(rs,lb);
+  rows=pickView(rows,ft,S);
+  if(!rows.length)g.append(mkEl("span","fine","Aucun objet avec ces filtres."));
+ }
  for(const x of rows){
   const on=chosen.includes(x.id),off=!x.ok||(!on&&full),b=mkEl("button");b.type="button";
   b.setAttribute("aria-pressed",String(on));if(off)b.setAttribute("aria-disabled","true");
   b.append(mkChip(x.id));
+  if(x.n===2)b.append(mkEl("span","ward-x2","×2"));
   if(!x.ok)b.append(mkEl("span","mk-why",x.why));else if(x.why)b.append(mkEl("span","mk-badge",x.why));
   b.addEventListener("click",()=>{if(!off)onTap(x.id);});g.append(b);
  }
- return g;
+ if(!bar)return g;
+ const w=mkEl("div");w.append(bar,g);return w;
 }
 const mkToggle=(arr,id)=>arr.includes(id)?arr.filter(x=>x!==id):[...arr,id];
 function mkStepper(val,min,max,onSet){
@@ -2569,7 +2588,7 @@ function mkOffer(body,set,f,l){
  f.bul=Math.max(0,Math.min(f.bul,max));
  const pour=mkEl("div","mk-recap");pour.append(mkEl("span","block-title","Pour"),mkSide(v.gives.map(x=>x.id),v.giveBulletins),mkEl("span","fine",`Cherche : ${v.wantText}`));
  body.append(pour,blockTitle(`Tu offres · ${f.items.length} / ${MARKET.maxItems} objets`),
-  mkPicker(pickable(S,"offer",[...mkListed()]),f.items,f.items.length>=MARKET.maxItems,id=>{f.items=mkToggle(f.items,id);liveSheet(true);}),
+  mkPicker(pickable(S,"offer",[...mkListed()]),f.items,f.items.length>=MARKET.maxItems,id=>{f.items=mkToggle(f.items,id);liveSheet(true);},f),
   mkLine(`En plus (0 à ${MARKET.maxBulletins}, jamais seuls)`,mkStepper(f.bul,0,max,n=>{f.bul=n;liveSheet(true);})),
   fine("Tes objets ne sont pas bloqués : ils seront revérifiés si l'offre est acceptée."));
  const row=mkEl("div","btn-row");
@@ -2592,7 +2611,7 @@ function mkDeposit(body,set,f){
   const row=mkEl("div","btn-row");
   row.append(smallButton("Suivant : ce que je cherche","go",()=>{f.step=2;liveSheet(true);},!f.items.length),cancel);
   body.append(blockTitle(`Tu proposes · ${f.items.length} / ${MARKET.maxItems}`),
-   mkPicker(pickable(S,"list",[...mkListed()]),f.items,f.items.length>=MARKET.maxItems,id=>{f.items=mkToggle(f.items,id);liveSheet(true);}),row);
+   mkPicker(pickable(S,"list",[...mkListed()]),f.items,f.items.length>=MARKET.maxItems,id=>{f.items=mkToggle(f.items,id);liveSheet(true);},f),row);
   return;
  }
  set("Déposer une annonce · 2/2","Ce que tu cherches. Pas de texte : que des choix.");
@@ -2621,8 +2640,14 @@ function mkDeposit(body,set,f){
  if(f.mode==="items"||f.mode==="rarity")body.append(mkLine(`+ bulletins (0 à ${MARKET.maxBulletins})`,mkStepper(f.bul,0,MARKET.maxBulletins,setBul)));
  if(f.mode==="bulletins")body.append(mkLine(`Prix en bulletins (1 à ${MARKET.maxBulletins})`,mkStepper(Math.max(1,f.bul),1,MARKET.maxBulletins,setBul)));
  if(f.mode==="offer")body.append(fine("Pas de « Troquer » sur ton annonce : les joueurs t'envoient des offres, tu acceptes ou refuses."));
+ if(f.mode!=="offer"){
+  const lb=mkEl("label","mk-dup"),cb=mkEl("input");cb.type="checkbox";cb.checked=!!f.check;
+  cb.addEventListener("change",()=>{f.check=cb.checked;liveSheet(true,true);});lb.append(cb," Je valide moi-même les échanges");
+  body.append(lb,fine("Les joueurs voient ce que tu cherches et t'envoient une offre ; rien ne part sans ton accord."));
+ }
  const want=f.mode==="items"?{kind:"items",items:f.wantItems,bulletins:f.bul}:f.mode==="rarity"?{kind:"rarity",rarity:f.rarity,slot:f.slot,bulletins:f.bul}:
   f.mode==="bulletins"?{kind:"bulletins",bulletins:Math.max(1,f.bul)}:{kind:"offer"};
+ if(f.check&&f.mode!=="offer")want.check=true;
  const bad=f.mode==="items"&&!f.wantItems.length?"Choisis au moins un objet (ou passe en « Des bulletins »).":"";
  const row=mkEl("div","btn-row");
  row.append(smallButton("Déposer l'annonce","go",()=>mkList(f,want),!!bad),smallButton("‹ Retour","",()=>{f.step=1;liveSheet(true);}),cancel);

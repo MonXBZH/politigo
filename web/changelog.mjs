@@ -5,6 +5,16 @@
 import {cmpRelease} from "./rules.mjs";
 
 export const CHANGELOG=[
+ {version:"1.11.0",date:"2026-11-26",help:["brocante"],
+  added:[
+   "À la Brocante, une annonce peut dire ce que tu cherches et attendre ton accord : case « Je valide moi-même les échanges ». Les joueurs t'envoient une offre, tu acceptes ou refuses.",
+   "Dans le choix des objets, des filtres (tenues, objets, rareté, doubles seulement) et un badge ×2 pour tes doubles.",
+   "Les ultra rares s'échangent à la Brocante (on ne peut pas en recevoir un qu'on a déjà)."
+  ],
+  changed:[],
+  fixed:[],
+  admin:[]
+ },
  {version:"1.10.1",date:"2026-11-24",help:["jauges"],
   added:[],
   changed:["La mort politique arrive moins vite : une jauge doit rester à zéro 24 heures (au lieu de 12) avant que ton élu tombe. Oublié une journée, il s'en sort, mais il perd de l'XP tant que ses jauges restent à zéro."],
